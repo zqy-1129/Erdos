@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 数据库与运行时产物
+*.db
+*.db-wal
+*.db-shm
+
+# 环境与凭证（严禁入库）
+.env
+.env.*
+*.pem
+*.key
+
+# 文档创作草稿（飞书 lark-cli 工作目录）
+draft_*/

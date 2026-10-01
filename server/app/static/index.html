@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Erdos 用户数据看板</title>
+<style>
+:root {
+  --surface:#F7F7F8; --panel:#FFFFFF; --text:#171717; --muted:#52525B;
+  --border:rgba(23,23,23,.12); --brand:#0FDC78; --brand-text:#004D26;
+  --series4:#80C1FF; --warn:#EFAA17; --danger:#E8463A;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --surface:#171717; --panel:#1F1F1F; --text:#E5E5E5; --muted:#A1A1AA;
+          --border:rgba(229,229,229,.12); --brand:#32F08C; --brand-text:#E5FFF2; --series4:#64B4FF; }
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--surface); color:var(--text);
+  font:400 14px/20px "SF Pro Text","PingFang SC",system-ui,"Segoe UI",Roboto,sans-serif; }
+.wrap { max-width:1120px; margin:0 auto; padding:24px 20px 48px; }
+header { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+h1 { font-size:18px; line-height:24px; margin:0; font-weight:600; }
+.sub { color:var(--muted); font-size:12px; }
+.pill { font-size:12px; padding:3px 10px; border-radius:999px; border:1px solid var(--border); }
+.pill.ok { color:var(--brand-text); border-color:var(--brand); }
+.pill.warn { color:var(--warn); border-color:var(--warn); }
+.toolbar { display:flex; gap:8px; align-items:center; margin:16px 0; flex-wrap:wrap; }
+input[type=text] { flex:1; min-width:220px; max-width:420px; padding:8px 12px;
+  border:1px solid var(--border); border-radius:8px; background:var(--panel); color:var(--text); }
+button { padding:6px 14px; border:1px solid var(--border); color:var(--text);
+  background:transparent; border-radius:8px; cursor:pointer; font-size:13px; }
+button.on { border-color:var(--brand); color:var(--brand-text); }
+button:hover { border-color:var(--brand); }
+select { padding:6px 10px; border:1px solid var(--border); border-radius:8px;
+  background:var(--panel); color:var(--text); }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin:16px 0; }
+.card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px; }
+.card .k { color:var(--muted); font-size:12px; }
+.card .v { font-size:26px; line-height:32px; font-weight:600; margin-top:6px; font-variant-numeric:tabular-nums; }
+.card .s { color:var(--muted); font-size:12px; margin-top:2px; }
+.two { display:grid; grid-template-columns:1.6fr 1fr; gap:12px; margin-top:12px; }
+@media (max-width:860px) { .two { grid-template-columns:1fr; } }
+.card h3 { margin:0 0 8px; font-size:14px; font-weight:500; display:flex; align-items:center;
+  justify-content:space-between; gap:8px; flex-wrap:wrap; }
+.controls { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+#chart { width:100%; height:264px; display:block; cursor:crosshair;
+  border:1px solid var(--border); border-radius:8px; background:var(--surface-muted); }
+#mchart { width:100%; height:200px; display:block;
+  border:1px solid var(--border); border-radius:8px; background:var(--surface-muted); }
+.mk-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin:12px 0; }
+.mk { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px; }
+.mk .k { color:var(--muted); font-size:12px; white-space:nowrap; }
+.mk .v { font-size:20px; line-height:26px; font-weight:600; margin-top:4px; font-variant-numeric:tabular-nums; }
+.mk .t { color:var(--muted); font-size:11px; margin-top:2px; }
+.mk.hot { border-color:var(--danger); }
+.mk.hot .v { color:var(--danger); }
+.alert-row { display:flex; gap:10px; align-items:center; padding:6px 0;
+  border-bottom:1px dashed var(--border); font-size:13px; }
+.alert-row .dot { width:8px; height:8px; border-radius:999px; background:var(--danger); flex:none; }
+.events-lane { position:relative; height:56px; border-top:1px dashed var(--border); margin-top:6px; }
+.lane-axis { position:relative; height:18px; margin:2px 1.4% 0 4.3%; color:var(--muted); }
+.lane-axis span { position:absolute; font-size:12px; white-space:nowrap; }
+.events-lane .dot { position:absolute; top:50%; transform:translate(-50%,-50%); width:10px; height:10px;
+  border-radius:999px; cursor:pointer; border:1px solid var(--panel); }
+.events-lane .dot.ev-online { background:var(--brand); }
+.events-lane .dot.ev-audit { background:var(--series4); }
+.events-lane .dot.ev-alert { background:var(--danger); }
+.events-lane .empty { color:var(--muted); font-size:12px; line-height:56px; }
+.filters { display:flex; gap:14px; font-size:13px; align-items:center; flex-wrap:wrap; }
+.filters label { display:flex; gap:6px; align-items:center; cursor:pointer; }
+#eventDetail { margin-top:8px; font-size:13px; border:1px solid var(--border); border-radius:8px;
+  padding:10px 12px; display:none; background:var(--surface); }
+#eventDetail code { font-size:12px; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); }
+th { color:var(--muted); font-weight:500; font-size:12px; }
+td.num { font-variant-numeric:tabular-nums; }
+.log { max-height:200px; overflow-y:auto; font-family:ui-monospace,"SF Mono",Consolas,monospace;
+  font-size:12px; line-height:18px; }
+.log div { display:flex; gap:10px; border-bottom:1px dashed var(--border); padding:3px 0; word-break:break-all; }
+.log .id { color:var(--muted); min-width:34px; }
+.empty { color:var(--muted); font-size:13px; padding:12px 0; }
+.toast { position:fixed; right:16px; bottom:16px; background:var(--panel);
+  border:1px solid var(--danger); color:var(--danger); border-radius:8px;
+  padding:10px 14px; font-size:13px; max-width:360px; display:none; z-index:9; }
+.hint { color:var(--muted); font-size:12px; margin-top:4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Erdos 用户数据看板</h1>
+      <div class="sub" id="meta">后端 v0.1.0 · REST + SSE · 趋势与事件联动</div>
+    </div>
+    <span class="pill warn" id="conn">未连接</span>
+  </header>
+
+  <div class="toolbar">
+    <input type="text" id="token" value="demo-admin" placeholder="Bearer 令牌（开发环境任意值即 admin）">
+    <button id="apply">应用并连接</button>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="k">当前在线用户</div>
+      <div class="v" id="kpiOnline">—</div><div class="s" id="kpiOnlineSub">等待数据</div></div>
+    <div class="card"><div class="k">在线判定窗口</div>
+      <div class="v" id="kpiWindow">—</div><div class="s">TTL 滑动窗口（秒）</div></div>
+    <div class="card"><div class="k">用户总量（最新快照）</div>
+      <div class="v" id="kpiTotal">—</div><div class="s" id="kpiTotalDate">—</div></div>
+    <div class="card"><div class="k">今日新增 / 活跃</div>
+      <div class="v" id="kpiDaily">—</div><div class="s" id="kpiDailySub">等待快照</div></div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <h3>
+      <span id="chartTitle">在线趋势</span>
+      <span class="controls">
+        <button id="modeOnline" class="on">在线</button>
+        <button id="modeActive">用户活跃</button>
+        <select id="granularity">
+          <option value="1m">1 分钟</option>
+          <option value="5m" selected>5 分钟</option>
+          <option value="1h">1 小时</option>
+        </select>
+        <span id="rangeBtns">
+          <button data-h="1">1h</button>
+          <button data-h="6" class="on">6h</button>
+          <button data-h="24">24h</button>
+          <button data-h="168">7d</button>
+        </span>
+      </span>
+    </h3>
+    <canvas id="chart" width="1024" height="260"></canvas>
+    <div class="hint">滚轮缩放 · 拖拽平移 · ▲ 峰值标记 · ● 最新值</div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <h3>
+      <span>事件时间轴（与走势联动）</span>
+      <span class="filters" id="eventFilters">
+        <label><input type="checkbox" data-kind="online" checked> 上线事件</label>
+        <label><input type="checkbox" data-kind="audit" checked> 审计事件</label>
+        <label><input type="checkbox" data-kind="alert" checked> 告警事件</label>
+        <span class="sub" id="eventCount"></span>
+      </span>
+    </h3>
+    <div class="events-lane" id="lane"><div class="empty">加载中…</div></div>
+    <div class="lane-axis" id="laneAxis"></div>
+    <div id="eventDetail"></div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <h3>
+      <span>服务端运行监测 <span class="sub" id="monMeta">—</span></span>
+      <span class="controls">
+        <select id="monMetric">
+          <option value="qps">请求吞吐 (req/s)</option>
+          <option value="p95_ms">P95 延迟 (ms)</option>
+          <option value="error_rate">错误率 (%)</option>
+          <option value="cpu_percent">CPU 使用率 (%)</option>
+          <option value="memory_percent">内存使用率 (%)</option>
+          <option value="db_query_p95_ms">数据库查询 P95 (ms)</option>
+          <option value="db_pool_usage">连接池占用 (%)</option>
+        </select>
+        <select id="monGran">
+          <option value="1m">1 分钟</option>
+          <option value="5m" selected>5 分钟</option>
+          <option value="1h">1 小时</option>
+        </select>
+      </span>
+    </h3>
+    <div class="mk-kpis" id="monKpis"><div class="empty">等待首次采样…</div></div>
+    <canvas id="mchart" width="1024" height="200"></canvas>
+    <div class="hint">红线为告警阈值 · SSE 实时刷新（monitoring.snapshot）· 指标单位随选择变化</div>
+  </div>
+
+  <div class="two" style="margin-top:12px">
+    <div class="card">
+      <h3>活跃告警 <span class="pill ok" id="monAlertPill">正常</span></h3>
+      <div id="monAlerts"><div class="empty">暂无告警（阈值触发后实时显示）</div></div>
+    </div>
+    <div class="card">
+      <h3>窗口内热接口（60s 请求数）</h3>
+      <div id="monPaths"><div class="empty">暂无请求</div></div>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="card">
+      <h3>实时事件流（SSE · 游标断点续传）</h3>
+      <div class="log" id="log"><div class="empty">等待事件…</div></div>
+    </div>
+    <div class="card">
+      <h3>用户总量日快照</h3>
+      <div id="series"><div class="empty">暂无数据（由 SP2-3 账号域事件写入日快照）</div></div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let tokenValue = localStorage.getItem("erdos_token") || "demo-admin";
+let lastEventId = Number(localStorage.getItem("erdos_sse_cursor") || 0);
+let sseController = null;
+let pollTimer = null;
+let reconnectDelay = 1000;
+let mode = "online";        // online | active
+let rangeHours = 6;
+let now = () => Date.now();
+let trendPoints = [];       // [{ts:ms, value}]
+let events = [];            // [{occurred_at, type, ...}]
+
+$("token").value = tokenValue;
+
+function headers() {
+  return { Authorization: "Bearer " + tokenValue, "X-Request-Id": crypto.randomUUID() };
+}
+async function api(path) {
+  const resp = await fetch(path, { headers: headers() });
+  const body = await resp.json();
+  if (body.code !== 0) {
+    throw new Error(`[${body.code}] ${body.message}${body.detail ? " - " + body.detail : ""}`);
+  }
+  return body.data;
+}
+function toast(msg) {
+  const el = $("toast");
+  el.style.display = "block";
+  el.textContent = msg;
+  setTimeout(() => (el.style.display = "none"), 4000);
+}
+function setConn(state, text) {
+  const el = $("conn");
+  el.textContent = text || state;
+  el.className = "pill " + (state === "ok" ? "ok" : "warn");
+}
+// 统一时间解析：后端时间戳可能缺时区后缀（SQLite 读回 naive UTC），缺省按 UTC 解析
+function parseTs(s) {
+  if (!s) return NaN;
+  return Date.parse(/Z$|[+-]\d{2}:?\d{2}$/.test(s) ? s : s + "Z");
+}
+
+/* ---------- 趋势图 ---------- */
+function range() {
+  const end = now();
+  const hours = mode === "active" ? Math.max(rangeHours, 24) : rangeHours;
+  return { from: end - hours * 3600e3, to: end };
+}
+async function fetchTrend() {
+  const { from, to } = range();
+  try {
+    if (mode === "online") {
+      const g = $("granularity").value;
+      const q = new URLSearchParams({ granularity: g, from: new Date(from).toISOString(), to: new Date(to).toISOString() });
+      const d = await api("/v1/admin/dashboard/online/trend?" + q);
+      trendPoints = d.points.map((p) => ({ ts: parseTs(p.ts), value: p.value }));
+    } else {
+      const q = new URLSearchParams({ from: new Date(from).toISOString().slice(0, 10), to: new Date(to).toISOString().slice(0, 10) });
+      const d = await api("/v1/admin/dashboard/users/trend?" + q);
+      trendPoints = d.series.map((r) => ({ ts: parseTs(r.stat_date + "T00:00"), value: r.active_users, label: `活跃 ${r.active_users} / 新增 ${r.new_users}` }));
+    }
+  } catch (e) { toast("趋势加载失败：" + e.message); trendPoints = []; }
+  drawChart();
+  fetchEvents();
+}
+const PAD_L = 52, PAD_R = 16, PAD_T = 14, AXIS_H = 30;
+let hover = null;                 // 悬停十字线状态
+let lastTickKey = "";             // 泳道刻度缓存键（区间变化才重绘）
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "";
+}
+function fmtTick(t, hours = rangeHours) {
+  const d = new Date(t);
+  const p = (n) => String(n).padStart(2, "0");
+  const md = `${d.getMonth() + 1}/${d.getDate()}`;
+  if (hours <= 1.5) return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  if (hours <= 6) return `${p(d.getHours())}:${p(d.getMinutes())}`;
+  if (hours <= 48) return `${md} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return md;
+}
+function timeLabel(t) { return fmtTick(t); }
+
+function chip(ctx, x, y, label, color, accent) {
+  const font = cssVar("--font-sans") || "sans-serif";
+  const surface = cssVar("--panel") || "#fff";
+  const border = cssVar("--border") || "rgba(0,0,0,.12)";
+  ctx.font = `500 12px ${font}`;
+  const tw = ctx.measureText(label).width;
+  const bw = tw + 18, bh = 22;
+  const cv = $("chart");
+  let bx = x - bw / 2;
+  bx = Math.min(Math.max(bx, PAD_L), cv.width - PAD_R - bw);
+  let by = y - bh - 8;
+  if (by < 2) by = y + 10;
+  ctx.fillStyle = surface;
+  ctx.strokeStyle = accent || border;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx, by, bw, bh);
+  ctx.fill(); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x - 4, by + bh); ctx.lineTo(x + 4, by + bh); ctx.lineTo(x, by + bh + 6);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(label, bx + bw / 2, by + bh / 2 + 0.5);
+  ctx.strokeStyle = border;
+  ctx.beginPath(); ctx.moveTo(x, y + 4); ctx.lineTo(x, by + bh + 5); ctx.stroke();
+}
+
+function renderLaneTicks() {
+  const axis = $("laneAxis");
+  const { from, to } = range();
+  const span = Math.max(to - from, 1);
+  const key = `${from}-${to}`;
+  if (key === lastTickKey) return;
+  lastTickKey = key;
+  axis.innerHTML = [0, 1, 2, 3, 4, 5]
+    .map((i) => {
+      const left = (i / 5) * 100;
+      const shift = i === 0 ? "0" : i === 5 ? "-100%" : "-50%";
+      return `<span style="left:${left}%;transform:translateX(${shift})">${fmtTick(from + (span / 5) * i)}</span>`;
+    })
+    .join("");
+}
+
+function drawChart() {
+  const cv = $("chart");
+  const ctx = cv.getContext("2d");
+  const w = cv.width, h = cv.height;
+  const plotW = w - PAD_L - PAD_R, plotH = h - AXIS_H - PAD_T;
+  const { from, to } = range();
+  const span = Math.max(to - from, 1);
+  const pts = trendPoints.filter((p) => p.ts >= from - 1 && p.ts <= to + 1);
+  const maxV = Math.max(1, ...pts.map((p) => p.value));
+  const X = (t) => PAD_L + ((t - from) / span) * plotW;
+  const Y = (v) => PAD_T + plotH - (v / maxV) * plotH;
+
+  const font = cssVar("--font-sans") || "sans-serif";
+  const muted = cssVar("--text-muted") || "#888";
+  const textC = cssVar("--text") || "#111";
+  const border = cssVar("--border") || "rgba(0,0,0,.12)";
+  const brand = cssVar("--brand") || "#0FDC78";
+  const warn = cssVar("--warn") || "#EFAA17";
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.save();
+  if (ctx.roundRect) {
+    ctx.beginPath();
+    ctx.roundRect(PAD_L - 10, PAD_T - 10, plotW + 20, plotH + 20, 10);
+    ctx.clip();
+  }
+
+  // 横向网格 + Y 轴标签
+  ctx.font = `400 12px ${font}`;
+  ctx.textBaseline = "middle";
+  for (let i = 0; i <= 3; i++) {
+    const v = Math.round((maxV / 3) * i);
+    const y = Y(v);
+    ctx.strokeStyle = border; ctx.globalAlpha = 0.35; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(X(from), y); ctx.lineTo(X(to), y); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = muted; ctx.textAlign = "right";
+    ctx.fillText(String(v), PAD_L - 12, y);
+  }
+
+  // 主刻度（带标签）+ 副刻度 + 纵向网格
+  for (let i = 0; i <= 5; i++) {
+    const x = PAD_L + (plotW / 5) * i;
+    ctx.strokeStyle = border; ctx.globalAlpha = 0.35; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, PAD_T); ctx.lineTo(x, PAD_T + plotH); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = muted;
+    ctx.beginPath(); ctx.moveTo(x, PAD_T + plotH); ctx.lineTo(x, PAD_T + plotH + 6); ctx.stroke();
+    ctx.fillStyle = muted;
+    ctx.textAlign = i === 0 ? "left" : i === 5 ? "right" : "center";
+    ctx.fillText(fmtTick(from + (span / 5) * i), x, PAD_T + plotH + 18);
+    if (i < 5) {
+      const mx = (x + PAD_L + (plotW / 5) * (i + 1)) / 2;
+      ctx.beginPath(); ctx.moveTo(mx, PAD_T + plotH); ctx.lineTo(mx, PAD_T + plotH + 3); ctx.stroke();
+    }
+  }
+
+  // 折线
+  if (pts.length > 1) {
+    ctx.strokeStyle = brand; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.lineCap = "round";
+    ctx.beginPath();
+    pts.forEach((p, i) => (i === 0 ? ctx.moveTo(X(p.ts), Y(p.value)) : ctx.lineTo(X(p.ts), Y(p.value))));
+    ctx.stroke();
+  }
+
+  // 悬停十字线与数值提示
+  if (hover && pts.length) {
+    const x = X(hover.t), y = Y(hover.value);
+    ctx.strokeStyle = muted; ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(x, PAD_T); ctx.lineTo(x, PAD_T + plotH); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    ctx.fillStyle = brand;
+    ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill();
+    ctx.strokeStyle = cssVar("--panel") || "#fff"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.stroke();
+    chip(ctx, x + 10, y - 28, `${fmtTick(hover.t)} · ${hover.value}`, textC, "");
+  }
+
+  // 关键点标记：峰值 / 最新
+  if (pts.length) {
+    const pk = pts.reduce((a, b) => (b.value >= a.value ? b : a));
+    const last = pts[pts.length - 1];
+    ctx.fillStyle = warn;
+    ctx.beginPath(); ctx.arc(X(pk.ts), Y(pk.value), 4, 0, 7); ctx.fill();
+    chip(ctx, X(pk.ts), Y(pk.value) - 10, `峰值 ${pk.value}`, textC, "");
+    ctx.fillStyle = brand;
+    ctx.beginPath(); ctx.arc(X(last.ts), Y(last.value), 4, 0, 7); ctx.fill();
+    chip(ctx, X(last.ts), Y(last.value) - 10, `最新 ${last.value}`, textC, brand);
+  }
+
+  ctx.restore();
+
+  // 左右收边轴线
+  ctx.strokeStyle = border; ctx.lineWidth = 1; ctx.globalAlpha = 0.9;
+  ctx.beginPath(); ctx.moveTo(PAD_L - 0.5, PAD_T); ctx.lineTo(PAD_L - 0.5, PAD_T + plotH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(w - PAD_R + 0.5, PAD_T); ctx.lineTo(w - PAD_R + 0.5, PAD_T + plotH); ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  renderLaneTicks();
+}
+function setRange(hours) {
+  rangeHours = hours;
+  document.querySelectorAll("#rangeBtns button").forEach((b) => b.classList.toggle("on", Number(b.dataset.h) === hours));
+  drawChart(); fetchTrend();
+}
+document.querySelectorAll("#rangeBtns button").forEach((b) =>
+  b.onclick = () => setRange(Number(b.dataset.h)));
+$("granularity").onchange = fetchTrend;
+$("modeOnline").onclick = () => { mode = "online"; $("modeOnline").classList.add("on"); $("modeActive").classList.remove("on"); $("granularity").style.display = ""; $("chartTitle").textContent = "在线趋势"; fetchTrend(); };
+$("modeActive").onclick = () => { mode = "active"; $("modeActive").classList.add("on"); $("modeOnline").classList.remove("on"); $("granularity").style.display = "none"; $("chartTitle").textContent = "用户活跃趋势（日）"; fetchTrend(); };
+
+// 缩放（滚轮）与平移（拖拽）
+$("chart").addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const factor = e.deltaY > 0 ? 1.3 : 0.77;
+  rangeHours = Math.max(0.25, Math.min(24 * 90, rangeHours * factor));
+  fetchTrend();
+}, { passive: false });
+// 悬停十字线（最近点吸附）
+$("chart").addEventListener("mousemove", (e) => {
+  const cv = $("chart");
+  const rect = cv.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (cv.width / rect.width);
+  const plotW = cv.width - PAD_L - PAD_R;
+  if (mx < PAD_L || mx > PAD_L + plotW) { if (hover) { hover = null; drawChart(); } return; }
+  const { from, to } = range();
+  const span = Math.max(to - from, 1);
+  const t = from + ((mx - PAD_L) / plotW) * span;
+  const pts = trendPoints.filter((p) => p.ts >= from - 1 && p.ts <= to + 1);
+  let best = null, bd = Infinity;
+  for (const p of pts) { const d = Math.abs(p.ts - t); if (d < bd) { bd = d; best = p; } }
+  hover = best ? { t: best.ts, value: best.value } : null;
+  drawChart();
+});
+$("chart").addEventListener("mouseleave", () => { hover = null; drawChart(); });
+let dragging = null;
+$("chart").addEventListener("mousedown", (e) => { dragging = { x: e.clientX }; });
+addEventListener("mousemove", (e) => { if (dragging) dragging.dx = e.clientX - dragging.x; });
+addEventListener("mouseup", () => {
+  if (dragging && dragging.dx) {
+    const shiftMs = (-dragging.dx / $("chart").clientWidth) * rangeHours * 3600e3;
+    now = () => (typeof window.__panBase === "number" ? window.__panBase : Date.now()) + shiftMs;
+    window.__panBase = (window.__panBase ?? Date.now()) + shiftMs;
+    fetchTrend();
+  }
+  dragging = null;
+});
+
+/* ---------- 事件泳道 ---------- */
+const kindOf = (t) => (t === "user.online" ? "online" : t.startsWith("audit.") ? "audit" : t === "monitor.alert" ? "alert" : "other");
+let fetchEventsTimer = null;
+async function fetchEvents() {
+  const { from, to } = range();
+  const kinds = ["online", "audit", "alert"].filter((k) => document.querySelector(`[data-kind=${k}]`).checked);
+  const types = kinds.length === 3 ? "" : kinds.map((k) => (k === "online" ? "user.online" : k === "audit" ? "audit." : "monitor.alert")).join(",");
+  try {
+    const q = new URLSearchParams({ from: new Date(from).toISOString(), to: new Date(to).toISOString(), limit: "200" });
+    if (types === "audit.") q.set("types", "");  // 仅审计：用前缀无法精确匹配，走全量后前端过滤
+    else if (types) q.set("types", types);
+    const d = await api("/v1/admin/dashboard/events?" + q);
+    events = d.items.filter((e) => kindOf(e.type) !== "other");
+    if (types === "audit.") events = events.filter((e) => kindOf(e.type) === "audit");
+  } catch (e) { toast("事件加载失败：" + e.message); events = []; }
+  renderLane();
+}
+function renderLane() {
+  const lane = $("lane");
+  const { from, to } = range();
+  const span = Math.max(to - from, 1);
+  lane.innerHTML = "";
+  $("eventCount").textContent = `共 ${events.length} 条`;
+  if (!events.length) { lane.innerHTML = '<div class="empty">当前区间无事件</div>'; return; }
+  const ll = lane.clientWidth || 800;
+  const used = new Set();
+  events.forEach((e) => {
+    const t = parseTs(e.occurred_at);
+    const x = ((t - from) / span) * ll;
+    if (x < 0 || x > ll) return;
+    let y = 14 + (used.size % 2) * 16;
+    used.add(e.type);
+    const dot = document.createElement("div");
+    dot.className = "dot ev-" + kindOf(e.type);
+    dot.title = `${e.type} @ ${new Date(t).toLocaleTimeString()} · ${e.actor_id || "-"}`;
+    dot.style.left = x + "px";
+    dot.style.top = y + "px";
+    dot.onclick = () => showEventDetail(e);
+    lane.appendChild(dot);
+  });
+}
+function showEventDetail(e) {
+  const box = $("eventDetail");
+  box.style.display = "block";
+  box.innerHTML = `<b>${e.type}</b> · ${new Date(parseTs(e.occurred_at)).toLocaleString()} · ` +
+    `<b>actor</b> ${e.actor_id || "-"}<br><code>${JSON.stringify(e.payload || {})}</code>`;
+}
+document.querySelectorAll("#eventFilters input").forEach((c) => (c.onchange = fetchEvents));
+
+/* ---------- 运行监测 ---------- */
+const MON_DEFS = [
+  ["qps", "请求吞吐", "req/s"],
+  ["p50_ms", "P50 延迟", "ms"],
+  ["p95_ms", "P95 延迟", "ms"],
+  ["error_rate", "错误率", "%"],
+  ["cpu_percent", "CPU 使用率", "%"],
+  ["memory_percent", "内存使用率", "%"],
+  ["db_query_p95_ms", "DB 查询 P95", "ms"],
+  ["db_pool_usage", "连接池占用", "%"],
+];
+let monValues = null;
+let monThresholds = {};
+let monActiveAlerts = [];
+let monPoints = [];
+let monUptime = 0;
+const MON_RANGE_MINS = 180;
+const MON_PAD_L = 56, MON_PAD_R = 16, MON_PAD_T = 14, MON_AXIS = 30;
+
+function fmtV(v) {
+  const n = Number(v);
+  if (v === null || v === undefined || !isFinite(n)) return "—";
+  return n >= 100 ? String(Math.round(n)) : n.toFixed(1);
+}
+function fmtUptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return d > 0 ? `${d}天${h}时` : h > 0 ? `${h}时${m}分` : `${m}分`;
+}
+
+function renderMonKpis() {
+  const box = $("monKpis");
+  box.innerHTML = MON_DEFS.map(([key, label, unit]) => {
+    const value = monValues ? monValues[key] : null;
+    const threshold = monThresholds[key];
+    const hot = typeof threshold === "number" && typeof value === "number" && value > threshold;
+    return `<div class="mk${hot ? " hot" : ""}"><div class="k">${label}</div>` +
+      `<div class="v">${fmtV(value)}<span class="sub"> ${unit}</span></div>` +
+      `<div class="t">阈值 ${typeof threshold === "number" ? fmtV(threshold) : "—"}</div></div>`;
+  }).join("");
+}
+function renderMonAlerts() {
+  const box = $("monAlerts");
+  const pill = $("monAlertPill");
+  if (!monActiveAlerts.length) {
+    pill.className = "pill ok"; pill.textContent = "正常";
+    box.innerHTML = '<div class="empty">暂无告警（阈值触发后实时显示）</div>';
+    return;
+  }
+  pill.className = "pill warn"; pill.textContent = monActiveAlerts.length + " 项活跃";
+  box.innerHTML = monActiveAlerts.map((a) =>
+    `<div class="alert-row"><div class="dot"></div><div><b>${a.label}</b> ${a.message}</div></div>`).join("");
+}
+function renderMonPaths(paths) {
+  const box = $("monPaths");
+  if (!paths || !paths.length) { box.innerHTML = '<div class="empty">暂无请求</div>'; return; }
+  box.innerHTML = "<table><thead><tr><th>接口</th><th>请求数</th></tr></thead><tbody>" +
+    paths.map((p) => `<tr><td>${p.path}</td><td class="num">${p.requests}</td></tr>`).join("") +
+    "</tbody></table>";
+}
+
+async function fetchMonitoring() {
+  try {
+    const d = await api("/v1/admin/monitoring/overview");
+    monValues = d.values;
+    monThresholds = d.thresholds;
+    monActiveAlerts = d.active_alerts;
+    monUptime = d.uptime_seconds;
+    $("monMeta").textContent = "运行 " + fmtUptime(monUptime) +
+      (d.sampled_at ? " · 更新于 " + new Date(parseTs(d.sampled_at)).toLocaleTimeString() : "");
+    renderMonKpis(); renderMonAlerts(); renderMonPaths(d.hot_paths);
+  } catch (e) { toast("监测概览加载失败：" + e.message); }
+}
+async function fetchMonTrend() {
+  const end = now();
+  const from = end - MON_RANGE_MINS * 60000;
+  const q = new URLSearchParams({
+    metric: $("monMetric").value,
+    granularity: $("monGran").value,
+    from: new Date(from).toISOString(),
+    to: new Date(end).toISOString(),
+  });
+  try {
+    const d = await api("/v1/admin/monitoring/trend?" + q);
+    monPoints = d.points.map((p) => ({ ts: parseTs(p.ts), value: p.value }));
+  } catch (e) { toast("监测趋势加载失败：" + e.message); monPoints = []; }
+  drawMonChart();
+}
+function drawMonChart() {
+  const cv = $("mchart");
+  const ctx = cv.getContext("2d");
+  const w = cv.width, h = cv.height;
+  const plotW = w - MON_PAD_L - MON_PAD_R, plotH = h - MON_AXIS - MON_PAD_T;
+  const to = now(), from = to - MON_RANGE_MINS * 60000, span = Math.max(to - from, 1);
+  const key = $("monMetric").value;
+  const threshold = monThresholds[key];
+  const pts = monPoints.filter((p) => p.ts >= from && p.ts <= to);
+  const maxV = Math.max(1, threshold || 0, ...pts.map((p) => p.value));
+  const X = (t) => MON_PAD_L + ((t - from) / span) * plotW;
+  const Y = (v) => MON_PAD_T + plotH - (v / maxV) * plotH;
+  const font = cssVar("--font-sans") || "sans-serif";
+  const muted = cssVar("--text-muted") || "#888";
+  const textC = cssVar("--text") || "#111";
+  const border = cssVar("--border") || "rgba(0,0,0,.12)";
+  const brand = cssVar("--brand") || "#0FDC78";
+  const danger = cssVar("--danger") || "#E8463A";
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = `400 12px ${font}`;
+  ctx.textBaseline = "middle";
+  // 横向网格 + Y 轴
+  for (let i = 0; i <= 3; i++) {
+    const v = (maxV / 3) * i;
+    const y = Y(v);
+    ctx.strokeStyle = border; ctx.globalAlpha = 0.35; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(X(from), y); ctx.lineTo(X(to), y); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = muted; ctx.textAlign = "right";
+    ctx.fillText(fmtV(v), MON_PAD_L - 10, y);
+  }
+  // 时间刻度
+  for (let i = 0; i <= 5; i++) {
+    const x = MON_PAD_L + (plotW / 5) * i;
+    ctx.strokeStyle = border; ctx.globalAlpha = 0.35;
+    ctx.beginPath(); ctx.moveTo(x, MON_PAD_T); ctx.lineTo(x, MON_PAD_T + plotH); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = muted;
+    ctx.beginPath(); ctx.moveTo(x, MON_PAD_T + plotH); ctx.lineTo(x, MON_PAD_T + plotH + 5); ctx.stroke();
+    ctx.fillStyle = muted;
+    ctx.textAlign = i === 0 ? "left" : i === 5 ? "right" : "center";
+    ctx.fillText(fmtTick(from + (span / 5) * i, MON_RANGE_MINS / 60), x, MON_PAD_T + plotH + 16);
+  }
+  // 阈值虚线
+  if (typeof threshold === "number" && threshold > 0 && threshold < maxV * 1.5) {
+    const y = Y(threshold);
+    ctx.strokeStyle = danger; ctx.setLineDash([6, 4]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(MON_PAD_L, y); ctx.lineTo(MON_PAD_L + plotW, y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = danger; ctx.textAlign = "left";
+    ctx.fillText(`告警阈值 ${fmtV(threshold)}`, MON_PAD_L + 6, y - 8);
+  }
+  // 折线
+  if (pts.length > 1) {
+    ctx.strokeStyle = brand; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.lineCap = "round";
+    ctx.beginPath();
+    pts.forEach((p, i) => (i === 0 ? ctx.moveTo(X(p.ts), Y(p.value)) : ctx.lineTo(X(p.ts), Y(p.value))));
+    ctx.stroke();
+  }
+  // 最新值标记
+  if (pts.length) {
+    const last = pts[pts.length - 1];
+    ctx.fillStyle = brand;
+    ctx.beginPath(); ctx.arc(X(last.ts), Y(last.value), 4, 0, 7); ctx.fill();
+    chip(ctx, X(last.ts), Y(last.value) - 12, `最新 ${fmtV(last.value)}`, textC, brand);
+  }
+  // 收边轴线
+  ctx.strokeStyle = border; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(MON_PAD_L - 0.5, MON_PAD_T); ctx.lineTo(MON_PAD_L - 0.5, MON_PAD_T + plotH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(w - MON_PAD_R + 0.5, MON_PAD_T); ctx.lineTo(w - MON_PAD_R + 0.5, MON_PAD_T + plotH); ctx.stroke();
+}
+function onMonSnapshot(p) {
+  monValues = p.values || monValues;
+  if (p.sampled_at) {
+    const t = parseTs(p.sampled_at);
+    if (!isNaN(t)) {
+      $("monMeta").textContent = "运行 " + fmtUptime(monUptime) + " · 实时 " + new Date(t).toLocaleTimeString();
+      const key = $("monMetric").value;
+      if (monValues && typeof monValues[key] === "number") {
+        monPoints.push({ ts: t, value: monValues[key] });
+        if (monPoints.length > 1200) monPoints = monPoints.slice(-1200);
+      }
+    }
+  }
+  renderMonKpis();
+  drawMonChart();
+}
+
+/* ---------- SSE ---------- */
+function appendLog(id, event, payload) {
+  const box = $("log");
+  if (box.querySelector(".empty")) box.innerHTML = "";
+  const row = document.createElement("div");
+  row.innerHTML = `<span class="id">#${id}</span><span>${event}</span><span>${JSON.stringify(payload)}</span>`;
+  box.prepend(row);
+  while (box.children.length > 20) box.removeChild(box.lastChild);
+}
+async function connectSSE() {
+  if (sseController) sseController.abort();
+  setConn("warn", "连接中…");
+  sseController = new AbortController();
+  try {
+    const resp = await fetch("/v1/admin/dashboard/stream?since=" + lastEventId, {
+      headers: { ...headers(), "Last-Event-ID": String(lastEventId), Accept: "text/event-stream" },
+      signal: sseController.signal,
+    });
+    if (!resp.ok) {
+      const b = await resp.json().catch(() => ({}));
+      throw new Error(`[${b.code || resp.status}] ${b.message || "SSE 连接失败"}`);
+    }
+    setConn("ok", "SSE 已连接");
+    reconnectDelay = 1000;
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) throw new Error("SSE 连接关闭");
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        parseEvent(buf.slice(0, idx));
+        buf = buf.slice(idx + 2);
+      }
+    }
+  } catch (e) {
+    if (e.name !== "AbortError") {
+      setConn("warn", "SSE 断线（轮询兜底中）");
+      toast("SSE 断线：" + e.message);
+      sseController = null;
+      reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+      setTimeout(connectSSE, reconnectDelay);
+    }
+  }
+}
+function parseEvent(raw) {
+  let event = "message", data = "";
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("id: ")) lastEventId = Number(line.slice(4));
+    else if (line.startsWith("event: ")) event = line.slice(7);
+    else if (line.startsWith("data: ")) data += line.slice(6);
+  }
+  if (!data) return;
+  localStorage.setItem("erdos_sse_cursor", String(lastEventId));
+  let payload; try { payload = JSON.parse(data); } catch { payload = data; }
+  appendLog(lastEventId, event, payload);
+  if (payload && typeof payload.current_online === "number") {
+    $("kpiOnline").textContent = payload.current_online;
+    $("kpiWindow").textContent = payload.window_seconds + "s";
+    $("kpiOnlineSub").textContent = "更新于 " + new Date(payload.server_time).toLocaleTimeString();
+    if (mode === "online") { renderOnlineDelta(payload); }
+  } else if (event === "monitoring.snapshot") {
+    onMonSnapshot(payload);
+  } else if (event === "dashboard.events") {
+    clearTimeout(fetchEventsTimer);
+    fetchEventsTimer = setTimeout(fetchEvents, 500);  // SSE 事件 -> 泳道防抖刷新
+    if (payload.type === "monitor.alert") setTimeout(fetchMonitoring, 600);
+  }
+}
+function renderOnlineDelta(p) {
+  const t = parseTs(p.server_time);
+  trendPoints.push({ ts: t, value: p.current_online });
+  if (trendPoints.length > 1200) trendPoints = trendPoints.slice(-1200);
+  drawChart();
+}
+async function loadTotals() {
+  try {
+    const d = await api("/v1/admin/dashboard/users/trend?to=" + new Date().toISOString().slice(0, 10));
+    const s = d.series;
+    if (!s.length) return;
+    const last = s[s.length - 1];
+    $("kpiTotal").textContent = last.total_users;
+    $("kpiTotalDate").textContent = "快照日 " + last.stat_date;
+    $("kpiDaily").textContent = last.new_users + " / " + last.active_users;
+    $("series").innerHTML =
+      "<table><thead><tr><th>日期</th><th>总量</th><th>新增</th><th>活跃</th></tr></thead><tbody>" +
+      s.map((r) => `<tr><td>${r.stat_date}</td><td class="num">${r.total_users}</td>` +
+        `<td class="num">${r.new_users}</td><td class="num">${r.active_users}</td></tr>`).join("") +
+      "</tbody></table>";
+  } catch (e) { toast("总量加载失败：" + e.message); }
+}
+
+async function refreshOnline() {
+  try {
+    const d = await api("/v1/admin/dashboard/users/online");
+    $("kpiOnline").textContent = d.current_online;
+    $("kpiWindow").textContent = d.window_seconds + "s";
+    $("kpiOnlineSub").textContent = "更新于 " + new Date(d.server_time).toLocaleTimeString();
+  } catch (e) { toast("在线数拉取失败：" + e.message); }
+}
+
+$("monMetric").onchange = fetchMonTrend;
+$("monGran").onchange = fetchMonTrend;
+
+$("apply").onclick = () => {
+  tokenValue = $("token").value.trim();
+  localStorage.setItem("erdos_token", tokenValue);
+  refreshOnline(); loadTotals(); fetchTrend(); fetchEvents(); fetchMonitoring(); fetchMonTrend(); connectSSE();
+};
+
+// 初始化 + 15s 轮询兜底（SSE 断线时仍保持数据新鲜）
+refreshOnline();
+loadTotals();
+fetchTrend();
+fetchMonitoring();
+fetchMonTrend();
+connectSSE();
+pollTimer = setInterval(() => { refreshOnline(); fetchTrend(); fetchEvents(); fetchMonitoring(); }, 15000);
+addEventListener("resize", () => { drawChart(); drawMonChart(); });
+addEventListener("beforeunload", () => sseController && sseController.abort());
+</script>
+</body>
+</html>

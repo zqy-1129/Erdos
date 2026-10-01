@@ -1,0 +1,1122 @@
+openapi: 3.1.0
+info:
+  title: Erdos 服务端 API 契约
+  version: 0.1.0-draft
+  description: >
+    客户端 / 引擎 / 服务端三方的共同语言。契约冻结项：错误码（x-error-codes）、
+    表结构、签名格式——冻结后变更必须走契约评审（研发手册「质量标准」红线）。
+    本文件当前为 SP2-1 草案（x-contract-status: draft），待 ARCH 冻结生效。
+  x-contract-status: draft
+servers:
+  - url: https://api.erdos.example.com
+tags:
+  - name: health
+    description: 健康检查
+  - name: audit
+    description: 审计事件（骨架示例领域）
+  - name: presence
+    description: 在线状态（看板 FR-1）
+  - name: dashboard
+    description: 看板管理端（FR-2/FR-5，需 admin/ops 角色）
+  - name: monitoring
+    description: 服务端运行监测（响应时间/错误率/资源/接口频率/数据库指标与告警）
+  - name: auth
+    description: 认证授权中心（SP2-2：JWT 双令牌、RBAC 四角色、防爆破、JWKS）
+
+paths:
+  /v1/health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: 健康检查（含数据库连通性探测）
+      responses:
+        "200":
+          description: 服务与依赖均正常
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeHealth" }
+        "503":
+          description: 依赖（数据库）不可用
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/audit/events:
+    post:
+      tags: [audit]
+      operationId: createAuditEvent
+      summary: 写入审计事件
+      description: >
+        幂等写接口：必须携带 Idempotency-Key 请求头，重复键只入账一次（40901）。
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 幂等键（调用方生成，长度 1~64）
+          schema: { type: string, minLength: 1, maxLength: 64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuditEventCreate" }
+      responses:
+        "200":
+          description: 写入成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeAuditEventView" }
+        "400":
+          description: 参数校验失败（BAD_REQUEST）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+        "409":
+          description: 幂等键重复（CONFLICT）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+        "429":
+          description: 触发限流（RATE_LIMITED）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/presence/heartbeat:
+    post:
+      tags: [presence]
+      operationId: sendHeartbeat
+      summary: 心跳上报（需凭证；幂等）
+      description: >
+        客户端每 30s 上报一次心跳；服务端以 TTL 滑动窗口判定在线，
+        并在服务端聚合后向看板流推送在线数（不推送任何用户标识）。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HeartbeatCreate" }
+      responses:
+        "200":
+          description: 心跳登记成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeHeartbeatView" }
+        "401":
+          description: 未认证（UNAUTHENTICATED）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/admin/dashboard/users/online:
+    get:
+      tags: [dashboard]
+      operationId: getOnlineStats
+      summary: 当前在线统计
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 在线统计（滑动窗口判定）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeOnlineView" }
+        "401":
+          description: 未认证（UNAUTHENTICATED）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+        "403":
+          description: 角色不足（PERMISSION_DENIED）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/admin/dashboard/users/total:
+    get:
+      tags: [dashboard]
+      operationId: getUsersTotal
+      summary: 用户总量日序列
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 用户总量/新增/活跃日快照序列
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeUsersTotalView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/admin/dashboard/online/trend:
+    get:
+      tags: [dashboard]
+      operationId: getOnlineTrend
+      summary: 在线数趋势（分钟级下采样）
+      description: 粒度 1m/5m/1h；桶内取 max（并发峰值口径）；支持时间范围选择。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: granularity
+          in: query
+          required: false
+          schema: { type: string, enum: ["1m", "5m", "1h"], default: "5m" }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: 趋势序列
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeOnlineTrendView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/admin/dashboard/users/trend:
+    get:
+      tags: [dashboard]
+      operationId: getUsersTrend
+      summary: 用户总量日级趋势
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: 日快照序列
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeUsersTotalView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/admin/dashboard/events:
+    get:
+      tags: [dashboard]
+      operationId: getDashboardEvents
+      summary: 看板事件查询（与走势图时间轴关联）
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: types
+          in: query
+          required: false
+          description: 逗号分隔类型过滤（精确匹配），如 user.online,audit.account.login
+          schema: { type: string }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: 事件列表（按时间倒序）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeEventsView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/admin/dashboard/stream:
+    get:
+      tags: [dashboard]
+      operationId: dashboardStream
+      summary: 看板实时指标流（SSE）
+      description: >
+        text/event-stream；事件格式 id=<version>\nevent=<topic>\ndata=<json>。
+        断连重连携带 Last-Event-ID（或 ?since=）即可从缓冲追赶（FR-5）。
+        主题：presence.online_count（在线聚合）、monitoring.snapshot（运行监测采样）、
+        dashboard.events（事件投影）。聚合主题负载不含任何用户明细。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: 游标（版本号），缺省 0 拉取全部缓冲积压
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: SSE 事件流
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/admin/monitoring/overview:
+    get:
+      tags: [monitoring]
+      operationId: getMonitoringOverview
+      summary: 运行监测概览（最新采样 + 阈值 + 活跃告警 + 热接口）
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 最新采样快照（采样器未产出前 sampled_at/values 为 null）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeMonitoringOverviewView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/admin/monitoring/trend:
+    get:
+      tags: [monitoring]
+      operationId: getMonitoringTrend
+      summary: 单指标趋势（分钟快照下采样）
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: metric
+          in: query
+          required: true
+          description: 指标键 qps|p50_ms|p95_ms|error_rate|cpu_percent|memory_percent|db_query_p95_ms|db_pool_usage
+          schema: { type: string }
+        - name: granularity
+          in: query
+          required: false
+          schema: { type: string, enum: [1m, 5m, 1h], default: 5m }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: 指标序列（展示口径：比率类已换算为百分比）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeMonitoringTrendView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/admin/monitoring/alerts:
+    get:
+      tags: [monitoring]
+      operationId: getMonitoringAlerts
+      summary: 告警事件查询（monitor.alert）
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: 告警事件列表（按时间倒序；触发 severity=warning，恢复 severity=info）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeAlertsView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: authLogin
+      summary: 密码登录（签发 JWT 双令牌）
+      description: >
+        公开端点。校验通过签发访问令牌（Ed25519, 15 分钟）与刷新令牌（30 天）。
+        连续失败达到阈值触发账号/IP 锁定（423），锁定与登录成功投影看板事件。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: 双令牌
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeTokenPairView" }
+        "401":
+          description: 凭证无效（INVALID_CREDENTIALS）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+        "423":
+          description: 账号已临时锁定（ACCOUNT_LOCKED）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      operationId: authRefresh
+      summary: 刷新轮换（旧刷新令牌即吊销）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: 新双令牌
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeTokenPairView" }
+        "401":
+          description: 刷新令牌无效/已失效（TOKEN_REVOKED）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: authLogout
+      summary: 注销（设备维度吊销，幂等）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LogoutRequest" }
+      responses:
+        "200":
+          description: 吊销数量（已失效令牌返回 0）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeLogoutView" }
+
+  /v1/auth/jwks:
+    get:
+      tags: [auth]
+      operationId: authJwks
+      summary: Ed25519 公钥发布（JWKS，含密钥版本 kid）
+      responses:
+        "200":
+          description: JWKS 公钥集
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/auth/register:
+    post:
+      tags: [auth]
+      operationId: accountRegister
+      summary: 注册（赠分领域事件 + 自动登录）
+      description: >
+        邮箱/手机至少其一；密码强度 ≥8 位含字母数字（40001）。
+        同标识冲突 40901；同设备指纹重复注册不再触发赠分（防刷）。
+        成功签发双令牌并发布 points.registration_grant 领域事件。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterCreate" }
+      responses:
+        "200":
+          description: 双令牌（注册即登录）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeTokenPairView" }
+        "400":
+          description: 参数/密码强度不满足（BAD_REQUEST）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+        "409":
+          description: 邮箱或手机已注册（CONFLICT）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/auth/password/reset/request:
+    post:
+      tags: [auth]
+      operationId: passwordResetRequest
+      summary: 申请密码重置（60s/次，每日 10 次）
+      description: 无论账号是否存在均返回受理（防枚举）；令牌经渠道发送。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResetRequest" }
+      responses:
+        "200":
+          description: 已受理
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeResetAcceptedView" }
+        "429":
+          description: 发送过于频繁或当日限额（RATE_LIMITED）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/auth/password/reset/confirm:
+    post:
+      tags: [auth]
+      operationId: passwordResetConfirm
+      summary: 确认密码重置（吊销全部会话）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResetConfirm" }
+      responses:
+        "200":
+          description: 重置成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeResetAcceptedView" }
+        "400":
+          description: 重置令牌无效或已过期（RESET_TOKEN_INVALID）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/account/profile:
+    get:
+      tags: [account]
+      operationId: getAccountProfile
+      summary: 账号资料
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 当前主体资料
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeProfileView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/account/password:
+    post:
+      tags: [account]
+      operationId: changeAccountPassword
+      summary: 修改密码（吊销全部会话）
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PasswordChange" }
+      responses:
+        "200":
+          description: 修改成功（旧密码错误返回 40103）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeProfileView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/account/devices:
+    get:
+      tags: [account]
+      operationId: listAccountDevices
+      summary: 设备登记列表
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 设备列表（按最近活跃倒序）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeDevicesView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/account:
+    delete:
+      tags: [account]
+      operationId: deactivateAccount
+      summary: 注销账号（匿名化 + 法务保留）
+      description: 软删除并匿名化登录标识与凭据；吊销全部会话；登录被拒（40302）。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeactivateRequest" }
+      responses:
+        "200":
+          description: 注销结果（幂等）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeDeactivateView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: JWT 双令牌（SP2-2 接入；SP2-1 网关仅做鉴权透传）
+
+  responses:
+    Unauthorized:
+      description: 未认证（UNAUTHENTICATED）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+    Forbidden:
+      description: 角色不足（PERMISSION_DENIED）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+    NotFound:
+      description: 资源不存在（NOT_FOUND）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+    BadRequest:
+      description: 参数错误（BAD_REQUEST）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+
+  schemas:
+    TrendPointView:
+      type: object
+      required: [ts, value]
+      properties:
+        ts: { type: string, format: date-time }
+        value: { type: integer }
+
+    OnlineTrendView:
+      type: object
+      required: [granularity, start, end, points]
+      properties:
+        granularity: { type: string }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/TrendPointView" }
+
+    EventRow:
+      type: object
+      required: [id, occurred_at, type, severity]
+      properties:
+        id: { type: integer }
+        occurred_at: { type: string, format: date-time }
+        type: { type: string }
+        severity: { type: string }
+        actor_id: { type: string, nullable: true }
+        payload: { type: object, nullable: true }
+
+    EventsView:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/EventRow" }
+        total: { type: integer }
+
+    EnvelopeOnlineTrendView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/OnlineTrendView" }
+
+    EnvelopeEventsView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/EventsView" }
+
+    MonitoringTrendPointView:
+      type: object
+      required: [ts, value]
+      properties:
+        ts: { type: string, format: date-time }
+        value: { type: number }
+
+    MonitoringTrendView:
+      type: object
+      required: [metric, unit, granularity, start, end, points]
+      properties:
+        metric: { type: string }
+        unit: { type: string }
+        granularity: { type: string }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/MonitoringTrendPointView" }
+
+    PathRowView:
+      type: object
+      required: [path, requests]
+      properties:
+        path: { type: string }
+        requests: { type: integer }
+
+    AlertItemView:
+      type: object
+      required: [metric, label, message]
+      properties:
+        metric: { type: string }
+        label: { type: string }
+        message: { type: string }
+
+    MonitoringOverviewView:
+      type: object
+      required: [sampled_at, values, thresholds, active_alerts, hot_paths, uptime_seconds, window_seconds]
+      properties:
+        sampled_at: { type: string, format: date-time, nullable: true }
+        values: { type: object, nullable: true }
+        thresholds: { type: object }
+        active_alerts:
+          type: array
+          items: { $ref: "#/components/schemas/AlertItemView" }
+        hot_paths:
+          type: array
+          items: { $ref: "#/components/schemas/PathRowView" }
+        uptime_seconds: { type: integer }
+        window_seconds: { type: number }
+
+    AlertRowView:
+      type: object
+      required: [id, occurred_at, severity]
+      properties:
+        id: { type: integer }
+        occurred_at: { type: string, format: date-time }
+        severity: { type: string, enum: [warning, info] }
+        payload: { type: object, nullable: true }
+
+    AlertsView:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AlertRowView" }
+        total: { type: integer }
+
+    EnvelopeMonitoringOverviewView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/MonitoringOverviewView" }
+
+    EnvelopeMonitoringTrendView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/MonitoringTrendView" }
+
+    EnvelopeAlertsView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/AlertsView" }
+
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
+        password: { type: string, minLength: 1, maxLength: 128 }
+        device_id: { type: string, maxLength: 64, nullable: true }
+
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string, minLength: 16, maxLength: 128 }
+        device_id: { type: string, maxLength: 64, nullable: true }
+
+    LogoutRequest:
+      type: object
+      additionalProperties: false
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string, minLength: 16, maxLength: 128 }
+
+    TokenPairView:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in, refresh_expires_in]
+      properties:
+        access_token: { type: string, description: Ed25519 签名访问令牌（15 分钟） }
+        refresh_token: { type: string, description: 刷新令牌（30 天，轮换即吊销） }
+        token_type: { type: string, example: bearer }
+        expires_in: { type: integer, description: 访问令牌有效期（秒） }
+        refresh_expires_in: { type: integer, description: 刷新令牌有效期（秒） }
+
+    LogoutView:
+      type: object
+      required: [revoked]
+      properties:
+        revoked: { type: integer, description: 实际吊销的刷新令牌数量（幂等） }
+
+    EnvelopeTokenPairView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/TokenPairView" }
+
+    EnvelopeLogoutView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/LogoutView" }
+
+    RegisterCreate:
+      type: object
+      additionalProperties: false
+      required: [password, fingerprint]
+      properties:
+        email: { type: string, maxLength: 255, nullable: true }
+        phone: { type: string, maxLength: 32, nullable: true }
+        password: { type: string, minLength: 8, maxLength: 128 }
+        fingerprint: { type: string, minLength: 8, maxLength: 64, description: 设备指纹（赠分防刷） }
+        platform: { type: string, maxLength: 32, nullable: true }
+
+    ResetRequest:
+      type: object
+      additionalProperties: false
+      required: [identifier]
+      properties:
+        identifier: { type: string, minLength: 3, maxLength: 255, description: 邮箱或手机号 }
+
+    ResetConfirm:
+      type: object
+      additionalProperties: false
+      required: [reset_token, new_password]
+      properties:
+        reset_token: { type: string, minLength: 16, maxLength: 128 }
+        new_password: { type: string, minLength: 8, maxLength: 128 }
+
+    ResetAcceptedView:
+      type: object
+      required: [accepted]
+      properties:
+        accepted: { type: boolean }
+
+    EnvelopeResetAcceptedView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/ResetAcceptedView" }
+
+    ProfileView:
+      type: object
+      required: [user_id, email, phone, role, status, created_at]
+      properties:
+        user_id: { type: string }
+        email: { type: string, nullable: true }
+        phone: { type: string, nullable: true }
+        role: { type: string }
+        status: { type: string }
+        created_at: { type: string, format: date-time }
+
+    EnvelopeProfileView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/ProfileView" }
+
+    PasswordChange:
+      type: object
+      additionalProperties: false
+      required: [old_password, new_password]
+      properties:
+        old_password: { type: string, minLength: 1, maxLength: 128 }
+        new_password: { type: string, minLength: 8, maxLength: 128 }
+
+    DeviceView:
+      type: object
+      required: [id, platform, last_seen_at, first_gift_used]
+      properties:
+        id: { type: string }
+        platform: { type: string, nullable: true }
+        last_seen_at: { type: string, format: date-time }
+        first_gift_used: { type: boolean }
+
+    DevicesView:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DeviceView" }
+
+    EnvelopeDevicesView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/DevicesView" }
+
+    DeactivateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        refresh_token: { type: string, maxLength: 128, nullable: true }
+
+    DeactivateView:
+      type: object
+      required: [deactivated, revoked]
+      properties:
+        deactivated: { type: boolean }
+        revoked: { type: integer }
+
+    EnvelopeDeactivateView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/DeactivateView" }
+
+    HeartbeatCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        device_id: { type: string, maxLength: 64, nullable: true }
+        app_version: { type: string, maxLength: 32, nullable: true }
+
+    HeartbeatView:
+      type: object
+      required: [online, server_time]
+      properties:
+        online: { type: boolean }
+        server_time: { type: string, format: date-time }
+
+    OnlineView:
+      type: object
+      required: [current_online, window_seconds, server_time]
+      properties:
+        current_online: { type: integer, description: 滑动窗口内去重在线用户数 }
+        window_seconds: { type: number, description: 在线判定窗口（秒） }
+        server_time: { type: string, format: date-time }
+
+    UsersTotalRow:
+      type: object
+      required: [stat_date, total_users, new_users, active_users]
+      properties:
+        stat_date: { type: string, format: date }
+        total_users: { type: integer }
+        new_users: { type: integer }
+        active_users: { type: integer }
+
+    UsersTotalView:
+      type: object
+      required: [series]
+      properties:
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/UsersTotalRow" }
+
+    EnvelopeHeartbeatView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/HeartbeatView" }
+
+    EnvelopeOnlineView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/OnlineView" }
+
+    EnvelopeUsersTotalView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/UsersTotalView" }
+
+    Envelope:
+      type: object
+      description: 统一响应信封。code=0 表示成功；其它取值与 x-error-codes 一一对应。
+      required: [code, message, request_id, timestamp]
+      properties:
+        code:
+          type: integer
+          description: 业务码，0 表示成功，非 0 见 x-error-codes
+        message:
+          type: string
+          description: 面向使用者的提示文案
+        detail:
+          type: string
+          description: 可选的错误上下文（仅失败时携带）
+          nullable: true
+        data:
+          description: 业务数据（成功时携带）
+          nullable: true
+        request_id:
+          type: string
+          description: 请求追踪 ID，与响应头 X-Request-Id 一致
+        timestamp:
+          type: string
+          format: date-time
+          description: 服务端 UTC 时间
+
+    EnvelopeHealth:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/HealthView" }
+
+    EnvelopeAuditEventView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/AuditEventView" }
+
+    HealthView:
+      type: object
+      required: [status, version]
+      properties:
+        status: { type: string, example: ok }
+        version: { type: string, example: 0.1.0 }
+
+    AuditEventCreate:
+      type: object
+      additionalProperties: false
+      required: [actor_type, actor_id, action, resource_type]
+      properties:
+        actor_type: { type: string, minLength: 1, maxLength: 32, description: 操作者类型（user/device/admin） }
+        actor_id: { type: string, minLength: 1, maxLength: 64 }
+        action: { type: string, minLength: 1, maxLength: 64, example: account.login }
+        resource_type: { type: string, minLength: 1, maxLength: 32 }
+        resource_id: { type: string, maxLength: 64, nullable: true }
+        detail:
+          type: object
+          nullable: true
+          description: 结构化详情；禁止携带凭据/密钥
+        client_ip: { type: string, maxLength: 45, nullable: true }
+
+    AuditEventView:
+      type: object
+      required: [id, actor_type, actor_id, action, resource_type, created_at]
+      properties:
+        id: { type: integer }
+        actor_type: { type: string }
+        actor_id: { type: string }
+        action: { type: string }
+        resource_type: { type: string }
+        resource_id: { type: string, nullable: true }
+        detail: { type: object, nullable: true }
+        client_ip: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+# 错误码契约（冻结项）：code = HTTP 状态 * 100 + 序号；新增只能追加，禁止复用与修改语义。
+x-error-codes:
+  OK:
+    code: 0
+    http_status: 200
+    message: 成功
+  BAD_REQUEST:
+    code: 40001
+    http_status: 400
+    message: 请求参数错误
+  RESET_TOKEN_INVALID:
+    code: 40002
+    http_status: 400
+    message: 重置令牌无效或已过期
+  UNAUTHENTICATED:
+    code: 40101
+    http_status: 401
+    message: 未认证或凭证无效
+  TOKEN_EXPIRED:
+    code: 40102
+    http_status: 401
+    message: 令牌已过期
+  INVALID_CREDENTIALS:
+    code: 40103
+    http_status: 401
+    message: 用户名或密码错误
+  TOKEN_REVOKED:
+    code: 40104
+    http_status: 401
+    message: 刷新令牌已失效，请重新登录
+  PERMISSION_DENIED:
+    code: 40301
+    http_status: 403
+    message: 无操作权限
+  ACCOUNT_FROZEN:
+    code: 40302
+    http_status: 403
+    message: 账号已冻结或已注销
+  NOT_FOUND:
+    code: 40401
+    http_status: 404
+    message: 资源不存在
+  METHOD_NOT_ALLOWED:
+    code: 40501
+    http_status: 405
+    message: 请求方法不允许
+  CONFLICT:
+    code: 40901
+    http_status: 409
+    message: 资源状态冲突或请求重复
+  ACCOUNT_LOCKED:
+    code: 42301
+    http_status: 423
+    message: 登录尝试过多，账号已临时锁定
+  RATE_LIMITED:
+    code: 42901
+    http_status: 429
+    message: 请求过于频繁，请稍后重试
+  INTERNAL_ERROR:
+    code: 50001
+    http_status: 500
+    message: 服务内部错误
+  DB_UNAVAILABLE:
+    code: 50301
+    http_status: 503
+    message: 依赖服务不可用
