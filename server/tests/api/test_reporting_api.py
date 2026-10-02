@@ -41,12 +41,12 @@ async def _seed(client) -> None:
                 PointLedger(user_id="u1", exec_id="g1", delta=100, balance_type="purchased",
                             kind="grant", status="confirmed", source="register_gift",
                             created_at=now),
-                PointLedger(user_id="u1", exec_id="r1", delta=30, balance_type="purchased",
-                            kind="reserve", status="confirmed", source="stage",
-                            created_at=now),
-                PointLedger(user_id="u1", exec_id="r2", delta=20, balance_type="purchased",
-                            kind="reserve", status="reserved", source="stage",
-                            created_at=now),
+                PointLedger(user_id="u1", exec_id="r1", delta=-30, balance_type="purchased",
+                        kind="reserve", status="confirmed", source="stage",
+                        created_at=now),
+            PointLedger(user_id="u1", exec_id="r2", delta=-20, balance_type="purchased",
+                        kind="reserve", status="reserved", source="stage",
+                        created_at=now),
             ]
         )
         session.add_all(

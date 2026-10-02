@@ -3,6 +3,10 @@
 时间聚合用 DB 侧 date() 函数（SQLite/PostgreSQL 双驱动可用），
 口径为存储 UTC 日；SQLite 返回字符串日期，读回时按 date.fromisoformat 解析。
 金额一律整数分；全聚合结果保证非负（coalesce 兜底空表）。
+
+流水符号语义（与积分域一致）：grant 记正 delta；reserve/offline_sync 记负 delta，
+confirm/refund 在同一 reserve 行上迁移状态（delta 不变）。故消耗/退还/挂起预扣
+均对 reserve 行取 -delta，保证视图值为正值。
 """
 
 from datetime import UTC, date, datetime, time, timedelta
@@ -69,7 +73,7 @@ class SQLAlchemyPointsReportingRepository(PointsReportingRepository):
         ).one()
         reserved_points = (
             await self._session.execute(
-                select(func.coalesce(func.sum(PointLedger.delta), 0)).where(
+                select(func.coalesce(func.sum(-PointLedger.delta), 0)).where(
                     PointLedger.status == "reserved"
                 )
             )
@@ -116,7 +120,7 @@ class SQLAlchemyPointsReportingRepository(PointsReportingRepository):
                             (
                                 (PointLedger.kind == "reserve")
                                 & (PointLedger.status == "confirmed"),
-                                PointLedger.delta,
+                                -PointLedger.delta,
                             ),
                             else_=0,
                         )
@@ -129,7 +133,7 @@ class SQLAlchemyPointsReportingRepository(PointsReportingRepository):
                             (
                                 (PointLedger.kind == "reserve")
                                 & (PointLedger.status == "refunded"),
-                                PointLedger.delta,
+                                -PointLedger.delta,
                             ),
                             else_=0,
                         )

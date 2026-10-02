@@ -1,7 +1,7 @@
 """报表仓储聚合单元测试（看板 P3 积分分析 + P4 资产明细）。
 
 直接以 ORM 模型种子数据，验证聚合口径：
-- 积分：grant 发放 / reserve+confirmed 消耗 / reserve+refunded 退还，按 UTC 日分组；
+- 积分：grant 发放为正值；reserve 行存负 delta，消耗/退还/挂起预扣取 -delta 为正值；
 - 计费：GMV=paid/refunded 金额合计、退款单列、按 paid_at 日分组、商品聚合。
 """
 
@@ -35,21 +35,21 @@ async def _seed_points(session) -> None:
             PointLedger(user_id="u1", exec_id="g1", delta=100, balance_type="purchased",
                         kind="grant", status="confirmed", source="register_gift",
                         created_at=TODAY),
-            PointLedger(user_id="u1", exec_id="r1", delta=30, balance_type="purchased",
-                        kind="reserve", status="confirmed", source="stage", stage="analysis",
-                        created_at=TODAY),
-            PointLedger(user_id="u1", exec_id="r2", delta=20, balance_type="purchased",
-                        kind="reserve", status="reserved", source="stage", stage="solve",
-                        created_at=TODAY),
-            PointLedger(user_id="u2", exec_id="r3", delta=40, balance_type="monthly",
-                        kind="reserve", status="refunded", source="stage", stage="analysis",
-                        created_at=YESTERDAY),
-            PointLedger(user_id="u2", exec_id="g2", delta=500, balance_type="purchased",
-                        kind="grant", status="confirmed", source="register_gift",
-                        created_at=YESTERDAY),
-            PointLedger(user_id="u2", exec_id="o1", delta=10, balance_type="purchased",
-                        kind="offline_sync", status="confirmed", source="offline",
-                        created_at=TODAY),
+            PointLedger(user_id="u1", exec_id="r1", delta=-30, balance_type="purchased",
+                    kind="reserve", status="confirmed", source="stage", stage="analysis",
+                    created_at=TODAY),
+        PointLedger(user_id="u1", exec_id="r2", delta=-20, balance_type="purchased",
+                    kind="reserve", status="reserved", source="stage", stage="solve",
+                    created_at=TODAY),
+        PointLedger(user_id="u2", exec_id="r3", delta=-40, balance_type="monthly",
+                    kind="reserve", status="refunded", source="stage", stage="analysis",
+                    created_at=YESTERDAY),
+        PointLedger(user_id="u2", exec_id="g2", delta=500, balance_type="purchased",
+                    kind="grant", status="confirmed", source="register_gift",
+                    created_at=YESTERDAY),
+        PointLedger(user_id="u2", exec_id="o1", delta=-10, balance_type="purchased",
+                    kind="offline_sync", status="confirmed", source="offline",
+                    created_at=TODAY),
         ]
     )
     await session.commit()
