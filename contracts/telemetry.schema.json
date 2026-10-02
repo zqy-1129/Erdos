@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://erdos.local/contracts/telemetry.schema.json",
+  "title": "Erdos 遥测事件契约（SP0-2 契约基线）",
+  "description": "遥测事件名枚举与 props 白名单。隐私红线：props 禁止题面文本、API Key、文件路径、论文内容；留痕合规数据仅存本地，永不上报。",
+  "definitions": {
+    "distinctId": { "type": "string", "minLength": 1, "maxLength": 128, "description": "匿名用户指纹（哈希）" },
+    "appVersion": { "type": "string", "maxLength": 32 },
+    "os": { "type": "string", "enum": ["windows", "macos", "linux"] },
+    "channel": { "type": "string", "enum": ["stable", "beta", "dev"] }
+  },
+  "events": {
+    "page_view": { "summary": "页面浏览", "props": { "page": { "type": "string" } } },
+    "feature_click": { "summary": "功能点击", "props": { "feature": { "type": "string" } } },
+    "stage_start": { "summary": "阶段启动", "props": { "stage": { "type": "string", "enum": ["analysis", "modeling", "solving", "writing"] }, "task_id": { "type": "string" } } },
+    "stage_success": { "summary": "阶段成功", "props": { "stage": { "type": "string" }, "duration_ms": { "type": "number" }, "token_usage": { "type": "number", "description": "仅统计值" } } },
+    "stage_fail": { "summary": "阶段失败", "props": { "stage": { "type": "string" }, "error_kind": { "type": "string" } } },
+    "gate_retry": { "summary": "门禁重试", "props": { "stage": { "type": "string" }, "retry_count": { "type": "integer" } } },
+    "order_created": { "summary": "下单", "props": { "product_code": { "type": "string" }, "price_cents": { "type": "integer" } } },
+    "pay_success": { "summary": "支付成功", "props": { "order_id": { "type": "string" }, "price_cents": { "type": "integer" } } },
+    "app_error": { "summary": "应用错误", "props": { "error_code": { "type": "string" }, "message": { "type": "string", "maxLength": 256 } } }
+  },
+  "propsWhitelist": {
+    "description": "props 允许字段白名单。以下字段禁止出现在 props 中（隐私红线）：",
+    "forbidden": ["prompt_zh", "prompt_en", "paper_content", "api_key", "file_path", "model_output", "trail_detail"]
+  }
+}
