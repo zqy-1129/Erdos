@@ -1,0 +1,15 @@
+# 报告阶段 rubric（SP1-3 门禁评审，人工可读）
+# 报告阶段侧重结构与图表引用（PRD US-004）
+version: 1
+stage: writing
+threshold: 0.70
+dimensions:
+  - name: 结构完整性
+    weight: 0.30
+    description: 摘要/问题重述/模型/求解/结论等章节是否齐全、逻辑连贯
+  - name: 图表引用
+    weight: 0.35
+    description: 关键结果是否有图表支撑且正文正确引用编号
+  - name: 结论与建议
+    weight: 0.35
+    description: 结论是否呼应问题、是否给出可操作建议与局限说明

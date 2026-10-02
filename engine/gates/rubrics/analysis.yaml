@@ -1,0 +1,15 @@
+# 分析阶段 rubric（SP1-3 门禁评审，人工可读）
+# 评分：每维度 0~1，加权总分 >= threshold 视为通过
+version: 1
+stage: analysis
+threshold: 0.70
+dimensions:
+  - name: 问题理解
+    weight: 0.40
+    description: 是否准确理解题目背景、目标与评价指标
+  - name: 数据理解
+    weight: 0.30
+    description: 是否识别关键数据、约束条件与缺失信息
+  - name: 方法可行性
+    weight: 0.30
+    description: 初步建模思路是否可行、是否有明显方向性错误

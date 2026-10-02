@@ -1,0 +1,14 @@
+# 求解阶段 rubric（SP1-3 门禁评审，人工可读）
+version: 1
+stage: solving
+threshold: 0.70
+dimensions:
+  - name: 方法正确性
+    weight: 0.40
+    description: 求解方法是否与模型一致、计算过程是否正确
+  - name: 结果合理性
+    weight: 0.30
+    description: 结果量级是否合理、是否通过简单检验
+  - name: 敏感性分析
+    weight: 0.30
+    description: 是否对关键参数做敏感性/稳定性分析

@@ -1,1 +1,15 @@
-"""引擎 gates 子包（SP1-1 骨架占位，业务逻辑在后续 SP 实现）。"""
+"""门禁评审器（SP1-3）：rubric 结构化评审 + 重试转人工。"""
+
+from engine.gates.evaluator import Evaluator, GateResult, GateRunner, ScoreDetail
+from engine.gates.schema import Dimension, Rubric, load_rubric, load_rubric_for_stage
+
+__all__ = [
+    "Dimension",
+    "Evaluator",
+    "GateResult",
+    "GateRunner",
+    "Rubric",
+    "ScoreDetail",
+    "load_rubric",
+    "load_rubric_for_stage",
+]

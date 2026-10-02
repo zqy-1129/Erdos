@@ -1,0 +1,15 @@
+# 建模阶段 rubric（SP1-3 门禁评审，人工可读）
+# 建模阶段侧重假设论证（PRD US-004）
+version: 1
+stage: modeling
+threshold: 0.70
+dimensions:
+  - name: 假设论证
+    weight: 0.40
+    description: 模型假设是否明确、合理且有依据（假设未论证为硬伤）
+  - name: 模型合理性
+    weight: 0.30
+    description: 所选模型是否匹配问题类型，变量与参数定义是否清晰
+  - name: 符号一致性
+    weight: 0.30
+    description: 符号体系是否自洽、无歧义，量纲是否一致
