@@ -31,6 +31,7 @@ def settings(tmp_path) -> Settings:
         rate_limit_requests=1000,
         audit_rate_limit_requests=1000,
         database_echo=False,
+        payment_callback_secret="test-callback-secret",
     )
 
 

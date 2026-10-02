@@ -80,7 +80,7 @@ class PointsService:
         if existing is not None:
             return  # 幂等：已赠过
         await self._accounts.get_or_create(user_id, now)
-        await self._ledgers.append(
+        ledger = await self._ledgers.append(
             LedgerRecord(
                 id="",
                 user_id=user_id,
@@ -95,6 +95,8 @@ class PointsService:
                 created_at=now,
             )
         )
+        if ledger is None:
+            return  # 并发撞唯一约束：另一事务已入账（含 credit），避免双重入账
         await self._accounts.credit(user_id, BalanceType.PURCHASED, points, now)
 
     async def grant_points(
@@ -117,7 +119,7 @@ class PointsService:
         if existing is not None:
             return  # 幂等：已入账
         await self._accounts.get_or_create(user_id, now)
-        await self._ledgers.append(
+        ledger = await self._ledgers.append(
             LedgerRecord(
                 id="",
                 user_id=user_id,
@@ -132,6 +134,8 @@ class PointsService:
                 created_at=now,
             )
         )
+        if ledger is None:
+            return  # 并发撞唯一约束：另一事务已入账（含 credit），避免双重入账
         await self._accounts.credit(user_id, balance_type, points, now)
 
     # ------------------------------------------------------------------

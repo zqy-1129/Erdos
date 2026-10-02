@@ -72,14 +72,14 @@ async def test_points_summary(session_factory) -> None:
 
 
 async def test_points_daily_series(session_factory) -> None:
-    """日序列分组：今日 100 发放 / 30 消耗；昨日 500 发放 / 40 退还。"""
+    """日序列分组：今日 100 发放 / 40 消耗（reserve-confirmed 30 + offline_sync 10）；昨日 500 发放 / 40 退还。"""
     async with session_factory() as session:
         await _seed_points(session)
         repo = SQLAlchemyPointsReportingRepository(session)
         rows = await repo.daily_series(TODAY.date() - timedelta(days=3), TODAY.date())
     by_day = {r.stat_date: r for r in rows}
     today = by_day[TODAY.date()]
-    assert (today.granted, today.consumed, today.refunded) == (100, 30, 0)
+    assert (today.granted, today.consumed, today.refunded) == (100, 40, 0)
     yesterday = by_day[YESTERDAY.date()]
     assert (yesterday.granted, yesterday.consumed, yesterday.refunded) == (500, 0, 40)
     assert set(by_day) == {TODAY.date(), YESTERDAY.date()}  # 无数据日不产出行

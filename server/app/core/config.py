@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     order_close_minutes: int = 30  # 未支付订单自动关单时长（PRD：30 分钟）
     refund_grace_days: int = 7  # 订阅退款宽限期（PRD F-005：7 天内未用可退）
     subscription_monthly_grant_points: int = 400  # 订阅月赠额度（PRD：400 分/月）
+    payment_callback_secret: str = ""  # 支付回调 HMAC 验签共享密钥（空=未配置，回调端点 fail-closed 拒绝）
 
     # 通知与调度域（SP2-7）：验证码限流与续费提醒
     verification_resend_seconds: int = 60  # 验证码重发间隔（PRD：60s/次）

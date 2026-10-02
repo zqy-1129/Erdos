@@ -1,9 +1,11 @@
 """计费订阅域接口（SP2-5 资金域核心）：商品 / 下单 / 订单 / 回调 / 退款 / 订阅 / 月赠。
 
-资金域红线：金额一律整数分；下单以 idempotency_key 幂等；回调 payment_no 幂等；
+资金域红线：金额一律整数分；下单以 idempotency_key 幂等；回调 payment_no 幂等 +
+HMAC 签名验签（payment_callback_secret 未配置时 fail-closed 拒绝，防伪回调铸币）；
 退款遵循 PRD F-005（订阅 7 天未用可退，积分包不退）。
 """
 
+import hmac
 from datetime import datetime
 from typing import Annotated
 
@@ -15,7 +17,7 @@ from app.api.deps import get_session_factory, require_principal
 from app.core.clock import utc_now
 from app.core.config import Settings
 from app.core.envelope import Envelope, ok
-from app.core.errors import NOT_FOUND, AppError
+from app.core.errors import INTERNAL_ERROR, NOT_FOUND, UNAUTHENTICATED, AppError
 from app.core.logging import request_id_var
 from app.domain.billing.ports import (
     CallbackRecord,
@@ -23,7 +25,7 @@ from app.domain.billing.ports import (
     OrderRecord,
     ProductRecord,
 )
-from app.domain.billing.service import BillingService
+from app.domain.billing.service import BillingService, callback_digest
 from app.domain.points.service import PointsService
 from app.infra.auth import Principal
 from app.repository.billing import (
@@ -187,7 +189,8 @@ async def get_order(
     now = utc_now()
     async with UnitOfWork(session_factory) as uow:
         order = await _service(request, uow.session).get_order(order_id, now)
-    if order is None:
+    if order is None or order.user_id != principal.subject:
+        # 与「不存在」同响应，不泄露他人订单的存在性（水平越权防护）
         raise AppError(NOT_FOUND, detail="订单不存在")
     return ok(_order_view(order), request_id_var.get())
 
@@ -198,7 +201,16 @@ async def payment_callback(
     payload: CallbackBody,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[OrderView]:
-    """支付回调入账（payment_no 幂等，重复回调不重复发放权益）。"""
+    """支付回调入账（签名验签 + payment_no 幂等，重复回调不重复发放权益）。"""
+    settings: Settings = request.app.state.settings
+    # HMAC 验签（fail-closed）：secret 未配置或签名不符一律拒绝，防伪回调免费铸币
+    if not settings.payment_callback_secret:
+        raise AppError(INTERNAL_ERROR, detail="支付回调签名密钥未配置")
+    expected = callback_digest(
+        settings.payment_callback_secret, payload.payment_no, payload.order_id
+    )
+    if not hmac.compare_digest(expected, payload.raw_digest):
+        raise AppError(UNAUTHENTICATED, detail="支付回调签名校验失败")
     now = utc_now()
     async with UnitOfWork(session_factory) as uow:
         order = await SQLAlchemyOrderRepository(uow.session).get(payload.order_id)

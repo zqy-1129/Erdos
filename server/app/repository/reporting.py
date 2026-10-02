@@ -5,8 +5,9 @@
 金额一律整数分；全聚合结果保证非负（coalesce 兜底空表）。
 
 流水符号语义（与积分域一致）：grant 记正 delta；reserve/offline_sync 记负 delta，
-confirm/refund 在同一 reserve 行上迁移状态（delta 不变）。故消耗/退还/挂起预扣
-均对 reserve 行取 -delta，保证视图值为正值。
+confirm/refund 在同一 reserve 行上迁移状态（delta 不变）。故消耗口径取
+「reserve 行 confirmed 的 -delta + offline_sync 行的 -delta」，退还/挂起预扣亦取 -delta，
+保证视图值为正值。
 """
 
 from datetime import UTC, date, datetime, time, timedelta
@@ -122,6 +123,10 @@ class SQLAlchemyPointsReportingRepository(PointsReportingRepository):
                                 & (PointLedger.status == "confirmed"),
                                 -PointLedger.delta,
                             ),
+                            else_=0,
+                        )
+                        + case(
+                            (PointLedger.kind == "offline_sync", -PointLedger.delta),
                             else_=0,
                         )
                     ),

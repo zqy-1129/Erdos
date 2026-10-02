@@ -817,8 +817,11 @@ paths:
     post:
       tags: [billing]
       operationId: paymentCallback
-      summary: 支付回调（payment_no 幂等入账）
-      description: 重复回调不重复发放权益；过期订单拒绝入账并关单。
+      summary: 支付回调（HMAC 验签 + payment_no 幂等入账）
+      description: |
+        raw_digest = HMAC-SHA256(payment_callback_secret, "{payment_no}|{order_id}") 的 hex 小写。
+        签名不符返回 401；服务端未配置 payment_callback_secret 时 fail-closed 返回 500。
+        重复回调不重复发放权益；过期订单拒绝入账并关单。
       requestBody:
         required: true
         content:
@@ -831,7 +834,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/EnvelopeOrderView" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
 
   /v1/billing/subscription:
     get:
@@ -1324,6 +1329,11 @@ components:
           schema: { $ref: "#/components/schemas/Envelope" }
     BadRequest:
       description: 参数错误（BAD_REQUEST）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+    InternalError:
+      description: 服务内部错误（INTERNAL_ERROR）
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Envelope" }
@@ -1900,7 +1910,11 @@ components:
       properties:
         payment_no: { type: string, minLength: 1, maxLength: 64 }
         order_id: { type: string, minLength: 1, maxLength: 36 }
-        raw_digest: { type: string, minLength: 1, maxLength: 128 }
+        raw_digest:
+          type: string
+          minLength: 64
+          maxLength: 128
+          description: HMAC-SHA256(payment_callback_secret, "{payment_no}|{order_id}") 的 hex 小写
 
     SubscriptionView:
       type: object

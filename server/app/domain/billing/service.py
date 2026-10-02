@@ -9,6 +9,8 @@
 - 退款规则（PRD F-005）：订阅 7 天内未使用任何权益可退，积分包不退。
 """
 
+import hashlib
+import hmac
 from datetime import datetime, timedelta
 
 from app.core.config import Settings
@@ -33,6 +35,12 @@ from app.domain.billing.ports import (
 )
 from app.domain.points.ports import BalanceType
 from app.domain.points.service import PointsService
+
+
+def callback_digest(secret: str, payment_no: str, order_id: str) -> str:
+    """支付回调签名摘要：HMAC-SHA256(payment_no|order_id) 的 hex（与支付网关共享密钥）。"""
+    message = f"{payment_no}|{order_id}".encode()
+    return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
 
 
 class BillingService:
@@ -246,11 +254,39 @@ class BillingService:
         if now > grace_deadline:
             raise AppError(CONFLICT, detail="已超过 7 天退款宽限期")
 
+        # 权益未使用校验（红线：7 天「未用」可退）：本笔订单支付后已领取月赠即视为已使用
+        plan = "monthly" if product.duration_days <= 31 else "yearly"
+        sub = await self._subscriptions.get(user_id, plan)
+        if (
+            sub is not None
+            and sub.last_monthly_grant_at is not None
+            and sub.last_monthly_grant_at >= order.paid_at
+        ):
+            raise AppError(CONFLICT, detail="订阅权益已使用（已领取月赠），无法退款")
+
         refunded = await self._orders.transition(
             order.id, OrderStatus.PAID.value, OrderStatus.REFUNDED.value, now
         )
         if refunded is None:
             raise AppError(CONFLICT, detail="订单状态已变化，退款失败")
+
+        # 回收本笔订单购买的订阅时长（续费只裁剪叠加周期；全新订阅立即到期）
+        if sub is not None and sub.status == SubscriptionStatus.ACTIVE.value:
+            new_end = sub.end_at - timedelta(days=product.duration_days)
+            if new_end < now:
+                new_end = now
+            await self._subscriptions.upsert(
+                SubscriptionRecord(
+                    id=sub.id,
+                    user_id=sub.user_id,
+                    plan=sub.plan,
+                    status=sub.status,
+                    start_at=sub.start_at,
+                    end_at=new_end,
+                    last_monthly_grant_at=sub.last_monthly_grant_at,
+                    created_at=sub.created_at,
+                )
+            )
         return RefundResult(order=refunded, refunded=True)
 
     # ------------------------------------------------------------------

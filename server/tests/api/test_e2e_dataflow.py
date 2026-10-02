@@ -7,9 +7,12 @@
 test 环境用 DevTokenIntrospector：Bearer u1 代表用户 u1。
 """
 
+from app.domain.billing.service import callback_digest
 from app.repository.models import Product
 from app.repository.scheduler import SQLAlchemyAccountLedgerSource
 from app.repository.uow import UnitOfWork
+
+CALLBACK_SECRET = "test-callback-secret"
 
 
 async def _seed_products(client) -> None:
@@ -44,9 +47,14 @@ async def _buy_and_pay(client, user_id: str, code: str, key: str) -> str:
     )
     assert r.status_code == 200
     order_id = r.json()["data"]["order"]["id"]
+    payment_no = f"pay-{key}"
     c = await client.post(
         "/v1/billing/callbacks/payment",
-        json={"payment_no": f"pay-{key}", "order_id": order_id, "raw_digest": "x"},
+        json={
+            "payment_no": payment_no,
+            "order_id": order_id,
+            "raw_digest": callback_digest(CALLBACK_SECRET, payment_no, order_id),
+        },
     )
     assert c.status_code == 200
     return order_id

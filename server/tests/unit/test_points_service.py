@@ -68,6 +68,63 @@ async def test_grant_registration_idempotent(session_factory, settings) -> None:
         assert total == 1 and items[0].kind == "grant"
 
 
+class AppendConflictLedgerRepository:
+    """包装真实仓储：append 恒返回 None，模拟并发撞唯一约束（事务已回滚）。"""
+
+    def __init__(self, session) -> None:
+        self._inner = SQLAlchemyLedgerRepository(session)
+
+    async def find(self, *args, **kwargs):
+        return await self._inner.find(*args, **kwargs)
+
+    async def append(self, record):
+        return None
+
+    async def transition(self, *args, **kwargs):
+        return await self._inner.transition(*args, **kwargs)
+
+    async def list_by_user(self, *args, **kwargs):
+        return await self._inner.list_by_user(*args, **kwargs)
+
+
+def _svc_conflict(session, settings: Settings) -> PointsService:
+    """append 必撞唯一约束的积分服务（并发第二事务视角）。"""
+    return PointsService(
+        SQLAlchemyPointAccountRepository(session),
+        AppendConflictLedgerRepository(session),
+        SQLAlchemyGrantRepository(session),
+        FakeSigner(),
+        settings,
+    )
+
+
+async def test_grant_registration_append_conflict_no_double_credit(session_factory, settings) -> None:
+    """并发撞唯一约束：append 返回 None 时不做 credit，避免双重入账。"""
+    async with UnitOfWork(session_factory) as uow:
+        svc = _svc_conflict(uow.session, settings)
+        await svc.grant_registration("u1", 100, datetime.now(UTC))  # 不抛错、静默幂等
+    async with session_factory() as s:
+        bal = await _balance(s, "u1")
+        assert bal is None or bal.purchased_balance == 0  # 未 credit
+
+
+async def test_grant_points_append_conflict_no_double_credit(session_factory, settings) -> None:
+    """通用入账并发撞唯一约束：append 返回 None 时不再 credit。"""
+    async with UnitOfWork(session_factory) as uow:
+        await SQLAlchemyPointAccountRepository(uow.session).get_or_create(
+            "u1", datetime.now(UTC)
+        )
+        svc = _svc_conflict(uow.session, settings)
+        await svc.grant_points(
+            "u1", 400, exec_id="monthly:u1:monthly:202610",
+            balance_type=BalanceType.MONTHLY, source="subscription_monthly",
+            now=datetime.now(UTC),
+        )
+    async with session_factory() as s:
+        bal = await _balance(s, "u1")
+        assert bal is not None and bal.monthly_balance == 0  # 未重复入账
+
+
 async def test_reserve_confirm_refund_happy_path(session_factory, settings) -> None:
     """完整状态机：赠分 -> 预扣 -> 确认 -> （另一笔）预扣 -> 退还。"""
     async with UnitOfWork(session_factory) as uow:
