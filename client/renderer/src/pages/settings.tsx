@@ -44,6 +44,9 @@ export function SettingsPage(props: { stores: AppStores }): ReactNode {
         <h3>关于</h3>
         <p className="muted">版本：0.1.0（开发模式）</p>
         <p className="muted">数据目录：%APPDATA%/erdos（本地留痕与密钥密文存储于此）</p>
+        <p className="muted" data-testid="boot-metrics">
+          冷启动耗时：{(globalThis as { __erdosBoot?: { appReadyMs(): number | null } }).__erdosBoot?.appReadyMs() ?? "—"} ms（目标 &lt; 3000ms）
+        </p>
       </div>
 
       <div className="form-block">
