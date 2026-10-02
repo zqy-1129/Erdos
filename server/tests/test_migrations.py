@@ -12,6 +12,9 @@ from app.repository.models import (
     AuthRefreshToken,
     Device,
     MonitoringMinuteSnapshot,
+    PointAccount,
+    PointLedger,
+    StageGrant,
 )
 
 SERVER_ROOT = Path(__file__).resolve().parents[1]
@@ -108,6 +111,27 @@ def test_account_domain_tables_match_models(tmp_path) -> None:
     assert {"ix_devices_user_id", "ix_devices_fingerprint"} <= device_indexes
 
 
+def test_points_domain_tables_match_models(tmp_path) -> None:
+    db_file = tmp_path / "mig.db"
+    command.upgrade(_config(f"sqlite+aiosqlite:///{db_file}"), "head")
+
+    conn = sqlite3.connect(db_file)
+    try:
+        account_cols = {row[1] for row in conn.execute("PRAGMA table_info(point_accounts)")}
+        ledger_cols = {row[1] for row in conn.execute("PRAGMA table_info(point_ledgers)")}
+        grant_cols = {row[1] for row in conn.execute("PRAGMA table_info(stage_grants)")}
+        ledger_indexes = {
+            row[1] for row in conn.execute("PRAGMA index_list(point_ledgers)")
+        }
+    finally:
+        conn.close()
+
+    assert account_cols == set(PointAccount.__table__.columns.keys())
+    assert ledger_cols == set(PointLedger.__table__.columns.keys())
+    assert grant_cols == set(StageGrant.__table__.columns.keys())
+    assert {"ix_point_ledgers_user_id", "ix_point_ledgers_exec_id"} <= ledger_indexes
+
+
 def test_downgrade_base_removes_table(tmp_path) -> None:
     db_file = tmp_path / "mig.db"
     cfg = _config(f"sqlite+aiosqlite:///{db_file}")
@@ -127,6 +151,9 @@ def test_downgrade_base_removes_table(tmp_path) -> None:
     assert "auth_refresh_tokens" not in tables
     assert "users" not in tables
     assert "devices" not in tables
+    assert "point_accounts" not in tables
+    assert "point_ledgers" not in tables
+    assert "stage_grants" not in tables
 
 
 def test_offline_sql_generation(capsys) -> None:

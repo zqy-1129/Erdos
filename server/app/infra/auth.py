@@ -298,3 +298,19 @@ class LogResetNotifier:
     async def send(self, identifier: str, token: str) -> None:
         self.sent.append((identifier, token))
         logger.info("密码重置令牌已生成（dev 渠道），identifier=%s token=%s", identifier, token)
+
+
+class Ed25519LicenseSigner:
+    """阶段许可签名器（SP2-4 积分域）：复用签名密钥集对规范化字节 Ed25519 签名。
+
+    返回 (signature_hex, kid)。客户端凭服务端公钥（JWKS）离线验签。
+    """
+
+    def __init__(self, keys: SigningKeys) -> None:
+        self._keys = keys
+
+    def sign(self, payload: bytes) -> tuple[str, str]:
+        """对 payload 规范化字节签名，返回 (hex 签名, 密钥版本 kid)。"""
+        key = self._keys.private_keys[self._keys.active_kid]
+        signature = key.sign(payload)
+        return signature.hex(), self._keys.active_kid

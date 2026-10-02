@@ -2,7 +2,16 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import account, audit, auth, dashboard, health, monitoring, presence
+from app.api.v1 import (
+    account,
+    audit,
+    auth,
+    dashboard,
+    health,
+    monitoring,
+    points,
+    presence,
+)
 
 api_router = APIRouter(prefix="/v1")
 api_router.include_router(health.router)
@@ -12,3 +21,4 @@ api_router.include_router(audit.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(monitoring.router)
 api_router.include_router(presence.router)
+api_router.include_router(points.router)

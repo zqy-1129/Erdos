@@ -23,11 +23,17 @@ from app.domain.account.ports import RegistrationRequest
 from app.domain.account.service import PasswordPolicy, RegisterService
 from app.domain.auth.ports import AuthIdentity, TokenManager, TokenPair
 from app.domain.auth.service import AuthService
+from app.domain.points.service import PointsService
 from app.infra.events import EventBroker
 from app.repository.account import SQLAlchemyAccountRepository, SQLAlchemyDeviceRepository
 from app.repository.auth import SQLAlchemyRefreshTokenRepository
 from app.repository.events import SQLAlchemyDashboardEventRepository
 from app.repository.metrics import SQLAlchemyUsersTrendRepository
+from app.repository.points import (
+    SQLAlchemyGrantRepository,
+    SQLAlchemyLedgerRepository,
+    SQLAlchemyPointAccountRepository,
+)
 from app.repository.uow import UnitOfWork
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -217,6 +223,17 @@ async def register(
                 actor_id=result.account.id,
                 payload={"points": settings.account_registration_gift_points},
                 dedup_key=f"gift:{result.account.id}",
+            )
+            # SP2-4 积分域：同事务同步入账（幂等 exec_id=register:{id}），
+            # 保证注册成功即余额到账；REGISTRATION_GIFT_TOPIC 事件仍发布供遥测/看板订阅。
+            await PointsService(
+                SQLAlchemyPointAccountRepository(uow.session),
+                SQLAlchemyLedgerRepository(uow.session),
+                SQLAlchemyGrantRepository(uow.session),
+                request.app.state.license_signer,
+                settings,
+            ).grant_registration(
+                result.account.id, settings.account_registration_gift_points, now
             )
         await SQLAlchemyUsersTrendRepository(uow.session).apply_daily_delta(
             stat_date=now.date(), total_delta=1, new_delta=1

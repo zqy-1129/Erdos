@@ -37,6 +37,7 @@ from app.infra.auth import (
     BcryptPasswordHasher,
     DevCredentialVerifier,
     DevTokenIntrospector,
+    Ed25519LicenseSigner,
     Ed25519TokenManager,
     FallbackJwtIntrospector,
     JwtTokenIntrospector,
@@ -115,6 +116,8 @@ def create_app(
     app.state.token_manager = token_manager
     hasher = BcryptPasswordHasher()
     app.state.password_hasher = hasher
+    # SP2-4 积分域：阶段许可签名器（复用签名密钥集）
+    app.state.license_signer = Ed25519LicenseSigner(signing_keys)
     dev_verifier = DevCredentialVerifier.parse(config.auth_dev_users)
     app.state.credential_verifier = SqlCredentialVerifier(
         session_factory, hasher, fallback=dev_verifier

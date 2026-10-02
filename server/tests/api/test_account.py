@@ -14,6 +14,8 @@ from app.repository.models import (
     Base,
     DashboardEvent,
     Device,
+    PointAccount,
+    PointLedger,
     UsersDailyStats,
 )
 
@@ -111,6 +113,29 @@ async def test_same_fingerprint_grants_gift_only_once(account_env) -> None:
             )
         ).scalars().all()
     assert len(gifts) == 1  # 验收：同设备指纹多次注册只赠一次
+
+
+async def test_register_grants_points_into_account(account_env) -> None:
+    """SP2-4 积分域接入：注册赠分同步入账到积分账户（余额 + 流水）。"""
+    app, client = account_env
+    resp = await _register(client, REGISTER)
+    assert resp.status_code == 200
+
+    async with app.state.session_factory() as session:
+        account = (
+            await session.execute(select(PointAccount))
+        ).scalar_one()
+        ledgers = (
+            await session.execute(select(PointLedger))
+        ).scalars().all()
+
+    assert account.purchased_balance == 100  # 注册赠 100 分
+    assert account.monthly_balance == 0
+    assert len(ledgers) == 1
+    assert ledgers[0].kind == "grant"
+    assert ledgers[0].source == "register_gift"
+    assert ledgers[0].delta == 100
+    assert ledgers[0].status == "confirmed"
 
 
 async def test_register_weak_password_rejected(account_env) -> None:

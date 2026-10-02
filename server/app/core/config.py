@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     account_reset_daily_limit: int = 10  # 重置请求每日限额（PRD：每日 10 次）
     account_password_min_length: int = 8  # 密码强度：≥8 位含字母与数字
 
+    # 积分域（SP2-4 资金域）：阶段许可有效期
+    license_ttl_seconds: int = 900  # 阶段许可有效期 15 分钟（客户端离线宽限）
+
     def admin_roles(self) -> tuple[str, ...]:
         """解析看板管理角色元组。"""
         return tuple(part.strip() for part in self.dashboard_admin_roles.split(",") if part.strip())
