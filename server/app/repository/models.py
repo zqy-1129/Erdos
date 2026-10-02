@@ -510,3 +510,55 @@ class ContentManifest(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
+
+
+# ----------------------------------------------------------------------
+# 通知与调度域（SP2-7）：notification_send_logs / scheduler_runs
+# ----------------------------------------------------------------------
+class NotificationSendLog(Base):
+    """通知发送记录（《服务端架构》通知服务全链路审计）：发送结果落库。
+
+    message_id 唯一为幂等去重键（同一条消息重复投递只发送一次）；
+    channel 渠道（email / sms）；status 状态（queued / sent / failed）。
+    """
+
+    __tablename__ = "notification_send_logs"
+
+    __table_args__ = (
+        UniqueConstraint("message_id", name="uq_notification_send_logs_message"),
+    )
+
+    id: Mapped[str] = mapped_column(  # type: ignore[assignment]  # 契约 uuid 主键
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    message_id: Mapped[str] = mapped_column(String(64))
+    channel: Mapped[str] = mapped_column(String(16))  # email / sms
+    template_id: Mapped[str] = mapped_column(String(32))
+    target: Mapped[str] = mapped_column(String(128))  # 邮箱 / 手机号
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    error: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SchedulerRun(Base):
+    """调度任务批次记录：task_name + batch_key 唯一，幂等批次。
+
+    重复触发（同 task_name + batch_key）跳过，避免月赠/对账重复执行。
+    """
+
+    __tablename__ = "scheduler_runs"
+
+    __table_args__ = (
+        UniqueConstraint("task_name", "batch_key", name="uq_scheduler_runs_batch"),
+    )
+
+    id: Mapped[str] = mapped_column(  # type: ignore[assignment]  # 契约 uuid 主键
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    task_name: Mapped[str] = mapped_column(String(32), index=True)
+    batch_key: Mapped[str] = mapped_column(String(64))  # 幂等批次键（如月赠的年月）
+    status: Mapped[str] = mapped_column(String(16), default="running")  # running / done / failed
+    result: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -11,6 +11,7 @@ from app.api.v1 import (
     entitlements,
     health,
     monitoring,
+    notifications,
     points,
     presence,
 )
@@ -26,3 +27,4 @@ api_router.include_router(presence.router)
 api_router.include_router(points.router)
 api_router.include_router(billing.router)
 api_router.include_router(entitlements.router)
+api_router.include_router(notifications.router)

@@ -48,9 +48,12 @@ from app.infra.auth import (
 )
 from app.infra.db import create_engine, create_session_factory
 from app.infra.events import EventBroker
+from app.infra.message_bus import MessageBus
 from app.infra.metrics import metrics_response
 from app.infra.monitoring import MonitoringCollector, set_collector
+from app.infra.notification_sender import LogNotificationSender
 from app.infra.sampling import run_monitoring_loop
+from app.infra.verification_limiter import FixedWindowCodeLimiter
 
 
 def _default_introspector(
@@ -118,6 +121,12 @@ def create_app(
     app.state.password_hasher = hasher
     # SP2-4 积分域：阶段许可签名器（复用签名密钥集）
     app.state.license_signer = Ed25519LicenseSigner(signing_keys)
+    # SP2-7 通知与调度：消息总线 + 通知发送器（dev 日志渠道）+ 验证码限流器（进程级）
+    app.state.message_bus = MessageBus()
+    app.state.notification_sender = LogNotificationSender()
+    app.state.code_limiter = FixedWindowCodeLimiter(
+        config.verification_resend_seconds, config.verification_daily_limit
+    )
     dev_verifier = DevCredentialVerifier.parse(config.auth_dev_users)
     app.state.credential_verifier = SqlCredentialVerifier(
         session_factory, hasher, fallback=dev_verifier

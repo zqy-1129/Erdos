@@ -15,6 +15,7 @@ from app.repository.models import (
     Device,
     EntitlementSnapshot,
     MonitoringMinuteSnapshot,
+    NotificationSendLog,
     Order,
     PaperTemplate,
     PaymentCallback,
@@ -22,6 +23,7 @@ from app.repository.models import (
     PointLedger,
     Problem,
     Product,
+    SchedulerRun,
     StageGrant,
     Subscription,
 )
@@ -183,6 +185,21 @@ def test_entitlement_content_tables_match_models(tmp_path) -> None:
     assert manifest_cols == set(ContentManifest.__table__.columns.keys())
 
 
+def test_notification_scheduler_tables_match_models(tmp_path) -> None:
+    db_file = tmp_path / "mig.db"
+    command.upgrade(_config(f"sqlite+aiosqlite:///{db_file}"), "head")
+
+    conn = sqlite3.connect(db_file)
+    try:
+        log_cols = {row[1] for row in conn.execute("PRAGMA table_info(notification_send_logs)")}
+        run_cols = {row[1] for row in conn.execute("PRAGMA table_info(scheduler_runs)")}
+    finally:
+        conn.close()
+
+    assert log_cols == set(NotificationSendLog.__table__.columns.keys())
+    assert run_cols == set(SchedulerRun.__table__.columns.keys())
+
+
 def test_downgrade_base_removes_table(tmp_path) -> None:
     db_file = tmp_path / "mig.db"
     cfg = _config(f"sqlite+aiosqlite:///{db_file}")
@@ -214,6 +231,8 @@ def test_downgrade_base_removes_table(tmp_path) -> None:
     assert "cases" not in tables
     assert "content_manifests" not in tables
     assert "entitlement_snapshots" not in tables
+    assert "notification_send_logs" not in tables
+    assert "scheduler_runs" not in tables
 
 
 def test_offline_sql_generation(capsys) -> None:

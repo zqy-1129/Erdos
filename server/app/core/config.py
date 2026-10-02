@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     refund_grace_days: int = 7  # 订阅退款宽限期（PRD F-005：7 天内未用可退）
     subscription_monthly_grant_points: int = 400  # 订阅月赠额度（PRD：400 分/月）
 
+    # 通知与调度域（SP2-7）：验证码限流与续费提醒
+    verification_resend_seconds: int = 60  # 验证码重发间隔（PRD：60s/次）
+    verification_daily_limit: int = 10  # 验证码每日限额（PRD：每日 10 次）
+    renewal_remind_days: int = 3  # 续费提醒提前天数（PRD：到期前 3 天）
+
     def admin_roles(self) -> tuple[str, ...]:
         """解析看板管理角色元组。"""
         return tuple(part.strip() for part in self.dashboard_admin_roles.split(",") if part.strip())
