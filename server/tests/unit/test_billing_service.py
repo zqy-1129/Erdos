@@ -235,3 +235,93 @@ async def test_create_order_unknown_product(session_factory, settings) -> None:
                 CreateOrderRequest("u1", "nope", "mock", "key-1"), datetime.now(UTC)
             )
         assert ei.value.spec is NOT_FOUND
+
+
+# ----------------------------------------------------------------------
+# 边界 / 异常补充（关单、重复退款、退款未支付、回调订单不存在）
+# ----------------------------------------------------------------------
+async def test_callback_rejects_expired_order(session_factory, settings) -> None:
+    """关单：订单超时（30 分钟）后回调应拒绝入账并关单。"""
+    async with UnitOfWork(session_factory) as uow:
+        await _seed_products(uow.session)
+        svc = _svc(uow.session, settings)
+        now = datetime.now(UTC)
+        order = await svc.create_order(
+            CreateOrderRequest("u1", "pack_400", "mock", "key-1"), now
+        )
+        # 31 分钟后回调
+        late = now + timedelta(minutes=31)
+        with pytest.raises(AppError) as ei:
+            await svc.handle_callback(
+                "u1",
+                CallbackRecord(id="", payment_no="pay-1", order_id=order.order.id, raw_digest="x", received_at=late, processed=False),
+                late,
+            )
+        assert ei.value.spec is CONFLICT
+        # 订单已关单
+        closed = await SQLAlchemyOrderRepository(uow.session).get(order.order.id)
+        assert closed.status == "closed"
+
+
+async def test_get_order_closes_expired(session_factory, settings) -> None:
+    """查询关单：created 且过期时，查询应主动关单。"""
+    async with UnitOfWork(session_factory) as uow:
+        await _seed_products(uow.session)
+        svc = _svc(uow.session, settings)
+        now = datetime.now(UTC)
+        order = await svc.create_order(
+            CreateOrderRequest("u1", "pack_400", "mock", "key-1"), now
+        )
+        late = now + timedelta(minutes=31)
+        fetched = await svc.get_order(order.order.id, late)
+        assert fetched.status == "closed"
+
+
+async def test_refund_unpaid_order_rejected(session_factory, settings) -> None:
+    """退款未支付订单：拒绝。"""
+    async with UnitOfWork(session_factory) as uow:
+        await _seed_products(uow.session)
+        svc = _svc(uow.session, settings)
+        order = await svc.create_order(
+            CreateOrderRequest("u1", "sub_monthly", "mock", "key-1"), datetime.now(UTC)
+        )
+        with pytest.raises(AppError) as ei:
+            await svc.refund("u1", order.order.id, datetime.now(UTC))
+        assert ei.value.spec is CONFLICT
+
+
+async def test_refund_already_refunded_rejected(session_factory, settings) -> None:
+    """重复退款：已退款订单再次退款被拒。"""
+    async with UnitOfWork(session_factory) as uow:
+        await _seed_products(uow.session)
+        svc = _svc(uow.session, settings)
+        order_id = await _paid_order(uow.session, settings, "u1", "sub_monthly")
+        await svc.refund("u1", order_id, datetime.now(UTC))
+        with pytest.raises(AppError) as ei:
+            await svc.refund("u1", order_id, datetime.now(UTC))
+        assert ei.value.spec is CONFLICT
+
+
+async def test_callback_unknown_order(session_factory, settings) -> None:
+    """回调订单不存在：返回 404。"""
+    async with UnitOfWork(session_factory) as uow:
+        await _seed_products(uow.session)
+        svc = _svc(uow.session, settings)
+        with pytest.raises(AppError) as ei:
+            await svc.handle_callback(
+                "u1",
+                CallbackRecord(id="", payment_no="pay-x", order_id="nope", raw_digest="x", received_at=datetime.now(UTC), processed=False),
+                datetime.now(UTC),
+            )
+        assert ei.value.spec is NOT_FOUND
+
+
+async def test_refund_other_users_order_rejected(session_factory, settings) -> None:
+    """退款他人订单：越权拒绝。"""
+    async with UnitOfWork(session_factory) as uow:
+        await _seed_products(uow.session)
+        svc = _svc(uow.session, settings)
+        order_id = await _paid_order(uow.session, settings, "u1", "sub_monthly")
+        with pytest.raises(AppError) as ei:
+            await svc.refund("u2", order_id, datetime.now(UTC))
+        assert ei.value.spec is CONFLICT

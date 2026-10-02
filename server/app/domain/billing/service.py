@@ -60,6 +60,18 @@ class BillingService:
     async def list_products(self) -> list[ProductRecord]:
         return await self._products.list_active()
 
+    async def get_order(self, order_id: str, now: datetime) -> OrderRecord | None:
+        """查询订单（客户端轮询兜底补账）；created 且过期时主动关单。"""
+        order = await self._orders.get(order_id)
+        if order is None:
+            return None
+        if order.status == OrderStatus.CREATED.value and now > order.expires_at:
+            await self._orders.transition(
+                order.id, OrderStatus.CREATED.value, OrderStatus.CLOSED.value, now
+            )
+            return await self._orders.get(order_id)
+        return order
+
     # ------------------------------------------------------------------
     # 下单：幂等 + 30 分钟关单
     # ------------------------------------------------------------------
@@ -148,6 +160,13 @@ class BillingService:
         if order.status != OrderStatus.CREATED.value:
             # 已关单/已退款/已支付：不重复入账
             return CallbackResult(order=order, applied=False)
+
+        # 关单检查：订单已超过支付时限（30 分钟），先关单再拒绝入账
+        if now > order.expires_at:
+            await self._orders.transition(
+                order.id, OrderStatus.CREATED.value, OrderStatus.CLOSED.value, now
+            )
+            raise AppError(CONFLICT, detail="订单已超时关单，无法入账")
 
         paid_order = await self._orders.transition(
             order.id, OrderStatus.CREATED.value, OrderStatus.PAID.value, now

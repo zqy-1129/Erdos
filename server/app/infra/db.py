@@ -28,7 +28,10 @@ def create_engine(database_url: str, *, echo: bool = False) -> AsyncEngine:
     """
     kwargs: dict[str, Any] = {"echo": echo}
     if database_url.startswith("sqlite"):
-        kwargs["connect_args"] = {"check_same_thread": False}
+        # check_same_thread=False：aiosqlite 由事件循环单线程驱动；
+        # timeout=30：SQLite 单写者，设置 busy_timeout 让并发写等待而非立即
+        # 抛 database is locked（生产切 PostgreSQL 后无此限制）。
+        kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
     else:
         kwargs["pool_pre_ping"] = True
     engine = create_async_engine(database_url, **kwargs)

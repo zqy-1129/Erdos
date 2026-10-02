@@ -153,3 +153,32 @@ async def test_billing_endpoints_require_auth(client) -> None:
             json={"product_code": "pack_400", "channel": "mock", "idempotency_key": "k"},
         )
     ).status_code == 401
+
+
+async def test_create_order_invalid_payload_rejected(client) -> None:
+    """Pydantic 校验：非法字段被 400 拒绝。"""
+    await _seed_products(client)
+    # 空 product_code
+    r = await client.post(
+        "/v1/billing/orders",
+        json={"product_code": "", "channel": "mock", "idempotency_key": "k"},
+        headers={"Authorization": "Bearer u1"},
+    )
+    assert r.status_code == 400
+    # 超长 idempotency_key
+    r2 = await client.post(
+        "/v1/billing/orders",
+        json={"product_code": "pack_400", "channel": "mock", "idempotency_key": "k" * 65},
+        headers={"Authorization": "Bearer u1"},
+    )
+    assert r2.status_code == 400
+
+
+async def test_callback_invalid_payload_rejected(client) -> None:
+    """回调非法字段：400 拒绝。"""
+    await _seed_products(client)
+    r = await client.post(
+        "/v1/billing/callbacks/payment",
+        json={"payment_no": "", "order_id": "x", "raw_digest": "y"},
+    )
+    assert r.status_code == 400

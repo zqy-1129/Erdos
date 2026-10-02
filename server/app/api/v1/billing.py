@@ -183,9 +183,10 @@ async def get_order(
     principal: Annotated[Principal, Depends(require_principal)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[OrderView]:
-    """客户端轮询兜底补账：查询订单状态。"""
+    """客户端轮询兜底补账：查询订单状态（过期未支付自动关单）。"""
+    now = utc_now()
     async with UnitOfWork(session_factory) as uow:
-        order = await SQLAlchemyOrderRepository(uow.session).get(order_id)
+        order = await _service(request, uow.session).get_order(order_id, now)
     if order is None:
         raise AppError(NOT_FOUND, detail="订单不存在")
     return ok(_order_view(order), request_id_var.get())

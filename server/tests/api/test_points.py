@@ -201,3 +201,47 @@ async def test_ledger_export_csv(client) -> None:
     assert body.startswith("\ufeff")  # BOM
     assert "流水号" in body
     assert "e1" in body  # 流水内容包含幂等键
+
+
+async def test_reserve_invalid_points_rejected_by_validation(client) -> None:
+    """Pydantic 校验：负数/零/超长字段被 400 拒绝（不进入业务层）。"""
+    await _seed(client, "u1", purchased=100)
+    # 零积分
+    r0 = await client.post(
+        "/v1/points/reserve",
+        json={"exec_id": "e", "stage": "analysis", "points": 0},
+        headers={"Authorization": "Bearer u1"},
+    )
+    assert r0.status_code == 400
+    # 负数积分
+    rneg = await client.post(
+        "/v1/points/reserve",
+        json={"exec_id": "e", "stage": "analysis", "points": -5},
+        headers={"Authorization": "Bearer u1"},
+    )
+    assert rneg.status_code == 400
+    # 超长 exec_id（>64）
+    rlong = await client.post(
+        "/v1/points/reserve",
+        json={"exec_id": "x" * 65, "stage": "analysis", "points": 10},
+        headers={"Authorization": "Bearer u1"},
+    )
+    assert rlong.status_code == 400
+    # 空 exec_id
+    rempty = await client.post(
+        "/v1/points/reserve",
+        json={"exec_id": "", "stage": "analysis", "points": 10},
+        headers={"Authorization": "Bearer u1"},
+    )
+    assert rempty.status_code == 400
+
+
+async def test_offline_sync_empty_items_rejected(client) -> None:
+    """离线对账空列表：400 拒绝。"""
+    await _seed(client, "u1", purchased=100)
+    resp = await client.post(
+        "/v1/points/offline-sync",
+        json={"items": []},
+        headers={"Authorization": "Bearer u1"},
+    )
+    assert resp.status_code == 400

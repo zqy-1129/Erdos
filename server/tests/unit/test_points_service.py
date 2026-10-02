@@ -318,3 +318,42 @@ async def test_reconcile_empty_rejected(session_factory, settings) -> None:
         with pytest.raises(AppError) as ei:
             await svc.reconcile("u1", [], datetime.now(UTC))
         assert ei.value.spec.code == 40001  # BAD_REQUEST
+
+
+# ----------------------------------------------------------------------
+# 边界 / 异常补充（负数/零积分、对账负数）
+# ----------------------------------------------------------------------
+async def test_reserve_non_positive_points_rejected(session_factory, settings) -> None:
+    """预扣负数/零积分：抛 400。"""
+    async with UnitOfWork(session_factory) as uow:
+        svc = _svc(uow.session, settings)
+        await svc.grant_registration("u1", 100, datetime.now(UTC))
+        for bad in (0, -10):
+            with pytest.raises(AppError) as ei:
+                await svc.reserve(
+                    ReserveRequest(f"e-{bad}", "u1", "t", "analysis", bad),
+                    datetime.now(UTC),
+                )
+            assert ei.value.spec.code == 40001  # BAD_REQUEST
+
+
+async def test_reconcile_non_positive_points_rejected(session_factory, settings) -> None:
+    """离线对账负数积分：抛 400。"""
+    async with UnitOfWork(session_factory) as uow:
+        svc = _svc(uow.session, settings)
+        await svc.grant_registration("u1", 100, datetime.now(UTC))
+        with pytest.raises(AppError) as ei:
+            await svc.reconcile(
+                "u1", [OfflineItem("off-1", "t", "analysis", -5)], datetime.now(UTC)
+            )
+        assert ei.value.spec.code == 40001  # BAD_REQUEST
+
+
+async def test_grant_points_non_positive_rejected(session_factory, settings) -> None:
+    """通用入账负数积分：抛 ValueError。"""
+    async with UnitOfWork(session_factory) as uow:
+        svc = _svc(uow.session, settings)
+        with pytest.raises(ValueError):
+            await svc.grant_points(
+                "u1", 0, "e1", BalanceType.PURCHASED, "test", datetime.now(UTC)
+            )
