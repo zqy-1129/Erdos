@@ -265,7 +265,22 @@ def _parse_since(request: Request) -> int:
 
 
 async def _event_stream(broker: EventBroker, since: int) -> AsyncIterator[str]:
-    """先补发缓冲积压，再实时推送；连接断开自动退订。"""
+    """先补发缓冲积压，再实时推送；连接断开自动退订。
+
+    跨服务重启空窗协商：若客户端游标已失效（版本回卷或积压溢出），
+    先下发 ``stream.reset`` 复位事件，客户端据此回退到全量快照拉取，
+    避免因版本号重置而永久静默。
+    """
+    if broker.reset_needed(since):
+        payload = json.dumps(
+            {"reason": "cursor_stale", "since": since, "latest": broker.latest_version},
+            ensure_ascii=False,
+        )
+        yield (
+            f"id: {broker.latest_version}\n"
+            f"event: stream.reset\n"
+            f"data: {payload}\n\n"
+        )
     async for envelope in broker.subscribe(STREAM_TOPICS, since=since):
         yield (
             f"id: {envelope.version}\n"

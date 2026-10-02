@@ -43,6 +43,27 @@ class EventBroker:
     def latest_version(self) -> int:
         return self._version
 
+    @property
+    def earliest_buffered_version(self) -> int:
+        """缓冲内最早事件的版本号；缓冲为空时返回 latest_version。
+
+        用于判定客户端游标是否已溢出缓冲窗口（跨重启或多实例部署时）。
+        """
+        if not self._buffer:
+            return self._version
+        return self._buffer[0].version
+
+    def reset_needed(self, since: int) -> bool:
+        """判断订阅方游标是否失效，需要客户端回退到全量快照拉取。
+
+        失效条件：
+        1. 版本回卷：since 大于当前最新版本（服务已重启/换实例，版本号重置）；
+        2. 积压溢出：since 早于缓冲最早版本（缓冲已丢弃旧事件，无法补发）。
+        """
+        if since <= 0:
+            return False
+        return since > self._version or since < self.earliest_buffered_version
+
     async def publish(self, topic: str, payload: Mapping[str, Any]) -> EventEnvelope:
         """发布事件：版本 +1、入缓冲、扇出给全部订阅者。"""
         envelope = EventEnvelope(

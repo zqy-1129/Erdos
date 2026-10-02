@@ -91,3 +91,30 @@ async def test_slow_consumer_dropped_oldest_not_blocking() -> None:
 def test_invalid_buffer_size_rejected() -> None:
     with pytest.raises(ValueError):
         EventBroker(buffer_size=0)
+
+
+async def test_reset_needed_version_rewind() -> None:
+    """版本回卷：客户端游标大于当前最新版本（服务重启后版本重置）。"""
+    broker = EventBroker()
+    await broker.publish("t", {"n": 1})
+    # 模拟服务重启：旧客户端游标是 50，新进程最新版本仅 1
+    assert broker.reset_needed(50) is True
+
+
+async def test_reset_needed_buffer_overflow() -> None:
+    """积压溢出：客户端游标早于缓冲最早版本（缓冲已丢弃旧事件）。"""
+    broker = EventBroker(buffer_size=3)
+    for i in range(5):
+        await broker.publish("t", {"n": i})
+    # 缓冲只保留 3/4/5，游标 2 早于最早 3，无法补发
+    assert broker.reset_needed(2) is True
+
+
+async def test_reset_needed_false_for_valid_cursor() -> None:
+    """有效游标：0（从头）或落在缓冲窗口内，均不需复位。"""
+    broker = EventBroker(buffer_size=3)
+    for i in range(5):
+        await broker.publish("t", {"n": i})
+    assert broker.reset_needed(0) is False  # 从头订阅
+    assert broker.reset_needed(3) is False  # 恰好最早版本
+    assert broker.reset_needed(5) is False  # 恰好最新版本
