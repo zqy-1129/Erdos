@@ -67,7 +67,7 @@ class SubprocessSandbox:
                 stderr=stderr_b.decode("utf-8", errors="replace"),
                 artifacts=self._scan_artifacts(work_dir),
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             return ExecutionResult(
@@ -94,7 +94,7 @@ async def detect_docker_available() -> bool:
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
         return proc.returncode == 0 and bool(stdout.strip())
-    except (FileNotFoundError, asyncio.TimeoutError):
+    except (TimeoutError, FileNotFoundError):
         return False
 
 

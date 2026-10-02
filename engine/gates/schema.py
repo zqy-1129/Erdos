@@ -6,7 +6,7 @@ rubric 以 YAML 文件维护、版本化、随包分发，非开发人员可打�
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml  # type: ignore[import-untyped]  # pyyaml 无类型 stub
+import yaml  # pyyaml 无类型 stub（mypy override 已忽略缺失导入）
 
 
 @dataclass(frozen=True, slots=True)

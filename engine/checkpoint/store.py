@@ -10,7 +10,7 @@
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -50,7 +50,7 @@ class SQLiteCheckpointStore:
 
     def save_stage(self, task_id: str, stage: str, status: str, step: int, data: dict) -> None:
         """保存阶段检查点（覆盖更新）。"""
-        updated_at = datetime.now(timezone.utc).isoformat()
+        updated_at = datetime.now(UTC).isoformat()
         self._conn.execute(
             """
             INSERT INTO checkpoints (task_id, stage, status, step, data, updated_at)

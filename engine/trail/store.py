@@ -12,7 +12,7 @@
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -76,7 +76,7 @@ class TrailStore:
         self, task_id: str, stage: str, event_type: str, detail: dict[str, Any], ts: str | None = None
     ) -> int:
         """追加一条留痕事件，返回自增 id。写入失败抛异常（不静默丢弃）。"""
-        ts = ts or datetime.now(timezone.utc).isoformat()
+        ts = ts or datetime.now(UTC).isoformat()
         cursor = self._conn.execute(
             "INSERT INTO audit_trail (task_id, stage, event_type, detail, ts) VALUES (?, ?, ?, ?, ?)",
             (task_id, stage, event_type, json.dumps(detail, ensure_ascii=False), ts),
@@ -88,7 +88,7 @@ class TrailStore:
         self, task_id: str, stage: str, kind: str, file_path: str, sha256: str, size_bytes: int
     ) -> int:
         """登记一条产物索引（合规声明导出以 sha256 作支撑材料引用）。"""
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.now(UTC).isoformat()
         cursor = self._conn.execute(
             "INSERT INTO artifact_index (task_id, stage, kind, file_path, sha256, size_bytes, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",

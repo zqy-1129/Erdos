@@ -1,11 +1,13 @@
 """门禁评审器单元测试（SP1-3）：解析异常 / 重试上限 / 转人工 3 类 + rubric 可见。"""
 
 import json
+from pathlib import Path
 
 from engine.gates.evaluator import GateRunner, _parse_score
 from engine.gates.schema import load_rubric_for_stage
 
-RUBRICS_DIR = "engine/gates/rubrics"
+# 基于测试文件定位 rubric 资源（与运行 cwd 无关；CI 从 engine/ 目录执行）
+RUBRICS_DIR = Path(__file__).resolve().parent.parent / "gates" / "rubrics"
 
 
 class FakeEvaluator:

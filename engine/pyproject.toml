@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "erdos-engine"
+version = "0.1.0"
+description = "Erdos 本地 Agent 引擎（SP1：四阶段编排 / 门禁 / 沙箱 / BYOK 适配 / 留痕）"
+readme = ""
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6,<7",
+    "httpx>=0.27,<1",
+    # LangChain/LangGraph 在 SP1-2 强化编排时以精确版本锁定加入（随包发布，
+    # 客户端不允许运行时动态升级大版本——见 PRD 业务约束与架构决策）。
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.23,<1",
+    "pytest-cov>=5,<6",
+    "ruff>=0.5,<1",
+    "mypy>=1.10,<2",
+]
+
+[tool.setuptools.packages.find]
+# 仓结构说明：engine 目录本身即顶层包（engine/__init__.py），子包 trail/adapters/...
+# 位于其下；构建需以仓库根为基准发现包（editable 安装后 `import engine` 可用）。
+where = [".."]
+include = ["engine*"]
+
+# ---- ruff ----
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["engine", "tests"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["engine"]
+
+# ---- mypy ----
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["httpx.*", "yaml"]
+ignore_missing_imports = true
+
+# ---- pytest ----
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
+addopts = "-q --cov=engine --cov-report=term-missing --cov-fail-under=70"

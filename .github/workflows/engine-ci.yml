@@ -1,0 +1,32 @@
+name: engine-ci
+
+on:
+  pull_request:
+    paths: ["engine/**", "contracts/**"]
+  push:
+    branches: [main, develop]
+
+jobs:
+  quality:
+    name: lint + type + test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -e "./engine[dev]"
+      - name: Ruff
+        run: ruff check engine
+      - name: Mypy
+        run: mypy --config-file engine/pyproject.toml engine
+      - name: Pytest (coverage >= 70%)
+        run: |
+          set -o pipefail
+          cd engine && pytest --tb=short 2>&1 | tee pytest.log
+      - name: Annotate failures
+        if: failure()
+        run: |
+          cd engine && grep -n -B10 -A8 "ImportError while importing" pytest.log | tail -30 | sed 's/^/::error::/' || true
