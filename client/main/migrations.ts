@@ -51,9 +51,16 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    version: 2,
+    // SP3-5 遥测 SDK：outbox 行补齐上报必填字段（对齐 /v1/telemetry/events 载荷）
+    sql: [
+      `ALTER TABLE telemetry_outbox ADD COLUMN app_version TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE telemetry_outbox ADD COLUMN os TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE telemetry_outbox ADD COLUMN channel TEXT NOT NULL DEFAULT 'stable'`,
+    ],
+  },
 ];
-
-/** 最新 schema 版本。 */
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
 
 /**
