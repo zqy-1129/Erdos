@@ -32,4 +32,4 @@ jobs:
       - name: Annotate failures
         if: failure()
         run: |
-          grep -E "^FAILED|^ERROR|assert" pytest.log | head -30 | sed 's/^/::error::/' || true
+          tail -60 pytest.log | sed 's/^/::error::/' || true
