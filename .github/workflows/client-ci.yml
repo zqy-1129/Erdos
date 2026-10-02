@@ -24,6 +24,12 @@ jobs:
         run: npm ci
       - name: TypeScript (tsc --noEmit)
         run: npx tsc --noEmit
+      - name: Dependency boundary (langchain engine-only)
+        run: |
+          if grep -rn "langchain\|langgraph" main renderer shared declaration --include="*.ts" --include="*.tsx" 2>/dev/null; then
+            echo "::error::langchain/langgraph 仅允许出现在 engine/（客户端引擎子进程），壳与渲染层禁止引入"
+            exit 1
+          fi
       - name: ESLint
         run: npx eslint .
       - name: Unit tests (node --test)

@@ -25,6 +25,12 @@ jobs:
         run: ruff check app tests
       - name: Mypy
         run: mypy app
+      - name: Dependency boundary (langchain engine-only)
+        run: |
+          if grep -rn "langchain\|langgraph" app contracts --include="*.py"; then
+            echo "::error::langchain/langgraph 仅允许出现在 engine/（客户端引擎子进程），服务端与契约层禁止引入"
+            exit 1
+          fi
       - name: Pytest (coverage >= 80%)
         run: |
           set -o pipefail
