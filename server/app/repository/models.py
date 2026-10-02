@@ -262,3 +262,119 @@ class StageGrant(Base):
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     status: Mapped[str] = mapped_column(String(16), default="active")  # active / used / expired
+
+
+# ----------------------------------------------------------------------
+# 计费订阅域（SP2-5 资金域核心）：products / orders / subscriptions / payment_callbacks
+# ----------------------------------------------------------------------
+class Product(Base):
+    """商品（《数据模型设计》products）：定价配置化，运营可后台调价。
+
+    type: subscription / points_pack；price_cents 一律整数分（禁止浮点金额）；
+    points 为积分包面额或订阅月赠额度；duration_days 订阅周期天数（积分包为 0）。
+    """
+
+    __tablename__ = "products"
+
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_products_code"),
+    )
+
+    id: Mapped[str] = mapped_column(  # type: ignore[assignment]  # 契约 uuid 主键
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    code: Mapped[str] = mapped_column(String(32))  # 稳定商品编码，如 sub_monthly / pack_400
+    type: Mapped[str] = mapped_column(String(16), index=True)  # subscription / points_pack
+    name: Mapped[str] = mapped_column(String(64))
+    price_cents: Mapped[int] = mapped_column(Integer)
+    points: Mapped[int] = mapped_column(Integer, default=0)  # 月赠积分额度 / 积分包面额
+    duration_days: Mapped[int] = mapped_column(Integer, default=0)  # 订阅周期天数
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class Order(Base):
+    """订单（《数据模型设计》orders）：状态机 created → paid / closed / refunded。
+
+    idempotency_key unique 保证同一下单请求只生成一单；30 分钟未支付自动关单；
+    channel 支付通道（wechat / alipay / mock）。
+    """
+
+    __tablename__ = "orders"
+
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_orders_idempotency"),
+    )
+
+    id: Mapped[str] = mapped_column(  # type: ignore[assignment]  # 契约 uuid 主键
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    product_id: Mapped[str] = mapped_column(String(36), index=True)
+    price_cents: Mapped[int] = mapped_column(Integer)
+    channel: Mapped[str] = mapped_column(String(16), default="mock")
+    status: Mapped[str] = mapped_column(String(16), default="created", index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    refunded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class Subscription(Base):
+    """订阅（《数据模型设计》subscriptions）：last_monthly_grant_at 为月赠幂等依据。
+
+    plan: monthly / yearly；status: active / expired / cancelled；
+    到期前 3 天提醒（SP2-7 调度），到期冻结新任务。
+    """
+
+    __tablename__ = "subscriptions"
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "plan", name="uq_subscriptions_user_plan"),
+    )
+
+    id: Mapped[str] = mapped_column(  # type: ignore[assignment]  # 契约 uuid 主键
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    plan: Mapped[str] = mapped_column(String(16))  # monthly / yearly
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_monthly_grant_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class PaymentCallback(Base):
+    """支付回调审计（《数据模型设计》payment_callbacks）：payment_no unique 去重。
+
+    raw_digest 回调原文摘要（验签审计）；processed 是否已入账；
+    unique(payment_no) 保证重复回调只处理一次。
+    """
+
+    __tablename__ = "payment_callbacks"
+
+    __table_args__ = (
+        UniqueConstraint("payment_no", name="uq_payment_callbacks_no"),
+    )
+
+    id: Mapped[str] = mapped_column(  # type: ignore[assignment]  # 契约 uuid 主键
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    payment_no: Mapped[str] = mapped_column(String(64))
+    order_id: Mapped[str] = mapped_column(String(36), index=True)
+    raw_digest: Mapped[str] = mapped_column(String(128))
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    processed: Mapped[bool] = mapped_column(Boolean, default=False)

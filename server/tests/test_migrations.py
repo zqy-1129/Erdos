@@ -12,9 +12,13 @@ from app.repository.models import (
     AuthRefreshToken,
     Device,
     MonitoringMinuteSnapshot,
+    Order,
+    PaymentCallback,
     PointAccount,
     PointLedger,
+    Product,
     StageGrant,
+    Subscription,
 )
 
 SERVER_ROOT = Path(__file__).resolve().parents[1]
@@ -132,6 +136,27 @@ def test_points_domain_tables_match_models(tmp_path) -> None:
     assert {"ix_point_ledgers_user_id", "ix_point_ledgers_exec_id"} <= ledger_indexes
 
 
+def test_billing_domain_tables_match_models(tmp_path) -> None:
+    db_file = tmp_path / "mig.db"
+    command.upgrade(_config(f"sqlite+aiosqlite:///{db_file}"), "head")
+
+    conn = sqlite3.connect(db_file)
+    try:
+        product_cols = {row[1] for row in conn.execute("PRAGMA table_info(products)")}
+        order_cols = {row[1] for row in conn.execute("PRAGMA table_info(orders)")}
+        sub_cols = {row[1] for row in conn.execute("PRAGMA table_info(subscriptions)")}
+        cb_cols = {row[1] for row in conn.execute("PRAGMA table_info(payment_callbacks)")}
+        order_indexes = {row[1] for row in conn.execute("PRAGMA index_list(orders)")}
+    finally:
+        conn.close()
+
+    assert product_cols == set(Product.__table__.columns.keys())
+    assert order_cols == set(Order.__table__.columns.keys())
+    assert sub_cols == set(Subscription.__table__.columns.keys())
+    assert cb_cols == set(PaymentCallback.__table__.columns.keys())
+    assert {"ix_orders_user_id", "ix_orders_status"} <= order_indexes
+
+
 def test_downgrade_base_removes_table(tmp_path) -> None:
     db_file = tmp_path / "mig.db"
     cfg = _config(f"sqlite+aiosqlite:///{db_file}")
@@ -154,6 +179,10 @@ def test_downgrade_base_removes_table(tmp_path) -> None:
     assert "point_accounts" not in tables
     assert "point_ledgers" not in tables
     assert "stage_grants" not in tables
+    assert "products" not in tables
+    assert "orders" not in tables
+    assert "subscriptions" not in tables
+    assert "payment_callbacks" not in tables
 
 
 def test_offline_sql_generation(capsys) -> None:

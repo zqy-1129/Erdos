@@ -97,6 +97,43 @@ class PointsService:
         )
         await self._accounts.credit(user_id, BalanceType.PURCHASED, points, now)
 
+    async def grant_points(
+        self,
+        user_id: str,
+        points: int,
+        exec_id: str,
+        balance_type: BalanceType,
+        source: str,
+        now: datetime,
+    ) -> None:
+        """通用积分入账（SP2-5 计费域消费）：积分包充值 / 订阅月赠。
+
+        exec_id 幂等（同业务键只入账一次）；balance_type 区分购买/月度；
+        source 标识来源（points_pack / subscription_monthly）。
+        """
+        if points <= 0:
+            raise ValueError("入账积分必须为正")
+        existing = await self._ledgers.find(user_id, exec_id, LedgerKind.GRANT.value)
+        if existing is not None:
+            return  # 幂等：已入账
+        await self._accounts.get_or_create(user_id, now)
+        await self._ledgers.append(
+            LedgerRecord(
+                id="",
+                user_id=user_id,
+                exec_id=exec_id,
+                delta=points,
+                balance_type=balance_type.value,
+                kind=LedgerKind.GRANT.value,
+                status=LedgerStatus.CONFIRMED.value,
+                source=source,
+                task_id=None,
+                stage=None,
+                created_at=now,
+            )
+        )
+        await self._accounts.credit(user_id, balance_type, points, now)
+
     # ------------------------------------------------------------------
     # 预扣（reserve）：许可签发 + 余额冻结
     # ------------------------------------------------------------------

@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     offline_sync_batch_limit: int = 200  # 单次离线对账批量上限（PRD：批量逐条回执）
     offline_sync_debt_threshold: int = 0  # 欠费冻结阈值：可用余额低于此值即冻结新任务
 
+    # 计费订阅域（SP2-5 资金域）：下单/关单/退款/月赠
+    order_close_minutes: int = 30  # 未支付订单自动关单时长（PRD：30 分钟）
+    refund_grace_days: int = 7  # 订阅退款宽限期（PRD F-005：7 天内未用可退）
+    subscription_monthly_grant_points: int = 400  # 订阅月赠额度（PRD：400 分/月）
+
     def admin_roles(self) -> tuple[str, ...]:
         """解析看板管理角色元组。"""
         return tuple(part.strip() for part in self.dashboard_admin_roles.split(",") if part.strip())
