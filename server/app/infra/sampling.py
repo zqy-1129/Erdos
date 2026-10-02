@@ -24,6 +24,7 @@ from app.domain.monitoring.ports import (
     display_values,
 )
 from app.domain.monitoring.service import AlertEvaluator
+from app.infra.alert_webhook import AlertWebhookDispatcher
 from app.infra.events import EventBroker
 from app.infra.monitoring import MonitoringCollector
 from app.repository.events import SQLAlchemyDashboardEventRepository
@@ -57,6 +58,8 @@ async def run_monitoring_loop(app: FastAPI) -> None:
     collector = state.monitoring
     thresholds = AlertThresholds.from_settings(settings)
     evaluator = AlertEvaluator(thresholds)
+    # 告警 Webhook 外发（未配置 URL 时整条链路关闭，无行为变化）
+    webhook = AlertWebhookDispatcher.from_settings(settings)
     last_minute: datetime | None = None
 
     while True:
@@ -68,6 +71,7 @@ async def run_monitoring_loop(app: FastAPI) -> None:
                 evaluator=evaluator,
                 settings=settings,
                 last_minute=last_minute,
+                webhook=webhook,
             )
         except asyncio.CancelledError:
             raise
@@ -85,6 +89,7 @@ async def _run_once(
     evaluator: AlertEvaluator,
     settings: Settings,
     last_minute: datetime | None,
+    webhook: AlertWebhookDispatcher,
 ) -> datetime:
     state = app.state
     now = utc_now()
@@ -142,6 +147,7 @@ async def _run_once(
                 },
             },
         )
+        webhook.dispatch(transition)  # 旁路外发（未配置时为空操作）
     return minute
 
 

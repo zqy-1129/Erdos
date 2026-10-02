@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     alert_db_p95_ms: float = 200.0
     alert_db_pool_usage: float = 0.8
 
+    # 告警 Webhook 外发（ERDOS_ALERT_WEBHOOK_URL；空=关闭外发，看板内告警不受影响）
+    alert_webhook_url: str = ""
+    alert_webhook_timeout_seconds: float = 3.0
+    alert_webhook_retries: int = 2
+    alert_webhook_backoff_seconds: float = 1.0
+
     # 认证授权（SP2-2）：JWT 双令牌、RBAC 四角色、防爆破、Ed25519
     auth_issuer: str = "erdos-server"
     auth_access_ttl_seconds: int = 900  # 访问令牌 15 分钟
