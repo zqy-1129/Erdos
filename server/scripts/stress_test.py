@@ -8,25 +8,36 @@
   5. presence 心跳高频吞吐（500 次连续）
 
 运行：<venv>/Scripts/python.exe scripts/stress_test.py
+      默认 SQLite 临时库；设置 ERDOS_DATABASE_URL 后按 PostgreSQL 驱动执行，
+      并按 SP2-8 验收口径做 P95 < 200ms 判定（ERDOS_PERF_P95_MS 可覆盖阈值）。
 输出：每项的结果 + 吞吐/延迟 + 一致性校验结论。
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import statistics
+import tempfile
 import time
 from datetime import UTC, datetime
 
 from httpx import ASGITransport, AsyncClient
 
 from app.core.config import Settings
+from app.domain.billing.service import callback_digest
 from app.main import create_app
 from app.repository.models import Base
 from app.repository.points import (
     SQLAlchemyLedgerRepository,
     SQLAlchemyPointAccountRepository,
 )
+
+# 回调 HMAC 验签共享密钥（压测专用；与生产 ERDOS_PAYMENT_CALLBACK_SECRET 无关）
+STRESS_CALLBACK_SECRET = "stress-test-callback-secret"
+
+# 各场景 P95 采集（PG 模式下按验收口径判定）
+_P95_BY_SCENE: list[tuple[str, float]] = []
 
 
 async def _build_app(db_url: str) -> tuple[AsyncClient, object]:
@@ -36,6 +47,7 @@ async def _build_app(db_url: str) -> tuple[AsyncClient, object]:
         rate_limit_requests=100000,
         audit_rate_limit_requests=100000,
         database_echo=False,
+        payment_callback_secret=STRESS_CALLBACK_SECRET,
     )
     app = create_app(settings)
     engine = app.state.engine
@@ -87,17 +99,20 @@ async def _measure(label: str, coros: list) -> dict:
 
     results = await asyncio.gather(*(wrap(c) for c in coros))
     elapsed = time.perf_counter() - started
+    p95_ms = round(statistics.quantiles(latencies, n=20)[18] * 1000, 2)
 
-    return {
+    result = {
         "label": label,
         "total": len(results),
         "elapsed_s": round(elapsed, 3),
         "qps": round(len(results) / elapsed, 1) if elapsed > 0 else 0,
         "lat_p50_ms": round(statistics.median(latencies) * 1000, 2),
-        "lat_p95_ms": round(statistics.quantiles(latencies, n=20)[18] * 1000, 2),
+        "lat_p95_ms": p95_ms,
         "lat_max_ms": round(max(latencies) * 1000, 2),
         "results": results,
     }
+    _P95_BY_SCENE.append((label, p95_ms))
+    return result
 
 
 async def stress_reserve(client, app) -> None:
@@ -143,7 +158,11 @@ async def stress_callback_replay(client, app) -> None:
     async def one(_i: int) -> int:
         r = await client.post(
             "/v1/billing/callbacks/payment",
-            json={"payment_no": "stress-pay-1", "order_id": order_id, "raw_digest": "x"},
+            json={
+                "payment_no": "stress-pay-1",
+                "order_id": order_id,
+                "raw_digest": callback_digest(STRESS_CALLBACK_SECRET, "stress-pay-1", order_id),
+            },
         )
         return r.status_code
 
@@ -222,17 +241,18 @@ async def stress_presence_heartbeat(client, app) -> None:
 
 
 async def main() -> None:
-    import os
-    import tempfile
+    db_url = os.environ.get("ERDOS_DATABASE_URL")
+    driver = "PostgreSQL" if db_url else "SQLite"
+    if not db_url:
+        db_file = os.path.join(tempfile.gettempdir(), "erdos_stress.db")
+        if os.path.exists(db_file):
+            os.remove(db_file)
+        db_url = f"sqlite+aiosqlite:///{db_file}"
 
-    db_file = os.path.join(tempfile.gettempdir(), "erdos_stress.db")
-    if os.path.exists(db_file):
-        os.remove(db_file)
-
-    client, app = await _build_app(f"sqlite+aiosqlite:///{db_file}")
+    client, app = await _build_app(db_url)
     try:
         print("=" * 60)
-        print("Erdos 服务端压力测试（SQLite 单实例）")
+        print(f"Erdos 服务端压力测试（{driver} 单实例）")
         print("=" * 60)
         await stress_reserve(client, app)
         await stress_callback_replay(client, app)
@@ -241,6 +261,19 @@ async def main() -> None:
         await stress_presence_heartbeat(client, app)
         print("=" * 60)
         print("全部压力场景通过")
+
+        # PG 模式按验收口径判定（SP2-8：写密集 P95 < 200ms = Go，否则 No-Go）
+        if db_url.startswith("postgresql"):
+            threshold = float(os.environ.get("ERDOS_PERF_P95_MS", "200"))
+            worst = max((p95 for _, p95 in _P95_BY_SCENE), default=0.0)
+            print(f"P95 阈值判定：{threshold}ms；各场景：" +
+                  "；".join(f"{label}={p95}ms" for label, p95 in _P95_BY_SCENE))
+            failed = [f"{label}={p95}ms" for label, p95 in _P95_BY_SCENE if p95 > threshold]
+            if failed:
+                raise SystemExit(
+                    f"SP2-8 性能验收 No-Go：以下场景 P95 超 {threshold}ms —— {'；'.join(failed)}"
+                )
+            print(f"SP2-8 性能验收 Go：全部场景 P95 ≤ {threshold}ms（最差 {worst}ms）")
     finally:
         await client.aclose()
         await app.state.engine.dispose()

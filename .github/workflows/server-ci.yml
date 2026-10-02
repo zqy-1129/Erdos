@@ -39,3 +39,43 @@ jobs:
         if: failure()
         run: |
           grep -n -B10 -A8 "ImportError while importing" pytest.log | tail -30 | sed 's/^/::error::/' || true
+
+  perf-pg:
+    name: SP2-8 PG 压测（P95 < 200ms）
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: erdos
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ERDOS_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/erdos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Migrate (alembic upgrade head)
+        run: python -m alembic upgrade head
+      - name: Stress test (5 场景 + P95 判定)
+        run: |
+          set -o pipefail
+          python scripts/stress_test.py 2>&1 | tee stress.log
+      - name: Annotate failures
+        if: failure()
+        run: |
+          grep -E "No-Go|AssertionError|场景|P95" stress.log | tail -20 | sed 's/^/::error::/' || true
