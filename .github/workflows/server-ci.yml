@@ -9,7 +9,7 @@ on:
 jobs:
   quality:
     name: lint + type + test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: server
@@ -26,4 +26,10 @@ jobs:
       - name: Mypy
         run: mypy app
       - name: Pytest (coverage >= 80%)
-        run: pytest
+        run: |
+          set -o pipefail
+          pytest --tb=short 2>&1 | tee pytest.log
+      - name: Annotate failures
+        if: failure()
+        run: |
+          grep -E "^FAILED|^ERROR|assert" pytest.log | head -30 | sed 's/^/::error::/' || true
