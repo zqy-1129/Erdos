@@ -128,7 +128,7 @@ def main() -> int:
         for r in err_problems:
             print(f"  {r}")
     else:
-        print("[OK] x-error-codes 与 ERROR_SPECS 一致（{} 个）".format(len(ERROR_SPECS) - 1))
+        print(f"[OK] x-error-codes 与 ERROR_SPECS 一致（{len(ERROR_SPECS) - 1} 个）")
 
     return 1 if (only_contract or only_app or ref_missing or err_problems) else 0
 

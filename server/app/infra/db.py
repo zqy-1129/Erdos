@@ -24,7 +24,7 @@ def create_engine(database_url: str, *, echo: bool = False) -> AsyncEngine:
     """按连接串创建异步引擎。
 
     SQLite 显式关闭同线程检查（aiosqlite 由事件循环单线程驱动）；
-    PostgreSQL（asyncpg）走默认连接池并开启连接预检。
+    PostgreSQL（asyncpg）走显式配置的连接池（pool_pre_ping + 10+90）并开启连接预检。
     """
     kwargs: dict[str, Any] = {"echo": echo}
     if database_url.startswith("sqlite"):
@@ -33,7 +33,14 @@ def create_engine(database_url: str, *, echo: bool = False) -> AsyncEngine:
         # 抛 database is locked（生产切 PostgreSQL 后无此限制）。
         kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
     else:
-        kwargs["pool_pre_ping"] = True
+        # asyncpg 连接池：默认 5+10 在写密集并发下排队明显（SP2-8 CI 压测实测
+        # P95 数百 ms），显式放宽至 10+90 上限 100；生产如需调整再提升为配置项。
+        kwargs.update(
+            pool_pre_ping=True,
+            pool_size=10,
+            max_overflow=90,
+            pool_timeout=30,
+        )
     engine = create_async_engine(database_url, **kwargs)
     _register_query_hooks(engine)
     return engine
