@@ -284,7 +284,8 @@ class StageOrchestrator:
             if self._checkpoint is not None:
                 self._checkpoint.delete_stage(self._task_id, gate_stage)
             return {"action": "retry_stage", "stage": gate_stage}
-        if self._state.current_index >= len(STAGES) - 1:
+        if gate_stage == STAGES[-1]:
+            # 最后阶段的门禁通过 → 任务完成
             return {"action": "complete", "stage": self._state.current_stage}
         return {"action": "next_stage", "stage": self._state.current_stage}
 
