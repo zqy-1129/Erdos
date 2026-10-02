@@ -1,0 +1,12 @@
+[
+  {
+    "business_id": "cumcm-latex-official-v1",
+    "competition": "cumcm",
+    "format": "latex",
+    "oss_key": "templates/cumcm-latex-v1.zip",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "version": 1,
+    "changelog": "官方 LaTeX 论文模板（示例占位，实际模板待 OSS 上传后回填 sha256）",
+    "tier": "free"
+  }
+]

@@ -1,0 +1,12 @@
+[
+  {
+    "business_id": "case-sample-001",
+    "problem_id": "cumcm-2024-A",
+    "title": "嫦娥三号软着陆轨道优化（示例案例）",
+    "award": "示例",
+    "method_tags": ["最优控制", "遗传算法", "数值仿真"],
+    "oss_key": "cases/case-sample-001.pdf",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "compliance_note": "仅作方法参照，禁止大段抄袭"
+  }
+]

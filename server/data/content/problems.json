@@ -1,0 +1,16 @@
+[
+  {
+    "business_id": "cumcm-2024-A",
+    "competition": "cumcm",
+    "year": 2024,
+    "problem_code": "A",
+    "title": "嫦娥三号软着陆轨道设计与控制策略（示例题）",
+    "tags": ["优化", "轨道设计", "控制"],
+    "prompt_zh": "嫦娥三号探测器软着陆阶段，需设计着陆轨道与最优控制策略，使燃料消耗最小且满足姿态约束。本题为内置示例题，用于展示题目格式（PRD US-001 public 可见性）。",
+    "prompt_en": "Design the soft landing trajectory and optimal control strategy for Chang'e-3 lander.",
+    "attachments": [],
+    "scoring": "着陆精度、燃料消耗、约束满足",
+    "dataset_hint": "月面地形数据、探测器参数",
+    "visibility": "public"
+  }
+]
