@@ -1,1 +1,5 @@
-"""引擎 checkpoint 子包（SP1-1 骨架占位，业务逻辑在后续 SP 实现）。"""
+"""SQLite 检查点存储（SP1-2）：断点续跑。"""
+
+from engine.checkpoint.store import CheckpointRecord, SQLiteCheckpointStore
+
+__all__ = ["CheckpointRecord", "SQLiteCheckpointStore"]

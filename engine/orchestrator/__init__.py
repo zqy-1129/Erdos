@@ -1,1 +1,11 @@
-"""引擎 orchestrator 子包（SP1-1 骨架占位，业务逻辑在后续 SP 实现）。"""
+"""四阶段编排器（SP1-2）：分析→建模→求解→报告。"""
+
+from engine.orchestrator.graph import (
+    STAGES,
+    OrchestratorState,
+    StageOrchestrator,
+    StageResult,
+    StageStatus,
+)
+
+__all__ = ["STAGES", "OrchestratorState", "StageOrchestrator", "StageResult", "StageStatus"]
