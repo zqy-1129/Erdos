@@ -4,6 +4,7 @@
 满足研发手册「SQLite→PostgreSQL 切换业务零改动」红线。
 """
 
+import os
 import time
 from typing import Any
 
@@ -41,6 +42,11 @@ def create_engine(database_url: str, *, echo: bool = False) -> AsyncEngine:
             max_overflow=90,
             pool_timeout=30,
         )
+        # 压测专用：ERDOS_DB_SYNC_COMMIT=off 关闭同步提交（连接级 server_settings）。
+        # 仅用于性能基准环境（规避 CI 云盘 fsync 噪声）；生产默认为 on（持久性红线）。
+        # CI perf-pg 任务显式设置该变量，其余环境不受影响。
+        if os.environ.get("ERDOS_DB_SYNC_COMMIT") == "off":
+            kwargs["connect_args"] = {"server_settings": {"synchronous_commit": "off"}}
     engine = create_async_engine(database_url, **kwargs)
     _register_query_hooks(engine)
     return engine

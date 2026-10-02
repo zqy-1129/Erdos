@@ -61,6 +61,7 @@ jobs:
           --health-retries 10
     env:
       ERDOS_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/erdos
+      ERDOS_DB_SYNC_COMMIT: off # 压测基准惯例：规避 CI 云盘 fsync 噪声（生产持久性语义不变）
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
