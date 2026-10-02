@@ -8,7 +8,8 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true
   },
-  "include": ["shared/**/*.ts", "main/**/*.ts", "renderer/**/*.ts"]
+  "include": ["shared/**/*.ts", "main/**/*.ts", "renderer/**/*.ts", "tests/**/*.ts"]
 }
