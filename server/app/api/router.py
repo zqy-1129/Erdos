@@ -14,6 +14,7 @@ from app.api.v1 import (
     notifications,
     points,
     presence,
+    telemetry,
 )
 
 api_router = APIRouter(prefix="/v1")
@@ -28,3 +29,4 @@ api_router.include_router(points.router)
 api_router.include_router(billing.router)
 api_router.include_router(entitlements.router)
 api_router.include_router(notifications.router)
+api_router.include_router(telemetry.router)

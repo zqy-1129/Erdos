@@ -562,3 +562,22 @@ class SchedulerRun(Base):
     result: Mapped[str | None] = mapped_column(String(256), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TelemetryEventRecord(Base):
+    """遥测事件（SP4-1，SQLite 降级，对齐《数据模型设计》telemetry_events 宽表）。
+
+    隐私红线：props 已经白名单过滤（无题面/Key/路径字段）；
+    TTL 90 天由应用层清理（生产 ClickHouse 按月分区 TTL）。
+    """
+
+    __tablename__ = "telemetry_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    event_name: Mapped[str] = mapped_column(String(32), index=True)
+    distinct_id: Mapped[str] = mapped_column(String(128))
+    props: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    app_version: Mapped[str] = mapped_column(String(32), default="")
+    os: Mapped[str] = mapped_column(String(16), default="")
+    channel: Mapped[str] = mapped_column(String(16), default="stable")
+    event_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
