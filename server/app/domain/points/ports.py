@@ -194,3 +194,35 @@ class SettleResult:
 
     balance: AccountBalance
     ledger: LedgerRecord
+
+
+@dataclass(frozen=True, slots=True)
+class OfflineItem:
+    """一条离线消耗上报记录（客户端联网后批量对账）。"""
+
+    exec_id: str
+    task_id: str | None
+    stage: str
+    points: int
+
+
+@dataclass(frozen=True, slots=True)
+class OfflineResult:
+    """单条离线上报的处理结果。"""
+
+    exec_id: str
+    status: str  # "applied" | "duplicate" | "insufficient"
+    balance: AccountBalance | None
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReconcileResult:
+    """批量对账汇总结果。"""
+
+    applied: int
+    duplicate: int
+    insufficient: int
+    frozen: bool
+    balance: AccountBalance | None
+    items: tuple[OfflineResult, ...]

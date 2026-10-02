@@ -24,7 +24,10 @@ from app.domain.points.ports import (
     LedgerRecord,
     LedgerRepository,
     LedgerStatus,
+    OfflineItem,
+    OfflineResult,
     PointAccountRepository,
+    ReconcileResult,
     ReserveRequest,
     ReserveResult,
     SettleResult,
@@ -292,3 +295,117 @@ class PointsService:
     def _canonical(payload: dict) -> bytes:
         """规范化序列化：键排序 + 紧凑 JSON（签名确定性，跨端验签一致）。"""
         return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    # ------------------------------------------------------------------
+    # 离线流水批量上报对账（DF-005/008）
+    # ------------------------------------------------------------------
+    async def reconcile(
+        self, user_id: str, items: list[OfflineItem], now: datetime
+    ) -> ReconcileResult:
+        """离线消耗批量对账：逐条幂等去重、余额扣减、欠费冻结。
+
+        语义（对齐执行计划 SP2-4 第 4 项）：
+        - 幂等去重：同 exec_id 的 offline_sync 流水只入账一次（返回 duplicate）；
+        - 余额扣减：原子扣减，不足则记 insufficient（不静默忽略，逐条回执）；
+        - 欠费冻结：当累计可用余额低于阈值时冻结账户（禁止新任务，历史可读）。
+
+        注意：单条 insufficient 不立即冻结（可能是单笔超限），
+        只有当处理完毕后账户可用余额 ≤ 阈值时才冻结，避免误伤。
+        """
+        if not items:
+            raise AppError(BAD_REQUEST, detail="离线对账上报为空")
+
+        results: list[OfflineResult] = []
+        applied = duplicate = insufficient = 0
+        frozen = False
+
+        for item in items:
+            if item.points <= 0:
+                raise AppError(BAD_REQUEST, detail="离线消耗积分必须为正数")
+
+            # 幂等：同 exec_id 已对账 -> duplicate
+            existing = await self._ledgers.find(
+                user_id, item.exec_id, LedgerKind.OFFLINE_SYNC.value
+            )
+            if existing is not None:
+                duplicate += 1
+                results.append(
+                    OfflineResult(
+                        exec_id=item.exec_id,
+                        status="duplicate",
+                        balance=None,
+                        detail="已对账，跳过",
+                    )
+                )
+                continue
+
+            # 原子扣减（优先月度，不足整笔扣购买）
+            balance = await self._accounts.get(user_id)
+            if balance is None:
+                # 账户不存在：离线消耗无法扣减，记 insufficient
+                insufficient += 1
+                results.append(
+                    OfflineResult(
+                        exec_id=item.exec_id,
+                        status="insufficient",
+                        balance=None,
+                        detail="账户不存在，无法扣减",
+                    )
+                )
+                continue
+
+            deducted = await self._deduct(balance, item.points, now)
+            if deducted is None:
+                # 余额不足：不静默忽略，逐条回执 insufficient
+                insufficient += 1
+                results.append(
+                    OfflineResult(
+                        exec_id=item.exec_id,
+                        status="insufficient",
+                        balance=await self._accounts.get(user_id),
+                        detail="余额不足，待补扣",
+                    )
+                )
+                continue
+
+            # 成功扣减：追加终态流水
+            await self._ledgers.append(
+                LedgerRecord(
+                    id="",
+                    user_id=user_id,
+                    exec_id=item.exec_id,
+                    delta=-item.points,
+                    balance_type=deducted.balance_type.value,
+                    kind=LedgerKind.OFFLINE_SYNC.value,
+                    status=LedgerStatus.CONFIRMED.value,  # 离线消耗直接终态
+                    source="offline_sync",
+                    task_id=item.task_id,
+                    stage=item.stage,
+                    created_at=now,
+                )
+            )
+            applied += 1
+            results.append(
+                OfflineResult(
+                    exec_id=item.exec_id,
+                    status="applied",
+                    balance=deducted.balance,
+                    detail="已扣减入账",
+                )
+            )
+
+        # 欠费冻结：处理完毕后可用余额 ≤ 阈值则冻结
+        final_balance = await self._accounts.get(user_id)
+        if final_balance is not None and final_balance.total <= self._settings.offline_sync_debt_threshold:
+            await self._accounts.set_frozen(user_id, True, now)
+            frozen = True
+            final_balance = await self._accounts.get(user_id)
+
+        return ReconcileResult(
+            applied=applied,
+            duplicate=duplicate,
+            insufficient=insufficient,
+            frozen=frozen,
+            balance=final_balance,
+            items=tuple(results),
+        )

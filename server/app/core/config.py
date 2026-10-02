@@ -71,8 +71,10 @@ class Settings(BaseSettings):
     account_reset_daily_limit: int = 10  # 重置请求每日限额（PRD：每日 10 次）
     account_password_min_length: int = 8  # 密码强度：≥8 位含字母与数字
 
-    # 积分域（SP2-4 资金域）：阶段许可有效期
+    # 积分域（SP2-4 资金域）：阶段许可有效期与离线对账
     license_ttl_seconds: int = 900  # 阶段许可有效期 15 分钟（客户端离线宽限）
+    offline_sync_batch_limit: int = 200  # 单次离线对账批量上限（PRD：批量逐条回执）
+    offline_sync_debt_threshold: int = 0  # 欠费冻结阈值：可用余额低于此值即冻结新任务
 
     def admin_roles(self) -> tuple[str, ...]:
         """解析看板管理角色元组。"""

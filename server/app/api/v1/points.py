@@ -1,13 +1,16 @@
-"""积分域接口（SP2-4 资金域核心）：账户查询、流水账单、预扣/确认/退还。
+"""积分域接口（SP2-4 资金域核心）：账户查询、流水账单、预扣/确认/退还、离线对账、流水导出。
 
 资金域红线：reserve/confirm/refund 以 exec_id 幂等；余额不足/终态迁移返回 409；
 全部接口需登录态（require_principal）。
 """
 
+import csv
+import io
 from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -16,7 +19,7 @@ from app.core.clock import utc_now
 from app.core.config import Settings
 from app.core.envelope import Envelope, ok
 from app.core.logging import request_id_var
-from app.domain.points.ports import AccountBalance, ReserveRequest
+from app.domain.points.ports import AccountBalance, OfflineItem, ReserveRequest
 from app.domain.points.service import PointsService
 from app.infra.auth import Principal
 from app.repository.points import (
@@ -100,6 +103,40 @@ class SettleView(BaseModel):
 
     balance: BalanceView
     status: str
+
+
+class OfflineItemBody(BaseModel):
+    """单条离线消耗上报。"""
+
+    exec_id: str = Field(min_length=1, max_length=64)
+    task_id: str | None = Field(default=None, max_length=36)
+    stage: str = Field(min_length=1, max_length=16)
+    points: int = Field(gt=0)
+
+
+class OfflineSyncBody(BaseModel):
+    """离线消耗批量对账请求体。"""
+
+    items: list[OfflineItemBody] = Field(min_length=1, max_length=200)
+
+
+class OfflineItemView(BaseModel):
+    """单条对账回执。"""
+
+    exec_id: str
+    status: str
+    detail: str
+
+
+class OfflineSyncView(BaseModel):
+    """批量对账结果视图。"""
+
+    applied: int
+    duplicate: int
+    insufficient: int
+    frozen: bool
+    balance: BalanceView | None
+    items: list[OfflineItemView]
 
 
 def _balance_view(balance: AccountBalance) -> BalanceView:
@@ -244,3 +281,79 @@ async def refund(
             balance=_balance_view(result.balance), status=result.ledger.status
         )
     return ok(view, request_id_var.get())
+
+
+@router.post("/offline-sync", response_model=Envelope[OfflineSyncView], summary="离线消耗批量对账")
+async def offline_sync(
+    request: Request,
+    payload: OfflineSyncBody,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+) -> Envelope[OfflineSyncView]:
+    """离线期间产生的消耗批量上报对账：逐条幂等去重、余额扣减、欠费冻结。"""
+    now = utc_now()
+    async with UnitOfWork(session_factory) as uow:
+        result = await _service(request, uow.session).reconcile(
+            principal.subject,
+            [
+                OfflineItem(
+                    exec_id=it.exec_id,
+                    task_id=it.task_id,
+                    stage=it.stage,
+                    points=it.points,
+                )
+                for it in payload.items
+            ],
+            now,
+        )
+        view = OfflineSyncView(
+            applied=result.applied,
+            duplicate=result.duplicate,
+            insufficient=result.insufficient,
+            frozen=result.frozen,
+            balance=_balance_view(result.balance) if result.balance else None,
+            items=[
+                OfflineItemView(exec_id=it.exec_id, status=it.status, detail=it.detail)
+                for it in result.items
+            ],
+        )
+    return ok(view, request_id_var.get())
+
+
+@router.get("/ledger/export", summary="积分流水 CSV 导出")
+async def ledger_export(
+    principal: Annotated[Principal, Depends(require_principal)],
+    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+) -> StreamingResponse:
+    """导出当前主体全量积分流水为 CSV（含 UTF-8 BOM，兼容 Excel）。"""
+    async with UnitOfWork(session_factory) as uow:
+        items, _total = await SQLAlchemyLedgerRepository(uow.session).list_by_user(
+            principal.subject, limit=200, offset=0
+        )
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        ["流水号", "幂等键", "变动", "余额类型", "类型", "状态", "来源", "阶段", "时间"]
+    )
+    for it in items:
+        writer.writerow(
+            [
+                it.id,
+                it.exec_id,
+                it.delta,
+                it.balance_type,
+                it.kind,
+                it.status,
+                it.source,
+                it.stage or "",
+                it.created_at.isoformat(),
+            ]
+        )
+
+    content = "\ufeff" + buffer.getvalue()  # UTF-8 BOM
+    return StreamingResponse(
+        iter([content.encode("utf-8")]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="points_ledger.csv"'},
+    )

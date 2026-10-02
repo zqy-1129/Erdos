@@ -138,3 +138,66 @@ async def test_points_endpoints_require_auth(client) -> None:
             "/v1/points/reserve", json={"exec_id": "e", "stage": "s", "points": 10}
         )
     ).status_code == 401
+
+
+async def test_offline_sync_endpoint(client) -> None:
+    """离线对账接口：批量上报逐条回执，幂等去重。"""
+    await _seed(client, "u1", purchased=100)
+    resp = await client.post(
+        "/v1/points/offline-sync",
+        json={
+            "items": [
+                {"exec_id": "off-1", "stage": "analysis", "points": 20},
+                {"exec_id": "off-2", "stage": "solve", "points": 30},
+            ]
+        },
+        headers={"Authorization": "Bearer u1"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["applied"] == 2
+    assert data["duplicate"] == 0
+    assert data["insufficient"] == 0
+    assert data["balance"]["purchased_balance"] == 50
+
+    # 重复上报幂等
+    resp2 = await client.post(
+        "/v1/points/offline-sync",
+        json={"items": [{"exec_id": "off-1", "stage": "analysis", "points": 20}]},
+        headers={"Authorization": "Bearer u1"},
+    )
+    assert resp2.json()["data"]["duplicate"] == 1
+    assert resp2.json()["data"]["balance"]["purchased_balance"] == 50
+
+
+async def test_offline_sync_insufficient_and_freeze(client) -> None:
+    """离线对账：余额耗尽后冻结，返回逐条回执。"""
+    await _seed(client, "u1", purchased=100)
+    resp = await client.post(
+        "/v1/points/offline-sync",
+        json={"items": [{"exec_id": "off-1", "stage": "analysis", "points": 100}]},
+        headers={"Authorization": "Bearer u1"},
+    )
+    data = resp.json()["data"]
+    assert data["applied"] == 1
+    assert data["frozen"] is True
+    assert data["balance"]["frozen"] is True
+
+
+async def test_ledger_export_csv(client) -> None:
+    """流水导出：返回 CSV，含表头和 UTF-8 BOM。"""
+    await _seed(client, "u1", purchased=100)
+    await client.post(
+        "/v1/points/reserve",
+        json={"exec_id": "e1", "stage": "analysis", "points": 10},
+        headers={"Authorization": "Bearer u1"},
+    )
+    resp = await client.get(
+        "/v1/points/ledger/export", headers={"Authorization": "Bearer u1"}
+    )
+    assert resp.status_code == 200
+    assert "text/csv" in resp.headers["content-type"]
+    body = resp.content.decode("utf-8")
+    assert body.startswith("\ufeff")  # BOM
+    assert "流水号" in body
+    assert "e1" in body  # 流水内容包含幂等键

@@ -23,3 +23,6 @@ htmlcov/
 
 # 文档创作草稿（飞书 lark-cli 工作目录）
 draft_*/
+
+# 工作区记忆（AI 助手内部状态，不进版本库）
+.workbuddy/

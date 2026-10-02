@@ -232,3 +232,89 @@ async def test_refund_restores_original_balance_type(session_factory, settings) 
         await svc.refund("u1", "e1", datetime.now(UTC))
         bal = await _balance(uow.session, "u1")
         assert bal.monthly_balance == 50  # 月度返还
+
+
+# ----------------------------------------------------------------------
+# 离线对账（reconcile）：幂等去重、余额扣减、欠费冻结
+# ----------------------------------------------------------------------
+from app.domain.points.ports import OfflineItem  # noqa: E402
+
+
+def _offline(*pairs: tuple[str, int]) -> list[OfflineItem]:
+    return [
+        OfflineItem(exec_id=eid, task_id="t", stage="analysis", points=pts)
+        for eid, pts in pairs
+    ]
+
+
+async def test_reconcile_applies_and_deducts(session_factory, settings) -> None:
+    """离线对账：余额充足时逐条扣减入账，流水为终态 offline_sync。"""
+    async with UnitOfWork(session_factory) as uow:
+        svc = _svc(uow.session, settings)
+        await svc.grant_registration("u1", 100, datetime.now(UTC))
+        result = await svc.reconcile(
+            "u1", _offline(("off-1", 20), ("off-2", 30)), datetime.now(UTC)
+        )
+        assert result.applied == 2
+        assert result.duplicate == 0
+        assert result.insufficient == 0
+        assert result.frozen is False
+        bal = await _balance(uow.session, "u1")
+        assert bal.purchased_balance == 50  # 100 - 20 - 30
+
+
+async def test_reconcile_idempotent_dedup(session_factory, settings) -> None:
+    """离线对账幂等：同 exec_id 重复上报只入账一次。"""
+    async with UnitOfWork(session_factory) as uow:
+        svc = _svc(uow.session, settings)
+        await svc.grant_registration("u1", 100, datetime.now(UTC))
+        items = _offline(("off-1", 20))
+        first = await svc.reconcile("u1", items, datetime.now(UTC))
+        assert first.applied == 1
+        second = await svc.reconcile("u1", items, datetime.now(UTC))
+        assert second.duplicate == 1
+        assert second.applied == 0
+        bal = await _balance(uow.session, "u1")
+        assert bal.purchased_balance == 80  # 未二次扣减
+
+
+async def test_reconcile_insufficient_not_silent(session_factory, settings) -> None:
+    """余额不足：不静默忽略，逐条回执 insufficient，不扣减。"""
+    async with UnitOfWork(session_factory) as uow:
+        svc = _svc(uow.session, settings)
+        await svc.grant_registration("u1", 100, datetime.now(UTC))
+        result = await svc.reconcile(
+            "u1", _offline(("off-1", 200)), datetime.now(UTC)
+        )
+        assert result.insufficient == 1
+        assert result.applied == 0
+        assert result.items[0].status == "insufficient"
+        bal = await _balance(uow.session, "u1")
+        assert bal.purchased_balance == 100  # 未扣减
+
+
+async def test_reconcile_freeze_when_balance_exhausted(session_factory, settings) -> None:
+    """余额耗尽后冻结账户：禁止新任务，历史可读。"""
+    async with UnitOfWork(session_factory) as uow:
+        svc = _svc(uow.session, settings)
+        await svc.grant_registration("u1", 100, datetime.now(UTC))
+        result = await svc.reconcile(
+            "u1", _offline(("off-1", 100)), datetime.now(UTC)
+        )
+        assert result.applied == 1
+        assert result.frozen is True  # 总余额归零 → 冻结
+        bal = await _balance(uow.session, "u1")
+        assert bal.frozen is True
+        # 冻结后 reserve 拒绝
+        with pytest.raises(AppError) as ei:
+            await svc.reserve(ReserveRequest("e2", "u1", "t", "analysis", 10), datetime.now(UTC))
+        assert ei.value.spec is ACCOUNT_FROZEN
+
+
+async def test_reconcile_empty_rejected(session_factory, settings) -> None:
+    """空对账上报：抛 400。"""
+    async with UnitOfWork(session_factory) as uow:
+        svc = _svc(uow.session, settings)
+        with pytest.raises(AppError) as ei:
+            await svc.reconcile("u1", [], datetime.now(UTC))
+        assert ei.value.spec.code == 40001  # BAD_REQUEST
