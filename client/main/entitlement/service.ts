@@ -155,7 +155,8 @@ export class EntitlementService {
 
   /** 应用已验证快照：防回拨 + 计数器 + 落库 + 重置宽限。 */
   private apply(snapshot: EntitlementSnapshot): void {
-    const issuedAt = Date.parse(snapshot.issued_at);
+    // issued_at 已纳入签名载荷，防回拨判定基于签名保护的值（防篡改重放）
+    const issuedAt = Date.parse(snapshot.payload.issued_at);
     if (Number.isNaN(issuedAt)) {
       throw new EntitlementError("SIGNATURE_INVALID", "快照签发时间非法");
     }

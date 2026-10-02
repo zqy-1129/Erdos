@@ -23,11 +23,12 @@ payload 字段（对齐《数据模型设计》entitlement_snapshots.payload）�
 | purchased_balance | int | 购买积分余额（永不过期） |
 | monthly_balance | int | 月度积分余额（月底清零） |
 | frozen | bool | 是否欠费冻结 |
+| issued_at | string | 签发时间（ISO 8601，纳入签名载荷，客户端据此做防回拨/重放判定） |
 
 规范化示例：
 
 ```json
-{"frozen":false,"monthly_balance":400,"purchased_balance":100,"sub_end_at":"2026-11-01T00:00:00+00:00","subscribed":true}
+{"frozen":false,"issued_at":"2026-10-03T05:00:00+00:00","monthly_balance":400,"purchased_balance":100,"sub_end_at":"2026-11-01T00:00:00+00:00","subscribed":true}
 ```
 
 ## 3. 阶段许可（stage_grants）

@@ -97,6 +97,7 @@ async def test_snapshot_issue_and_verify(session_factory, settings) -> None:
 
     assert result.payload["subscribed"] is True
     assert result.payload["purchased_balance"] == 400
+    assert result.payload["issued_at"]  # issued_at 纳入签名载荷（防回拨）
     assert result.signature  # 有签名
     assert signer.verify(
         _canonical(result.payload), result.signature, result.key_version

@@ -24,7 +24,8 @@ function isPayload(value: unknown): value is EntitlementPayload {
     (typeof p["sub_end_at"] === "string" || p["sub_end_at"] === null) &&
     typeof p["purchased_balance"] === "number" &&
     typeof p["monthly_balance"] === "number" &&
-    typeof p["frozen"] === "boolean"
+    typeof p["frozen"] === "boolean" &&
+    typeof p["issued_at"] === "string"
   );
 }
 

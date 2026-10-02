@@ -2,8 +2,8 @@
  * 权益快照与离线宽限（SP3-3）公共类型。
  *
  * 对齐 contracts/snapshot.md 第 2 节：
- * payload = { subscribed, sub_end_at, purchased_balance, monthly_balance, frozen }；
- * signature 为 hex 128 字符；issued_at 为服务端签发时间（防回拨依据）。
+ * payload = { subscribed, sub_end_at, purchased_balance, monthly_balance, frozen, issued_at }；
+ * signature 为 hex 128 字符；issued_at（签名载荷内）为服务端签发时间（防回拨依据）。
  */
 
 /** 快照负载（对应《数据模型设计》entitlement_snapshots.payload）。 */
@@ -13,6 +13,8 @@ export interface EntitlementPayload {
   purchased_balance: number;
   monthly_balance: number;
   frozen: boolean;
+  /** 签发时间（ISO 8601，纳入签名载荷，防回拨/重放判定依据）。 */
+  issued_at: string;
 }
 
 /** 服务端签发的权益快照（/v1/entitlements/snapshot 响应）。 */

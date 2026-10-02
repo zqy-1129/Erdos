@@ -33,6 +33,7 @@ function basePayload(over: Partial<EntitlementPayload> = {}): EntitlementPayload
     purchased_balance: 100,
     monthly_balance: 0,
     frozen: false,
+    issued_at: new Date(BASE).toISOString(),
     ...over,
   };
 }
@@ -46,9 +47,11 @@ function makeSnapshot(
   issuedAtMs: number,
   keyVersion = "v1",
 ): EntitlementSnapshot {
+  // issued_at 纳入签名载荷（对齐服务端 SnapshotPayload，防回拨依据受签名保护）
+  const signedPayload = { ...payload, issued_at: new Date(issuedAtMs).toISOString() };
   return {
-    payload,
-    signature: signPayload(payload),
+    payload: signedPayload,
+    signature: signPayload(signedPayload),
     key_version: keyVersion,
     issued_at: new Date(issuedAtMs).toISOString(),
   };
@@ -97,6 +100,7 @@ describe("规范化字节序", () => {
   it("与 snapshot.md 示例严格一致", () => {
     const payload = {
       frozen: false,
+      issued_at: "2026-10-03T05:00:00+00:00",
       monthly_balance: 400,
       purchased_balance: 100,
       sub_end_at: "2026-11-01T00:00:00+00:00",
@@ -104,7 +108,7 @@ describe("规范化字节序", () => {
     };
     assert.equal(
       canonical(payload),
-      '{"frozen":false,"monthly_balance":400,"purchased_balance":100,"sub_end_at":"2026-11-01T00:00:00+00:00","subscribed":true}',
+      '{"frozen":false,"issued_at":"2026-10-03T05:00:00+00:00","monthly_balance":400,"purchased_balance":100,"sub_end_at":"2026-11-01T00:00:00+00:00","subscribed":true}',
     );
     assert.deepEqual(canonicalBytes(payload), Buffer.from(canonical(payload), "utf8"));
   });
@@ -135,8 +139,9 @@ describe("快照验签与防回拨", () => {
     assert.equal(h.service.status(), "ready");
 
     h.queueSnapshot(basePayload({ purchased_balance: 999 }), 1); // 篡改后重新"签"会通过——因此这里验证篡改：签名对原payload，发送篡改payload
-    const tampered = basePayload({ purchased_balance: 999 });
-    h.fetches[0] = { ...makeSnapshot(basePayload(), BASE + 1000), payload: tampered };
+    const signed = makeSnapshot(basePayload(), BASE + 1000);
+    const tampered = { ...signed.payload, purchased_balance: 999 }; // 仅篡改余额字段
+    h.fetches[0] = { ...signed, payload: tampered };
     await assert.rejects(
       h.service.refresh(),
       (e: unknown) => e instanceof EntitlementError && e.code === "SIGNATURE_INVALID",
@@ -163,6 +168,18 @@ describe("快照验签与防回拨", () => {
       (e: unknown) => e instanceof EntitlementError && e.code === "SNAPSHOT_REPLAY",
     );
     assert.equal(h.service.counter(), 1); // 拒绝应用不增加计数器
+  });
+
+  it("篡改签名载荷内 issued_at 验签失败（防回拨依据受签名保护）", async () => {
+    const h = new Harness();
+    const signed = makeSnapshot(basePayload(), BASE + 1000);
+    const forged = { ...signed.payload, issued_at: new Date(BASE + 7_200_000).toISOString() };
+    h.fetches.push({ ...signed, payload: forged });
+    await assert.rejects(
+      h.service.refresh(),
+      (e: unknown) => e instanceof EntitlementError && e.code === "SIGNATURE_INVALID",
+    );
+    assert.equal(h.service.snapshot(), null); // 未应用任何快照
   });
 
   it("verifySignature 对非法 hex / 长度错误返回 false", () => {

@@ -155,13 +155,14 @@ class ManifestRepository(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class SnapshotPayload:
-    """快照 payload（对齐数据模型 entitlement_snapshots.payload）。"""
+    """快照 payload（对齐数据模型 entitlement_snapshots.payload；issued_at 纳入签名防回拨）。"""
 
     subscribed: bool
     sub_end_at: str | None
     purchased_balance: int
     monthly_balance: int
     frozen: bool
+    issued_at: str
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -170,6 +171,7 @@ class SnapshotPayload:
             "purchased_balance": self.purchased_balance,
             "monthly_balance": self.monthly_balance,
             "frozen": self.frozen,
+            "issued_at": self.issued_at,
         }
 
 

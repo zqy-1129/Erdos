@@ -55,19 +55,21 @@ async function startStub(state: StubState) {
       return;
     }
     if (req.method === "GET" && url.startsWith("/v1/entitlements/snapshot")) {
+      const issuedAt = new Date(BASE + state.issueStep++ * 1000).toISOString();
       const payload = {
         subscribed: false,
         sub_end_at: null,
         purchased_balance: state.balance,
         monthly_balance: 0,
         frozen: false,
+        issued_at: issuedAt, // 纳入签名载荷（对齐服务端）
       };
       res.end(
         envelope({
           payload,
           signature: signPayload(payload),
           key_version: "v1",
-          issued_at: new Date(BASE + state.issueStep++ * 1000).toISOString(),
+          issued_at: issuedAt,
         }),
       );
       return;
@@ -297,6 +299,7 @@ describe("云端权益服务全链路（DF-005）", () => {
         purchased_balance: 10,
         monthly_balance: 0,
         frozen: true,
+        issued_at: new Date(BASE).toISOString(),
       };
       res.end(
         envelope({

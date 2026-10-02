@@ -68,6 +68,7 @@ class EntitlementService:
             purchased_balance=purchased,
             monthly_balance=monthly,
             frozen=frozen,
+            issued_at=now.isoformat(),
         ).as_dict()
 
         canonical = _canonical(payload)
