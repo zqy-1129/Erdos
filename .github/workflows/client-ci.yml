@@ -33,7 +33,7 @@ jobs:
       - name: ESLint
         run: npx eslint .
       - name: Unit tests (node --test)
-        run: node --test tests/contract-ipc.test.ts tests/sp3-2.test.ts tests/sp3-3.test.ts tests/sp3-4-store.test.ts tests/sp3-5.test.ts tests/sp3-5-auth.test.ts tests/sp3-5-telemetry.test.ts tests/sp3-6.test.ts tests/sp3-7-perf.test.ts
+        run: node --test tests/contract-ipc.test.ts tests/sp3-2.test.ts tests/sp3-3.test.ts tests/sp3-4-store.test.ts tests/sp3-5.test.ts tests/sp3-5-auth.test.ts tests/sp3-5-telemetry.test.ts tests/sp3-6.test.ts tests/sp3-7-perf.test.ts tests/usage-estimator.test.ts
       - name: Component tests (vitest)
         run: npx vitest run
       - name: Build (vite)

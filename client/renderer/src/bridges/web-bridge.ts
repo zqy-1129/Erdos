@@ -22,6 +22,8 @@ import { BRIDGE_CHANNELS } from "./bridge.ts";
 import type { EngineEvent, StageName } from "../../../shared/ipc.ts";
 import { exportDeclaration } from "../../../declaration/export.ts";
 import type { TrailSource } from "../../../declaration/types.ts";
+import { estimateUsage } from "../../../shared/usage.ts";
+import type { UsageEstimateView } from "./bridge.ts";
 
 const SESSION_KEY = "erdos.demo.session";
 const STAGES: StageName[] = ["analysis", "modeling", "solving", "writing"];
@@ -29,8 +31,8 @@ const STAGES: StageName[] = ["analysis", "modeling", "solving", "writing"];
 /** 演示留痕（对应 SP1-6 四类事件 + 产物索引；仅供开发模式渲染真实模板）。 */
 const DEMO_TRAIL: TrailSource = {
   events: async () => [
-    { id: 1, task_id: "demo-task", stage: "analysis", event_type: "model_call", detail: { model: "deepseek-chat", usage: { tokens: 120 }, duration_ms: 800 }, ts: "2026-10-02T08:00:00Z" },
-    { id: 2, task_id: "demo-task", stage: "modeling", event_type: "model_call", detail: { model: "deepseek-chat", usage: { tokens: 300 }, duration_ms: 3000 }, ts: "2026-10-02T08:05:00Z" },
+    { id: 1, task_id: "demo-task", stage: "analysis", event_type: "model_call", detail: { model: "deepseek-chat", usage: { prompt_tokens: 800, completion_tokens: 1200 }, duration_ms: 800 }, ts: "2026-10-02T08:00:00Z" },
+    { id: 2, task_id: "demo-task", stage: "modeling", event_type: "model_call", detail: { model: "deepseek-chat", usage: { prompt_tokens: 300, completion_tokens: 400 }, duration_ms: 3000 }, ts: "2026-10-02T08:05:00Z" },
     { id: 3, task_id: "demo-task", stage: "writing", event_type: "manual_edit", detail: { note: "结论段人工改写" }, ts: "2026-10-02T08:20:00Z" },
     { id: 4, task_id: "demo-task", stage: "solving", event_type: "tool_call", detail: { tool: "plot.fig", path: null }, ts: "2026-10-02T08:15:00Z" },
   ],
@@ -185,6 +187,20 @@ export class WebDemoBridge implements ErdosBridge {
                 ? { ok: false, reason: "balance", detail: "余额不足：该 Key 账户已欠费" }
                 : { ok: true, reason: "none", detail: "连通成功（模型响应 200）" };
         return Promise.resolve(result as T);
+      }
+      case BRIDGE_CHANNELS.keysUsage: {
+        // F-002 用量估算：统计本地留痕的模型调用（演示留痕 2 次 model_call）
+        return DEMO_TRAIL.events("demo-task").then((trailEvents) => {
+          const estimate = estimateUsage(trailEvents.filter((e) => e.event_type === "model_call"));
+          const view: UsageEstimateView = {
+            modelCalls: estimate.modelCalls,
+            models: estimate.models,
+            totalTokens: estimate.totalTokens,
+            estimatedCostCents: estimate.estimatedCostCents,
+            ratedCalls: estimate.ratedCalls,
+          };
+          return view as T;
+        });
       }
       case BRIDGE_CHANNELS.billingOverview: {
         const view: BillingOverview = empty

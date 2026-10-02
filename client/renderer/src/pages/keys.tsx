@@ -5,7 +5,12 @@
  */
 
 import { useReducer, type ReactNode } from "react";
-import { BRIDGE_CHANNELS, type KeyItemView, type KeyTestResult } from "../bridges/bridge.ts";
+import {
+  BRIDGE_CHANNELS,
+  type KeyItemView,
+  type KeyTestResult,
+  type UsageEstimateView,
+} from "../bridges/bridge.ts";
 import { EmptyState, ErrorState, OfflineState } from "../components/states.tsx";
 import { useRemoteData } from "../components/use-remote.ts";
 import { useStore } from "../storage/store.ts";
@@ -20,6 +25,9 @@ export function KeysPage(props: { stores: AppStores }): ReactNode {
   const connectivity = useStore(props.stores.connectivity);
   const remote = useRemoteData<KeyItemView[]>(() =>
     props.stores.bridge.invoke<KeyItemView[]>(BRIDGE_CHANNELS.keysList),
+  );
+  const usage = useRemoteData<UsageEstimateView>(() =>
+    props.stores.bridge.invoke<UsageEstimateView>(BRIDGE_CHANNELS.keysUsage),
   );
   const [wizard, dispatch] = useReducer(keyWizardReducer, initialWizard);
 
@@ -59,6 +67,26 @@ export function KeysPage(props: { stores: AppStores }): ReactNode {
   return (
     <div className="page">
       <h2>Key 管理</h2>
+      {usage.data ? (
+        <div className="kpis">
+          <div className="kpi">
+            <span className="kpi-label">本地累计 Token（留痕）</span>
+            <span className="kpi-value">{usage.data.totalTokens}</span>
+          </div>
+          <div className="kpi">
+            <span className="kpi-label">模型调用次数</span>
+            <span className="kpi-value">{usage.data.modelCalls}</span>
+          </div>
+          <div className="kpi">
+            <span className="kpi-label">估算费用（内置单价）</span>
+            <span className="kpi-value">
+              {usage.data.estimatedCostCents === null
+                ? "—（含未定价模型）"
+                : `${usage.data.estimatedCostCents} 分`}
+            </span>
+          </div>
+        </div>
+      ) : null}
       {!connectivity.online ? <OfflineState hint="断网模式下仅展示本地已保存的 Key，暂不支持连通测试。" /> : null}
 
       {remote.data === null || remote.data.length === 0 ? (

@@ -23,6 +23,7 @@ export const BRIDGE_CHANNELS = {
   keysList: "keys:list",
   keysSave: "keys:save",
   keysTest: "keys:test",
+  keysUsage: "keys:usage",
   // 账单
   billingOverview: "billing:overview",
   billingLedger: "billing:ledger",
@@ -70,6 +71,16 @@ export interface KeyTestResult {
   /** 可读失败分类（US-002：401/网络/余额）。 */
   reason: "none" | "unauthorized" | "network" | "balance" | "invalid";
   detail: string;
+}
+
+/** 本地用量估算（F-002：来自留痕的 token 统计与可选费用估算）。 */
+export interface UsageEstimateView {
+  modelCalls: number;
+  models: string[];
+  totalTokens: number;
+  /** 分（人民币）；null = 存在未定价模型，不做误导性总额。 */
+  estimatedCostCents: number | null;
+  ratedCalls: number;
 }
 
 export interface BillingLedgerRow {
