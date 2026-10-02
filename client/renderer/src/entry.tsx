@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import type { ErdosBridge } from "./bridges/bridge.ts";
 import { WebDemoBridge } from "./bridges/web-bridge.ts";
 import { BootTimer } from "./engine/boot-mark.ts";
+import { CrashGuard } from "./engine/crash-guard.ts";
 import { AppShell } from "./components/layout.tsx";
 import { useHashRoute } from "./router.tsx";
 import { bindConnectivity, createAppStores, type AppStores } from "./state/app-stores.ts";
@@ -70,10 +71,13 @@ if (typeof document !== "undefined") {
   if (rootElement) {
     const bootTimer = new BootTimer();
     bootTimer.mark("boot"); // 冷启动计时起点（SP3-7 非功能基线）
+    const crashGuard = new CrashGuard(); // 崩溃率基线统计（PRD：崩溃率 <0.5%）
+    crashGuard.attach();
     const stores = createStores(new WebDemoBridge());
     createRoot(rootElement).render(<App stores={stores} />);
     bootTimer.mark("first-render"); // 首屏挂载完成
-    // 冷启动基线（演示环境控制台可见；设置页展示）
-    (globalThis as { __erdosBoot?: BootTimer }).__erdosBoot = bootTimer;
+    // 冷启动/崩溃基线（演示环境控制台可见；设置页展示）
+    (globalThis as { __erdosBoot?: BootTimer; __erdosCrash?: CrashGuard }).__erdosBoot = bootTimer;
+    (globalThis as { __erdosCrash?: CrashGuard }).__erdosCrash = crashGuard;
   }
 }

@@ -43,13 +43,20 @@ export interface RpcResponse {
 // ---------------------------------------------------------------------------
 // 6 个 RPC 方法
 // ---------------------------------------------------------------------------
-export type RpcMethod =
-  | "start_stage"
-  | "pause"
-  | "resume"
-  | "cancel"
-  | "get_status"
-  | "answer_gate";
+/**
+ * RPC 方法名运行时常量（与 contracts/engine-rpc.schema.json methods 对齐，
+ * 由 tests/contract-ipc.test.ts 守护零漂移；类型从常量派生保证单一来源）。
+ */
+export const RPC_METHODS = [
+  "start_stage",
+  "pause",
+  "resume",
+  "cancel",
+  "get_status",
+  "answer_gate",
+] as const;
+
+export type RpcMethod = (typeof RPC_METHODS)[number];
 
 export interface StartStageParams {
   task_id: string;
@@ -103,7 +110,10 @@ export interface GetStatusResult {
 // ---------------------------------------------------------------------------
 // 3 个 NDJSON 事件
 // ---------------------------------------------------------------------------
-export type EngineEventName = "stage.progress" | "artifact.ready" | "gate.failed";
+/** 引擎事件名运行时常量（契约单一来源，CI 守护零漂移）。 */
+export const ENGINE_EVENT_NAMES = ["stage.progress", "artifact.ready", "gate.failed"] as const;
+
+export type EngineEventName = (typeof ENGINE_EVENT_NAMES)[number];
 
 export interface StageProgressEvent {
   trace_id: string;

@@ -47,6 +47,14 @@ export function SettingsPage(props: { stores: AppStores }): ReactNode {
         <p className="muted" data-testid="boot-metrics">
           冷启动耗时：{(globalThis as { __erdosBoot?: { appReadyMs(): number | null } }).__erdosBoot?.appReadyMs() ?? "—"} ms（目标 &lt; 3000ms）
         </p>
+        {(() => {
+          const guard = (globalThis as { __erdosCrash?: { stats(): { errors: number; rejections: number } } }).__erdosCrash;
+          return guard ? (
+            <p className="muted" data-testid="crash-metrics">
+              崩溃基线：异常 {guard.stats().errors} 次 / Promise 拒绝 {guard.stats().rejections} 次（目标崩溃率 &lt; 0.5%）
+            </p>
+          ) : null;
+        })()}
       </div>
 
       <div className="form-block">

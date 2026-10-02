@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { BootTimer, isColdStartWithin } from "../renderer/src/engine/boot-mark.ts";
+import { CrashGuard, type EventSourceLike, type ErrorLikeEvent } from "../renderer/src/engine/crash-guard.ts";
 
 function makeTimer(): BootTimer {
   let now = 0;
@@ -38,5 +39,52 @@ describe("冷启动计时（BootTimer）", () => {
     assert.equal(slow.appReadyMs(), 4000);
     assert.equal(isColdStartWithin(slow.appReadyMs(), 3000), false);
     assert.equal(isColdStartWithin(null, 3000), null);
+  });
+});
+
+describe("崩溃率守卫（CrashGuard）", () => {
+  /** 可编程事件源：捕获监听器并手动触发。 */
+  class FakeSource implements EventSourceLike {
+    handlers = new Map<string, (event: ErrorLikeEvent) => void>();
+    addEventListener(type: string, handler: (event: ErrorLikeEvent) => void): void {
+      this.handlers.set(type, handler);
+    }
+    removeEventListener(type: string): void {
+      this.handlers.delete(type);
+    }
+    fire(type: string, event: ErrorLikeEvent): void {
+      this.handlers.get(type)?.(event);
+    }
+  }
+
+  it("捕获 error 与 unhandledrejection 并累计统计", () => {
+    const source = new FakeSource();
+    const crashes: Array<[string, string]> = [];
+    const guard = new CrashGuard((kind, detail) => crashes.push([kind, detail]), source, () => 1_000);
+    guard.attach();
+    source.fire("error", { message: "boom" });
+    source.fire("unhandledrejection", { reason: "promise fail" });
+    assert.deepEqual(guard.stats(), {
+      errors: 1,
+      rejections: 1,
+      lastAt: new Date(1_000).toISOString(),
+    });
+    assert.deepEqual(crashes, [
+      ["error", "boom"],
+      ["unhandledrejection", "promise fail"],
+    ]);
+  });
+
+  it("卸除监听后不再统计；无事件源时 attach 为空操作", () => {
+    const source = new FakeSource();
+    const guard = new CrashGuard(undefined, source);
+    const detach = guard.attach();
+    detach();
+    source.fire("error", { message: "late" });
+    assert.equal(guard.stats().errors, 0);
+
+    const orphan = new CrashGuard(undefined, null);
+    orphan.attach();
+    assert.deepEqual(orphan.stats(), { errors: 0, rejections: 0, lastAt: null });
   });
 });
