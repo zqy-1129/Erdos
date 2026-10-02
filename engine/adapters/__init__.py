@@ -1,1 +1,31 @@
-"""引擎 adapters 子包（SP1-1 骨架占位，业务逻辑在后续 SP 实现）。"""
+"""BYOK 模型适配器（SP1-5）：OpenAI 兼容多厂商调用。"""
+
+from engine.adapters.errors import (
+    AdapterError,
+    ErrorKind,
+    classify_status,
+    readable_message,
+)
+from engine.adapters.key_store import KeyStore
+from engine.adapters.openai_compat import (
+    ChatMessage,
+    ChatResult,
+    ModelConfig,
+    OpenAIChatAdapter,
+    Usage,
+    UsageAccumulator,
+)
+
+__all__ = [
+    "AdapterError",
+    "ChatMessage",
+    "ChatResult",
+    "ErrorKind",
+    "KeyStore",
+    "ModelConfig",
+    "OpenAIChatAdapter",
+    "Usage",
+    "UsageAccumulator",
+    "classify_status",
+    "readable_message",
+]
