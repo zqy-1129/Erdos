@@ -12,5 +12,5 @@
     "isolatedModules": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["shared/**/*.ts", "main/**/*.ts", "renderer/**/*.ts", "renderer/**/*.tsx", "tests/**/*.ts"]
+  "include": ["shared/**/*.ts", "main/**/*.ts", "declaration/**/*.ts", "renderer/**/*.ts", "renderer/**/*.tsx", "tests/**/*.ts"]
 }

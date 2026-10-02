@@ -22,9 +22,24 @@ import type {
 } from "./bridge.ts";
 import { BRIDGE_CHANNELS } from "./bridge.ts";
 import type { EngineEvent, StageName } from "../../../shared/ipc.ts";
+import { exportDeclaration } from "../../../declaration/export.ts";
+import type { TrailSource } from "../../../declaration/types.ts";
 
 const SESSION_KEY = "erdos.demo.session";
 const STAGES: StageName[] = ["analysis", "modeling", "solving", "writing"];
+
+/** 演示留痕（对应 SP1-6 四类事件 + 产物索引；仅供开发模式渲染真实模板）。 */
+const DEMO_TRAIL: TrailSource = {
+  events: async () => [
+    { id: 1, task_id: "demo-task", stage: "analysis", event_type: "model_call", detail: { model: "deepseek-chat", usage: { tokens: 120 }, duration_ms: 800 }, ts: "2026-10-02T08:00:00Z" },
+    { id: 2, task_id: "demo-task", stage: "modeling", event_type: "model_call", detail: { model: "deepseek-chat", usage: { tokens: 300 }, duration_ms: 3000 }, ts: "2026-10-02T08:05:00Z" },
+    { id: 3, task_id: "demo-task", stage: "writing", event_type: "manual_edit", detail: { note: "结论段人工改写" }, ts: "2026-10-02T08:20:00Z" },
+    { id: 4, task_id: "demo-task", stage: "solving", event_type: "tool_call", detail: { tool: "plot.fig", path: null }, ts: "2026-10-02T08:15:00Z" },
+  ],
+  artifacts: async () => [
+    { task_id: "demo-task", stage: "writing", kind: "paper", file_path: "out/paper.md", sha256: "9f".repeat(32), size_bytes: 4096 },
+  ],
+};
 
 const DEMO_CONTENT: ContentItem[] = [
   { id: "t1", kind: "template", title: "CUMCM 官方论文模板", tags: ["格式", "国赛"], referenceOnly: false },
@@ -200,12 +215,35 @@ export class WebDemoBridge implements ErdosBridge {
       case BRIDGE_CHANNELS.historyResume:
         return Promise.resolve({ taskId: String(body["taskId"]), resumable: true } as T);
       case BRIDGE_CHANNELS.complianceExport: {
-        const result: ComplianceExportResult = {
-          content: "# AI 工具使用声明\n\n- 工具清单：Erdos 客户端 v0.1.0（内置 DeepSeek 模型）\n- 参与度：思路引导 / 论文语言润色\n- 产物哈希：sha256:aaaa...aaaa（示例）\n",
-          filename: `ai-declaration-${String(body["format"] ?? "md")}.md`,
-          artifactHashes: ["aaaa".repeat(16)],
-        };
-        return Promise.resolve(result as T);
+        const rawFormat = String(body["format"] ?? "md");
+        const format: "md" | "latex" | "docx" =
+          rawFormat === "latex" ? "latex" : rawFormat === "docx" ? "docx" : "md";
+        const unusedAi = Boolean(body["unusedAi"]);
+        const humanNote = String(body["humanNote"] ?? "");
+        return (async (): Promise<ComplianceExportResult> => {
+          if (format === "docx") {
+            // Word 为二进制：演示环境生成 docx（校验数据链路）并以 md 文本预览展示
+            await exportDeclaration(DEMO_TRAIL, { taskId: "demo-task", format: "docx", humanNote, unusedAi });
+            const md = await exportDeclaration(DEMO_TRAIL, { taskId: "demo-task", format: "md", humanNote, unusedAi });
+            return {
+              content: `${String(md.content)}\n\n（Word 版本已按同一留痕生成；演示环境等效于下载预览。）`,
+              filename: "AI工具使用声明_demo-task.docx",
+              // 未使用 AI 声明不引用产物支撑材料
+              artifactHashes: unusedAi ? [] : md.data.artifactHashes.map((artifact) => artifact.sha256),
+            };
+          }
+          const exported = await exportDeclaration(DEMO_TRAIL, {
+            taskId: "demo-task",
+            format,
+            humanNote,
+            unusedAi,
+          });
+          return {
+            content: String(exported.content),
+            filename: exported.filename,
+            artifactHashes: unusedAi ? [] : exported.data.artifactHashes.map((artifact) => artifact.sha256),
+          };
+        })().then((value) => value as T);
       }
       case "engine:start_stage": {
         this.startDemoTask(String(body["task_id"] ?? "demo-task"));
