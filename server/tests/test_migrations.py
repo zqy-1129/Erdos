@@ -26,6 +26,7 @@ from app.repository.models import (
     SchedulerRun,
     StageGrant,
     Subscription,
+    TelemetryEventRecord,
 )
 
 SERVER_ROOT = Path(__file__).resolve().parents[1]
@@ -200,6 +201,19 @@ def test_notification_scheduler_tables_match_models(tmp_path) -> None:
     assert run_cols == set(SchedulerRun.__table__.columns.keys())
 
 
+def test_telemetry_table_matches_model(tmp_path) -> None:
+    db_file = tmp_path / "mig.db"
+    command.upgrade(_config(f"sqlite+aiosqlite:///{db_file}"), "head")
+
+    conn = sqlite3.connect(db_file)
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(telemetry_events)")}
+    finally:
+        conn.close()
+
+    assert cols == set(TelemetryEventRecord.__table__.columns.keys())
+
+
 def test_downgrade_base_removes_table(tmp_path) -> None:
     db_file = tmp_path / "mig.db"
     cfg = _config(f"sqlite+aiosqlite:///{db_file}")
@@ -233,6 +247,7 @@ def test_downgrade_base_removes_table(tmp_path) -> None:
     assert "entitlement_snapshots" not in tables
     assert "notification_send_logs" not in tables
     assert "scheduler_runs" not in tables
+    assert "telemetry_events" not in tables
 
 
 def test_offline_sql_generation(capsys) -> None:
