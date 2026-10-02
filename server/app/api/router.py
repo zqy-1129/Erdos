@@ -8,6 +8,7 @@ from app.api.v1 import (
     auth,
     billing,
     dashboard,
+    entitlements,
     health,
     monitoring,
     points,
@@ -24,3 +25,4 @@ api_router.include_router(monitoring.router)
 api_router.include_router(presence.router)
 api_router.include_router(points.router)
 api_router.include_router(billing.router)
+api_router.include_router(entitlements.router)

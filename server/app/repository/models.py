@@ -378,3 +378,135 @@ class PaymentCallback(Base):
     raw_digest: Mapped[str] = mapped_column(String(128))
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+# ----------------------------------------------------------------------
+# 权益快照域（SP2-6 权益内容服务）：entitlement_snapshots
+# ----------------------------------------------------------------------
+class EntitlementSnapshot(Base):
+    """权益快照（《数据模型设计》entitlement_snapshots）：聚合订阅+积分状态并 Ed25519 签名。
+
+    payload 为规范化 JSON（sort_keys），客户端凭服务端公钥离线验签；
+    issued_at 为签发时间，客户端防回拨依据。
+    """
+
+    __tablename__ = "entitlement_snapshots"
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "issued_at", name="uq_entitlement_snapshots_issued"),
+    )
+
+    id: Mapped[str] = mapped_column(  # type: ignore[assignment]  # 契约 uuid 主键
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    signature: Mapped[str] = mapped_column(String(128))
+    key_version: Mapped[str] = mapped_column(String(16))
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+# ----------------------------------------------------------------------
+# 内容库域（SP2-6）：problems / paper_templates / cases / content_manifests
+# ----------------------------------------------------------------------
+class Problem(Base):
+    """历年真题库（《数据模型设计》problems）：business_id 稳定编号主键。
+
+    attachments 存 [{name, oss_key, sha256, media_type}]，数据文件走 OSS；
+    visibility 控制 public（示例）/ member（会员刷题）。
+    """
+
+    __tablename__ = "problems"
+
+    id: Mapped[str | None] = mapped_column(  # type: ignore[assignment]  # 覆盖 Base 自增主键
+        String(36), nullable=True, primary_key=False
+    )
+    business_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    competition: Mapped[str] = mapped_column(String(16))
+    year: Mapped[int] = mapped_column(Integer)
+    problem_code: Mapped[str] = mapped_column(String(8))
+    title: Mapped[str] = mapped_column(String(128))
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    prompt_zh: Mapped[str] = mapped_column(String(8192))
+    prompt_en: Mapped[str] = mapped_column(String(8192), default="")
+    attachments: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    scoring: Mapped[str] = mapped_column(String(2048), default="")
+    dataset_hint: Mapped[str] = mapped_column(String(2048), default="")
+    visibility: Mapped[str] = mapped_column(String(16), default="public")  # public / member
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class PaperTemplate(Base):
+    """论文模板库（《数据模型设计》paper_templates）：oss_key+sha256 存文件位置与校验。
+
+    tier 控制 member_only / free（基础模板免费）。
+    """
+
+    __tablename__ = "paper_templates"
+
+    id: Mapped[str | None] = mapped_column(  # type: ignore[assignment]  # 覆盖 Base 自增主键
+        String(36), nullable=True, primary_key=False
+    )
+    business_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    competition: Mapped[str] = mapped_column(String(16))
+    format: Mapped[str] = mapped_column(String(16))  # latex / docx
+    oss_key: Mapped[str] = mapped_column(String(256))
+    sha256: Mapped[str] = mapped_column(String(64))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    changelog: Mapped[str] = mapped_column(String(512), default="")
+    tier: Mapped[str] = mapped_column(String(16), default="member_only")  # member_only / free
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class Case(Base):
+    """往届案例库（《数据模型设计》cases）：compliance_note 强制非空。
+
+    compliance_note 为「仅作方法参照，禁止大段抄袭」合规声明，客户端强制展示。
+    """
+
+    __tablename__ = "cases"
+
+    id: Mapped[str | None] = mapped_column(  # type: ignore[assignment]  # 覆盖 Base 自增主键
+        String(36), nullable=True, primary_key=False
+    )
+    business_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    problem_id: Mapped[str] = mapped_column(String(64), index=True)
+    title: Mapped[str] = mapped_column(String(128))
+    award: Mapped[str] = mapped_column(String(32), default="")
+    method_tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    oss_key: Mapped[str] = mapped_column(String(256))
+    sha256: Mapped[str] = mapped_column(String(64))
+    compliance_note: Mapped[str] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class ContentManifest(Base):
+    """内容增量同步清单（《数据模型设计》content_manifest）：按 scope 分版本。
+
+    items 存 [{business_id, sha256}]，客户端比对 version 做增量拉取。
+    """
+
+    __tablename__ = "content_manifests"
+
+    __table_args__ = (
+        UniqueConstraint("scope", name="uq_content_manifests_scope"),
+    )
+
+    id: Mapped[str] = mapped_column(  # type: ignore[assignment]  # 契约 uuid 主键
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    scope: Mapped[str] = mapped_column(String(32))  # problems / templates / cases
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    items: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )

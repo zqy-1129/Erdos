@@ -301,7 +301,7 @@ class LogResetNotifier:
 
 
 class Ed25519LicenseSigner:
-    """阶段许可签名器（SP2-4 积分域）：复用签名密钥集对规范化字节 Ed25519 签名。
+    """阶段许可/权益快照签名器（SP2-4/6）：复用签名密钥集对规范化字节 Ed25519 签名。
 
     返回 (signature_hex, kid)。客户端凭服务端公钥（JWKS）离线验签。
     """
@@ -314,3 +314,25 @@ class Ed25519LicenseSigner:
         key = self._keys.private_keys[self._keys.active_kid]
         signature = key.sign(payload)
         return signature.hex(), self._keys.active_kid
+
+    def verify(self, payload: bytes, signature_hex: str, kid: str | None = None) -> bool:
+        """验签：任一密钥公钥能验证即通过；kid 指定时仅用该密钥验签。
+
+        用于服务端快照/许可校验与测试（验收标准：篡改任一字段验签失败）。
+        """
+        try:
+            signature = bytes.fromhex(signature_hex)
+        except ValueError:
+            return False
+        keys = (
+            [self._keys.private_keys[kid]]
+            if kid is not None and kid in self._keys.private_keys
+            else list(self._keys.private_keys.values())
+        )
+        for key in keys:
+            try:
+                key.public_key().verify(signature, payload)
+                return True
+            except Exception:
+                continue
+        return False

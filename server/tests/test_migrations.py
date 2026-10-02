@@ -10,12 +10,17 @@ from app.repository.models import (
     Account,
     AuditLog,
     AuthRefreshToken,
+    Case,
+    ContentManifest,
     Device,
+    EntitlementSnapshot,
     MonitoringMinuteSnapshot,
     Order,
+    PaperTemplate,
     PaymentCallback,
     PointAccount,
     PointLedger,
+    Problem,
     Product,
     StageGrant,
     Subscription,
@@ -157,6 +162,27 @@ def test_billing_domain_tables_match_models(tmp_path) -> None:
     assert {"ix_orders_user_id", "ix_orders_status"} <= order_indexes
 
 
+def test_entitlement_content_tables_match_models(tmp_path) -> None:
+    db_file = tmp_path / "mig.db"
+    command.upgrade(_config(f"sqlite+aiosqlite:///{db_file}"), "head")
+
+    conn = sqlite3.connect(db_file)
+    try:
+        snap_cols = {row[1] for row in conn.execute("PRAGMA table_info(entitlement_snapshots)")}
+        problem_cols = {row[1] for row in conn.execute("PRAGMA table_info(problems)")}
+        tpl_cols = {row[1] for row in conn.execute("PRAGMA table_info(paper_templates)")}
+        case_cols = {row[1] for row in conn.execute("PRAGMA table_info(cases)")}
+        manifest_cols = {row[1] for row in conn.execute("PRAGMA table_info(content_manifests)")}
+    finally:
+        conn.close()
+
+    assert snap_cols == set(EntitlementSnapshot.__table__.columns.keys())
+    assert problem_cols == set(Problem.__table__.columns.keys())
+    assert tpl_cols == set(PaperTemplate.__table__.columns.keys())
+    assert case_cols == set(Case.__table__.columns.keys())
+    assert manifest_cols == set(ContentManifest.__table__.columns.keys())
+
+
 def test_downgrade_base_removes_table(tmp_path) -> None:
     db_file = tmp_path / "mig.db"
     cfg = _config(f"sqlite+aiosqlite:///{db_file}")
@@ -183,6 +209,11 @@ def test_downgrade_base_removes_table(tmp_path) -> None:
     assert "orders" not in tables
     assert "subscriptions" not in tables
     assert "payment_callbacks" not in tables
+    assert "problems" not in tables
+    assert "paper_templates" not in tables
+    assert "cases" not in tables
+    assert "content_manifests" not in tables
+    assert "entitlement_snapshots" not in tables
 
 
 def test_offline_sql_generation(capsys) -> None:
