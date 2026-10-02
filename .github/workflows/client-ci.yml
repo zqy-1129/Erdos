@@ -1,0 +1,34 @@
+name: client-ci
+
+on:
+  pull_request:
+    paths: ["client/**", "contracts/**"]
+  push:
+    branches: [main, develop]
+
+jobs:
+  quality:
+    name: type + lint + test + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: TypeScript (tsc --noEmit)
+        run: npx tsc --noEmit
+      - name: ESLint
+        run: npx eslint .
+      - name: Unit tests (node --test)
+        run: node --test tests/sp3-2.test.ts tests/sp3-3.test.ts tests/sp3-4-store.test.ts tests/sp3-5.test.ts tests/sp3-5-auth.test.ts tests/sp3-5-telemetry.test.ts tests/sp3-6.test.ts
+      - name: Component tests (vitest)
+        run: npx vitest run
+      - name: Build (vite)
+        run: npx vite build

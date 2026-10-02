@@ -1,0 +1,29 @@
+name: server-ci
+
+on:
+  pull_request:
+    paths: ["server/**", "contracts/**"]
+  push:
+    branches: [main, develop]
+
+jobs:
+  quality:
+    name: lint + type + test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Ruff
+        run: ruff check app tests
+      - name: Mypy
+        run: mypy app
+      - name: Pytest (coverage >= 80%)
+        run: pytest
