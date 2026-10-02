@@ -2,6 +2,8 @@
 
 与网关滑动窗口 QPS 限流（infra/rate_limit.py）职责不同：
 本组件面向验证码发送的「60s/次 + 日 10 次」固定窗口限流。
+默认进程内实现；多实例部署由 infra/redis_state.RedisCodeWindowLimiter
+提供跨进程计数（同签名，见 service.py 的 VerificationCodeLimiter 端口）。
 """
 
 import time
@@ -10,7 +12,7 @@ from collections.abc import Callable
 
 
 class FixedWindowCodeLimiter:
-    """验证码固定窗口限流器：resend_seconds 间隔 + daily_limit 每日上限。
+    """验证码固定窗口限流器（进程内）：resend_seconds 间隔 + daily_limit 每日上限。
 
     clock 可注入（默认 time.monotonic）以支持测试。
     """
@@ -34,7 +36,7 @@ class FixedWindowCodeLimiter:
         while window and now - window[0] >= day:
             window.popleft()
 
-    def allow(self, key: str) -> bool:
+    async def allow(self, key: str) -> bool:
         now = self._clock()
         # 维度 1：重发间隔（60s）
         last = self._last_send.get(key)
@@ -50,7 +52,7 @@ class FixedWindowCodeLimiter:
         hits.append(now)
         return True
 
-    def retry_after_seconds(self, key: str) -> float:
+    async def retry_after_seconds(self, key: str) -> float:
         now = self._clock()
         last = self._last_send.get(key)
         if last is not None and now - last < self._resend:

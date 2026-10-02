@@ -32,7 +32,6 @@ from app.core.errors import AppError
 from app.core.logging import get_logger, setup_logging
 from app.domain.account.reset import PasswordResetService
 from app.domain.account.service import PasswordPolicy
-from app.domain.auth.lockout import LoginLockout
 from app.infra.auth import (
     BcryptPasswordHasher,
     DevCredentialVerifier,
@@ -52,8 +51,8 @@ from app.infra.message_bus import MessageBus
 from app.infra.metrics import metrics_response
 from app.infra.monitoring import MonitoringCollector, set_collector
 from app.infra.notification_sender import LogNotificationSender
+from app.infra.redis_state import build_code_limiter, build_lockout, build_redis_client
 from app.infra.sampling import run_monitoring_loop
-from app.infra.verification_limiter import FixedWindowCodeLimiter
 
 
 def _default_introspector(
@@ -124,16 +123,20 @@ def create_app(
     # SP2-7 通知与调度：消息总线 + 通知发送器（dev 日志渠道）+ 验证码限流器（进程级）
     app.state.message_bus = MessageBus()
     app.state.notification_sender = LogNotificationSender()
-    app.state.code_limiter = FixedWindowCodeLimiter(
-        config.verification_resend_seconds, config.verification_daily_limit
-    )
+    # Redis 跨进程状态（SP2-7 多实例迁移）：配置 ERDOS_REDIS_URL 时防爆破/验证码限流
+    # 自动切换；未配置或 redis 包缺失回退进程内实现（可用性优先）。
+    redis_client = build_redis_client(config.redis_url)
+    app.state.redis_client = redis_client
+    app.state.code_limiter = build_code_limiter(config, redis_client)
     dev_verifier = DevCredentialVerifier.parse(config.auth_dev_users)
     app.state.credential_verifier = SqlCredentialVerifier(
         session_factory, hasher, fallback=dev_verifier
     )
-    app.state.auth_lockout = LoginLockout(
-        config.auth_lockout_threshold, config.auth_lockout_seconds
-    )
+    app.state.auth_lockout = build_lockout(config, redis_client)
+    if config.env not in ("dev", "test") and redis_client is None:
+        get_logger("erdos.main").warning(
+            "ERDOS_REDIS_URL 未配置：防爆破与验证码限流为进程内实现，多实例部署需配置 Redis（SP2-7）"
+        )
     # SP2-3 账号域：密码策略 + 重置服务（令牌限流 + dev 日志渠道）
     app.state.reset_notifier = LogResetNotifier()
     app.state.reset_service = PasswordResetService(

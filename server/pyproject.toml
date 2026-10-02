@@ -60,7 +60,7 @@ warn_unused_configs = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = ["prometheus_client.*", "psutil"]
+module = ["prometheus_client.*", "psutil", "redis", "redis.*"]
 ignore_missing_imports = true
 
 # ---- pytest ----

@@ -1,18 +1,35 @@
 """登录防爆破（SP2-2）：账号 + IP 双维度失败计数与临时锁定。
 
-- 单进程内存实现（重启即清零）：满足当前单实例部署与验收矩阵；
-  多实例/持久化锁定在 SP2-7 或接入 Redis 时替换为分布式计数；
+- 默认在进程内实现（重启即清零）；多实例部署由 infra.redis_state 提供
+  Redis 跨进程实现（同签名，配置 ERDOS_REDIS_URL 后自动切换，SP2-7）；
 - 锁定到期后自动解除并清零计数（无人工解锁接口）。
 """
 
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from typing import Protocol
 
 from app.core.clock import utc_now
 
 
+class LockoutGuard(Protocol):
+    """防爆破守卫端口（进程内 LoginLockout / Redis 实现同签名）。"""
+
+    async def register_failure(self, username: str, client_ip: str) -> None:
+        """记录一次失败；达到阈值即武装锁定。"""
+        ...
+
+    async def is_locked(self, username: str, client_ip: str) -> bool:
+        """账号或 IP 任一维度处于锁定期则拒绝。"""
+        ...
+
+    async def clear_account(self, username: str) -> None:
+        """登录成功后清零账号维度计数。"""
+        ...
+
+
 class LoginLockout:
-    """登录失败守卫：同账号或同 IP 连续失败达到阈值即锁定一段时间。"""
+    """登录失败守卫（进程内）：同账号或同 IP 连续失败达到阈值即锁定一段时间。"""
 
     def __init__(
         self,
@@ -30,7 +47,7 @@ class LoginLockout:
         # key（acct:<name> / ip:<ip>） -> (failed_count, locked_until)
         self._attempts: dict[str, tuple[int, datetime | None]] = {}
 
-    def register_failure(self, username: str, client_ip: str) -> None:
+    async def register_failure(self, username: str, client_ip: str) -> None:
         """记录一次失败；达到阈值即武装锁定（第 6 次尝试起被拒）。"""
         current = self._now()
         for key in (_account_key(username), _ip_key(client_ip)):
@@ -41,7 +58,7 @@ class LoginLockout:
             else:
                 self._attempts[key] = (count, None)
 
-    def is_locked(self, username: str, client_ip: str) -> bool:
+    async def is_locked(self, username: str, client_ip: str) -> bool:
         """账号或 IP 任一维度处于锁定期则拒绝。"""
         current = self._now()
         return any(
@@ -49,7 +66,7 @@ class LoginLockout:
             for key in (_account_key(username), _ip_key(client_ip))
         )
 
-    def clear_account(self, username: str) -> None:
+    async def clear_account(self, username: str) -> None:
         """登录成功后清零账号维度计数（IP 维度保留，防跨账号撞库）。"""
         self._attempts.pop(_account_key(username), None)
 

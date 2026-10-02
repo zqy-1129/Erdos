@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from app.core.clock import utc_now
 from app.core.errors import ACCOUNT_LOCKED, INVALID_CREDENTIALS, TOKEN_REVOKED, AppError
-from app.domain.auth.lockout import LoginLockout
+from app.domain.auth.lockout import LockoutGuard
 from app.domain.auth.ports import (
     AuthIdentity,
     CredentialVerifier,
@@ -28,7 +28,7 @@ class AuthService:
         *,
         verifier: CredentialVerifier,
         tokens: TokenManager,
-        lockout: LoginLockout,
+        lockout: LockoutGuard,
         access_ttl_seconds: int,
         refresh_ttl_days: int,
         now: Callable[[], datetime] = utc_now,
@@ -50,13 +50,13 @@ class AuthService:
         client_ip: str | None,
     ) -> TokenPair:
         """密码登录：防爆破检查 -> 凭据校验 -> 签发双令牌。"""
-        if self._lockout.is_locked(username, client_ip or "-"):
+        if await self._lockout.is_locked(username, client_ip or "-"):
             raise AppError(ACCOUNT_LOCKED)
         identity = await self._verifier.verify(username, password)
         if identity is None:
-            self._lockout.register_failure(username, client_ip or "-")
+            await self._lockout.register_failure(username, client_ip or "-")
             raise AppError(INVALID_CREDENTIALS)
-        self._lockout.clear_account(username)
+        await self._lockout.clear_account(username)
         return await self.issue_pair(repo, identity, device_id)
 
     async def refresh(

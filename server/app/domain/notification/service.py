@@ -95,8 +95,8 @@ class NotificationService:
         限流键用 target（手机号/邮箱），超出限流抛 429。
         """
         key = f"code:{target}"
-        if not self._code_limiter.allow(key):
-            retry = self._code_limiter.retry_after_seconds(key)
+        if not await self._code_limiter.allow(key):
+            retry = await self._code_limiter.retry_after_seconds(key)
             raise AppError(RATE_LIMITED, detail=f"验证码发送过于频繁，请 {int(retry)} 秒后重试")
 
         code = secrets.randbelow(1_000_000)  # 6 位验证码

@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     verification_daily_limit: int = 10  # 验证码每日限额（PRD：每日 10 次）
     renewal_remind_days: int = 3  # 续费提醒提前天数（PRD：到期前 3 天）
 
+    # Redis（SP2-7 多实例迁移）：跨进程防爆破/验证码限流
+    redis_url: str | None = None  # 如 redis://127.0.0.1:6379/0；未配置时回退进程内实现
+
     def admin_roles(self) -> tuple[str, ...]:
         """解析看板管理角色元组。"""
         return tuple(part.strip() for part in self.dashboard_admin_roles.split(",") if part.strip())

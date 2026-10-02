@@ -71,12 +71,12 @@ class NotificationSender(Protocol):
 
 
 class VerificationCodeLimiter(Protocol):
-    """验证码限流端口（60s/次 + 日 10 次）。"""
+    """验证码限流端口（60s/次 + 日 10 次；进程内/Redis 实现同签名）。"""
 
-    def allow(self, key: str) -> bool:
+    async def allow(self, key: str) -> bool:
         """尝试放行一次验证码发送；返回 False 触发限流。"""
         ...
 
-    def retry_after_seconds(self, key: str) -> float:
+    async def retry_after_seconds(self, key: str) -> float:
         """下次可发送还需等待的秒数。"""
         ...

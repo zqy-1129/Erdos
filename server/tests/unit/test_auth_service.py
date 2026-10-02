@@ -22,29 +22,29 @@ def _lockout(start: datetime) -> tuple[LoginLockout, dict]:
     return LoginLockout(threshold=5, lock_seconds=900, now=Clock.now), clock
 
 
-def test_lockout_after_threshold_and_auto_unlock() -> None:
+async def test_lockout_after_threshold_and_auto_unlock() -> None:
     start = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
     lockout, clock = _lockout(start)
 
     for _ in range(5):  # 5 次失败 -> 武装锁定
-        lockout.register_failure("alice", "1.2.3.4")
-    assert lockout.is_locked("alice", "1.2.3.4") is True  # 第 6 次起被拒
+        await lockout.register_failure("alice", "1.2.3.4")
+    assert await lockout.is_locked("alice", "1.2.3.4") is True  # 第 6 次起被拒
 
-    lockout.clear_account("alice")
-    assert lockout.is_locked("alice", "5.6.7.8") is False  # 账号维度清零
+    await lockout.clear_account("alice")
+    assert await lockout.is_locked("alice", "5.6.7.8") is False  # 账号维度清零
 
     for _ in range(5):
-        lockout.register_failure("alice", "1.2.3.4")
+        await lockout.register_failure("alice", "1.2.3.4")
     clock["now"] = start + timedelta(seconds=901)  # 15 分钟到期
-    assert lockout.is_locked("alice", "1.2.3.4") is False
+    assert await lockout.is_locked("alice", "1.2.3.4") is False
 
 
-def test_lockout_ip_dimension_independent() -> None:
+async def test_lockout_ip_dimension_independent() -> None:
     lockout, _ = _lockout(datetime(2026, 10, 1, 12, 0, tzinfo=UTC))
     for _ in range(5):
-        lockout.register_failure("bob", "9.9.9.9")
-    assert lockout.is_locked("charlie", "9.9.9.9") is True  # IP 维度锁住其他账号
-    assert lockout.is_locked("bob", "8.8.8.8") is True  # 账号维度
+        await lockout.register_failure("bob", "9.9.9.9")
+    assert await lockout.is_locked("charlie", "9.9.9.9") is True  # IP 维度锁住其他账号
+    assert await lockout.is_locked("bob", "8.8.8.8") is True  # 账号维度
 
 
 # ---------- AuthService ----------

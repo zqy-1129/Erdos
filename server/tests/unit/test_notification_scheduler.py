@@ -29,11 +29,11 @@ class FakeCodeLimiter:
         self._allow = allow
         self.calls: list[str] = []
 
-    def allow(self, key: str) -> bool:
+    async def allow(self, key: str) -> bool:
         self.calls.append(key)
         return self._allow
 
-    def retry_after_seconds(self, key: str) -> float:
+    async def retry_after_seconds(self, key: str) -> float:
         return 60.0
 
 
@@ -98,11 +98,11 @@ async def test_fixed_window_limiter_resend_interval() -> None:
     """固定窗口限流：60s 内重复发送被拒。"""
     clock = {"t": 0.0}
     limiter = FixedWindowCodeLimiter(60, 10, clock=lambda: clock["t"])
-    assert limiter.allow("k") is True
+    assert await limiter.allow("k") is True
     clock["t"] = 30.0  # 30 秒后
-    assert limiter.allow("k") is False  # 60s 内被拒
+    assert await limiter.allow("k") is False  # 60s 内被拒
     clock["t"] = 61.0  # 61 秒后
-    assert limiter.allow("k") is True
+    assert await limiter.allow("k") is True
 
 
 async def test_fixed_window_limiter_daily_limit() -> None:
@@ -111,9 +111,9 @@ async def test_fixed_window_limiter_daily_limit() -> None:
     limiter = FixedWindowCodeLimiter(1, 3, clock=lambda: clock["t"])
     for i in range(3):
         clock["t"] = float(i * 10)  # 每次间隔 > resend
-        assert limiter.allow("k") is True
+        assert await limiter.allow("k") is True
     clock["t"] = 40.0
-    assert limiter.allow("k") is False  # 日限额 3 次已用尽
+    assert await limiter.allow("k") is False  # 日限额 3 次已用尽
 
 
 # ----------------------------------------------------------------------
