@@ -1,1 +1,6 @@
-"""引擎 trail 子包（SP1-1 骨架占位，业务逻辑在后续 SP 实现）。"""
+"""留痕记录器（SP1-6）：全流程留痕 + 产物 sha256。"""
+
+from engine.trail.recorder import TrailRecorder, sha256_of
+from engine.trail.store import EventType, TrailRecord, TrailStore
+
+__all__ = ["EventType", "TrailRecord", "TrailRecorder", "TrailStore", "sha256_of"]
