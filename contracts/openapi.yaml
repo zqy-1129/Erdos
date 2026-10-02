@@ -5,7 +5,8 @@ info:
   description: >
     客户端 / 引擎 / 服务端三方的共同语言。契约冻结项：错误码（x-error-codes）、
     表结构、签名格式——冻结后变更必须走契约评审（研发手册「质量标准」红线）。
-    本文件当前为 SP2-1 草案（x-contract-status: draft），待 ARCH 冻结生效。
+    本文件为草案（x-contract-status: draft）：已 100% 覆盖实际实现（56 URL，2026-10-02
+    契约一致性自检），待 ARCH 评审冻结为 v1。自检入口：server/scripts/contract_audit.py。
   x-contract-status: draft
 servers:
   - url: https://api.erdos.example.com
@@ -22,6 +23,20 @@ tags:
     description: 服务端运行监测（响应时间/错误率/资源/接口频率/数据库指标与告警）
   - name: auth
     description: 认证授权中心（SP2-2：JWT 双令牌、RBAC 四角色、防爆破、JWKS）
+  - name: account
+    description: 账号域（SP2-3：注册/资料/注销匿名化/设备登记/密码重置）
+  - name: points
+    description: 积分域（SP2-4 资金域：预扣-确认-退还、阶段许可、离线对账、流水）
+  - name: billing
+    description: 计费订阅域（SP2-5 资金域：商品/订单/回调/退款/订阅/月赠）
+  - name: entitlements
+    description: 权益与内容（SP2-6：快照签发、内容库、增量清单）
+  - name: notifications
+    description: 通知与调度（SP2-7：验证码、月赠/到期冻结/对账调度）
+  - name: analytics
+    description: 行为分析（SP4-2：漏斗、运营看板 6 块）
+  - name: telemetry
+    description: 遥测摄入（SP4-1：SDK 批上报、白名单过滤）
 
 paths:
   /v1/health:
@@ -466,6 +481,22 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /v1/admin/monitoring/metrics-spec:
+    get:
+      tags: [monitoring]
+      operationId: getMonitoringMetricsSpec
+      summary: 监测指标定义与阈值
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 指标名 → {unit, threshold, label} 定义表
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeMetricSpecsView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /v1/auth/login:
     post:
       tags: [auth]
@@ -694,6 +725,579 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/EnvelopeDeactivateView" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/billing/products:
+    get:
+      tags: [billing]
+      operationId: listProducts
+      summary: 启用中的商品列表（订阅 / 积分包）
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 商品列表（price_cents 整数分）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeListProductView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/billing/orders:
+    post:
+      tags: [billing]
+      operationId: createOrder
+      summary: 下单（幂等键 + 30 分钟关单）
+      description: channel 缺省 mock；idempotency_key 重复返回既有订单（already_exists=true）。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateOrderBody" }
+      responses:
+        "200":
+          description: 订单（created）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeCreateOrderView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/billing/orders/{order_id}:
+    get:
+      tags: [billing]
+      operationId: getOrder
+      summary: 订单查询（客户端轮询兜底补账）
+      description: 过期未支付订单查询时自动关单。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 订单详情
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeOrderView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/billing/orders/{order_id}/refund:
+    post:
+      tags: [billing]
+      operationId: refundOrder
+      summary: 退款（PRD F-005 规则）
+      description: 订阅 7 天未用可退；积分包不退（409）。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: 退款结果（status=refunded）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeOrderView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: 退款规则拒绝或状态冲突（CONFLICT）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/billing/callbacks/payment:
+    post:
+      tags: [billing]
+      operationId: paymentCallback
+      summary: 支付回调（payment_no 幂等入账）
+      description: 重复回调不重复发放权益；过期订单拒绝入账并关单。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CallbackBody" }
+      responses:
+        "200":
+          description: 入账后订单（status=paid）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeOrderView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/billing/subscription:
+    get:
+      tags: [billing]
+      operationId: getSubscription
+      summary: 订阅查询
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: plan
+          in: query
+          required: false
+          schema: { type: string, enum: [monthly, yearly], default: monthly }
+      responses:
+        "200":
+          description: 订阅详情（未订阅为 null）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeSubscriptionNullableView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/billing/subscription/monthly-grant:
+    post:
+      tags: [billing]
+      operationId: triggerSubscriptionMonthlyGrant
+      summary: 订阅月赠触发（幂等防重）
+      description: 同一自然月重复触发跳过；入账月度余额。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: plan
+          in: query
+          required: false
+          schema: { type: string, enum: [monthly, yearly], default: monthly }
+      responses:
+        "200":
+          description: 月赠结果（granted / skipped）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeObjectView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/points/balance:
+    get:
+      tags: [points]
+      operationId: getBalance
+      summary: 积分账户余额
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 双余额（购买/月度）+ 冻结标记
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeBalanceView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/points/reserve:
+    post:
+      tags: [points]
+      operationId: reservePoints
+      summary: 预扣（阶段许可 Ed25519 签发）
+      description: exec_id 幂等；余额不足 40901；欠费冻结 40302；客户端凭许可离线验签启动阶段。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReserveBody" }
+      responses:
+        "200":
+          description: 扣减后余额 + 阶段许可
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeReserveView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: 账号欠费冻结（ACCOUNT_FROZEN）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+        "409":
+          description: 余额不足或状态冲突（CONFLICT）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/points/confirm:
+    post:
+      tags: [points]
+      operationId: confirmPoints
+      summary: 确认消耗（阶段完成，终态）
+      description: reserved → confirmed；重复确认幂等返回既有终态；退还后确认 40901。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SettleBody" }
+      responses:
+        "200":
+          description: 余额 + 终态状态
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeSettleView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: 终态迁移冲突（CONFLICT）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/points/refund:
+    post:
+      tags: [points]
+      operationId: refundPoints
+      summary: 退还（阶段取消，返还余额）
+      description: reserved → refunded（终态），原子返还余额；重复退还幂等。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SettleBody" }
+      responses:
+        "200":
+          description: 余额 + 终态状态
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeSettleView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: 终态迁移冲突（CONFLICT）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/points/offline-sync:
+    post:
+      tags: [points]
+      operationId: offlineSyncPoints
+      summary: 离线消耗批量对账（逐条回执）
+      description: 幂等去重（exec_id）；余额不足逐条 insufficient；批次后总余额 ≤ 阈值才冻结。
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OfflineSyncBody" }
+      responses:
+        "200":
+          description: 应用/重复/不足计数 + 冻结状态 + 逐条回执
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeOfflineSyncView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/points/ledger:
+    get:
+      tags: [points]
+      operationId: getLedger
+      summary: 积分流水账单（分页）
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: 流水列表 + 总数（按时间倒序）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeLedgerPageView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/points/ledger/export:
+    get:
+      tags: [points]
+      operationId: exportLedgerCsv
+      summary: 积分流水 CSV 导出
+      description: UTF-8 BOM CSV（StreamingResponse），上限与分页一致。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: CSV 文件流
+          content:
+            text/csv:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/entitlements/snapshot:
+    get:
+      tags: [entitlements]
+      operationId: getEntitlementSnapshot
+      summary: 权益快照签发（Ed25519 签名）
+      description: 聚合订阅+积分状态并签名；客户端凭服务端公钥离线验签。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 签名快照（payload 规范化 JSON）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeSnapshotView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/content/problems:
+    get:
+      tags: [entitlements]
+      operationId: listProblems
+      summary: 真题列表（按会员层级）
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 题目列表（visibility 过滤）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeListProblemView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [entitlements]
+      operationId: upsertProblem
+      summary: 新建/更新真题（admin）
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProblemBody" }
+      responses:
+        "200":
+          description: 落库后的题目
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeProblemView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/content/templates:
+    get:
+      tags: [entitlements]
+      operationId: listTemplates
+      summary: 论文模板列表（按 tier 层级）
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 模板列表（free / member_only）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeListTemplateView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [entitlements]
+      operationId: upsertTemplate
+      summary: 新建/更新模板（admin）
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TemplateBody" }
+      responses:
+        "200":
+          description: 落库后的模板
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeTemplateView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/content/cases:
+    get:
+      tags: [entitlements]
+      operationId: listCases
+      summary: 案例列表（会员专属）
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 案例列表（含合规声明，客户端强制展示）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeListCaseView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [entitlements]
+      operationId: upsertCase
+      summary: 新建/更新案例（admin）
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CaseBody" }
+      responses:
+        "200":
+          description: 落库后的案例
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeCaseView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/content/manifest:
+    get:
+      tags: [entitlements]
+      operationId: listManifests
+      summary: 内容增量同步清单
+      description: 按 scope 分版本；客户端比对 version 做增量拉取。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 各 scope 的 manifest（version + items）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeListManifestView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/notifications/verification-code:
+    post:
+      tags: [notifications]
+      operationId: sendVerificationCode
+      summary: 发送验证码（60s/次 + 日 10 次限流）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VerificationCodeBody" }
+      responses:
+        "200":
+          description: 验证码（dev 日志渠道返回明文，生产走 SMTP/短信）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeVerificationCodeView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429":
+          description: 发送过于频繁（RATE_LIMITED）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /v1/scheduler/monthly-grant:
+    post:
+      tags: [notifications]
+      operationId: triggerMonthlyGrantTask
+      summary: 触发月赠任务（admin，幂等批次）
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 执行结果（granted/skipped 计数）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeSchedulerView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/scheduler/expire-subscriptions:
+    post:
+      tags: [notifications]
+      operationId: triggerExpireSubscriptionsTask
+      summary: 触发订阅到期冻结任务（admin，幂等批次）
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 执行结果
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeSchedulerView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/scheduler/reconcile:
+    post:
+      tags: [notifications]
+      operationId: triggerReconcileTask
+      summary: 触发每日对账任务（admin，幂等批次）
+      description: 余额 vs 流水净额差异检测，非零差异触发告警（P2）。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 对账结果（alerted + differences）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeReconcileView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/analytics/funnel:
+    get:
+      tags: [analytics]
+      operationId: getAnalyticsFunnel
+      summary: 转化漏斗（注册→首题→付费→复购）
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 漏斗四步计数 + 转化率
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeFunnelView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/analytics/dashboard:
+    get:
+      tags: [analytics]
+      operationId: getAnalyticsDashboard
+      summary: 运营看板 6 块指标（DAU/新增/付费转化/积分消耗/阶段成功率/内容使用）
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 六块聚合指标
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeAnalyticsDashboardView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/telemetry/events:
+    post:
+      tags: [telemetry]
+      operationId: ingestTelemetryEvents
+      summary: 遥测事件批量摄入
+      description: SDK 批上报（≤1000 行）；props 白名单过滤，违禁字段拒绝；不含题面/Key。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TelemetryBatchBody" }
+      responses:
+        "200":
+          description: 摄入结果（accepted/rejected + 原因）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeIngestView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
 
 components:
   securitySchemes:
@@ -1224,6 +1828,571 @@ components:
         - type: object
           properties:
             data: { $ref: "#/components/schemas/ProductSalesListView" }
+
+    MetricSpecsView:
+      type: object
+      additionalProperties:
+        type: object
+
+    EnvelopeMetricSpecsView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/MetricSpecsView" }
+
+    # ---- 计费订阅域（SP2-5）----
+    ProductView:
+      type: object
+      required: [id, code, type, name, price_cents, points, duration_days]
+      properties:
+        id: { type: string }
+        code: { type: string }
+        type: { type: string, enum: [subscription, points_pack] }
+        name: { type: string }
+        price_cents: { type: integer, description: 金额整数分 }
+        points: { type: integer }
+        duration_days: { type: integer }
+
+    EnvelopeListProductView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/ProductView" }
+
+    OrderView:
+      type: object
+      required: [id, product_id, price_cents, channel, status, idempotency_key, expires_at, created_at]
+      properties:
+        id: { type: string }
+        product_id: { type: string }
+        price_cents: { type: integer }
+        channel: { type: string, enum: [wechat, alipay, mock] }
+        status: { type: string, enum: [created, paid, closed, refunded] }
+        idempotency_key: { type: string }
+        expires_at: { type: string, format: date-time }
+        paid_at: { type: string, format: date-time, nullable: true }
+        refunded_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    CreateOrderBody:
+      type: object
+      required: [product_code, idempotency_key]
+      properties:
+        product_code: { type: string, minLength: 1, maxLength: 32 }
+        channel: { type: string, maxLength: 16, default: mock }
+        idempotency_key: { type: string, minLength: 1, maxLength: 64 }
+
+    CreateOrderView:
+      type: object
+      required: [order, product, already_exists]
+      properties:
+        order: { $ref: "#/components/schemas/OrderView" }
+        product: { $ref: "#/components/schemas/ProductView" }
+        already_exists: { type: boolean }
+
+    CallbackBody:
+      type: object
+      required: [payment_no, order_id, raw_digest]
+      properties:
+        payment_no: { type: string, minLength: 1, maxLength: 64 }
+        order_id: { type: string, minLength: 1, maxLength: 36 }
+        raw_digest: { type: string, minLength: 1, maxLength: 128 }
+
+    SubscriptionView:
+      type: object
+      required: [plan, status, start_at, end_at]
+      properties:
+        plan: { type: string, enum: [monthly, yearly] }
+        status: { type: string, enum: [active, expired, cancelled] }
+        start_at: { type: string, format: date-time }
+        end_at: { type: string, format: date-time }
+        last_monthly_grant_at: { type: string, format: date-time, nullable: true }
+
+    SubscriptionNullableView:
+      anyOf:
+        - { $ref: "#/components/schemas/SubscriptionView" }
+        - type: "null"
+
+    ObjectView:
+      type: object
+      additionalProperties: true
+
+    EnvelopeOrderView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/OrderView" }
+
+    EnvelopeCreateOrderView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/CreateOrderView" }
+
+    EnvelopeSubscriptionNullableView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/SubscriptionNullableView" }
+
+    EnvelopeObjectView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/ObjectView" }
+
+    # ---- 积分域（SP2-4 资金域）----
+    BalanceView:
+      type: object
+      required: [user_id, purchased_balance, monthly_balance, frozen]
+      properties:
+        user_id: { type: string }
+        purchased_balance: { type: integer }
+        monthly_balance: { type: integer }
+        frozen: { type: boolean }
+
+    LedgerView:
+      type: object
+      required: [id, exec_id, delta, balance_type, kind, status, source, created_at]
+      properties:
+        id: { type: string }
+        exec_id: { type: string }
+        delta: { type: integer, description: 入账为正，扣减为负 }
+        balance_type: { type: string, enum: [purchased, monthly] }
+        kind: { type: string, enum: [grant, reserve, confirm, refund, offline_sync] }
+        status: { type: string, enum: [reserved, confirmed, refunded] }
+        source: { type: string }
+        stage: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    LedgerPageView:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/LedgerView" }
+        total: { type: integer }
+
+    ReserveBody:
+      type: object
+      required: [exec_id, stage, points]
+      properties:
+        exec_id: { type: string, minLength: 1, maxLength: 64 }
+        task_id: { type: string, maxLength: 36, nullable: true }
+        stage: { type: string, minLength: 1, maxLength: 16 }
+        points: { type: integer, exclusiveMinimum: 0 }
+
+    GrantView:
+      type: object
+      required: [exec_id, stage, points, signature, key_version, issued_at, expires_at, status]
+      properties:
+        exec_id: { type: string }
+        stage: { type: string }
+        points: { type: integer }
+        signature: { type: string }
+        key_version: { type: string }
+        issued_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        status: { type: string, enum: [active, used, expired] }
+
+    ReserveView:
+      type: object
+      required: [balance, grant, already_reserved]
+      properties:
+        balance: { $ref: "#/components/schemas/BalanceView" }
+        grant: { $ref: "#/components/schemas/GrantView" }
+        already_reserved: { type: boolean }
+
+    SettleBody:
+      type: object
+      required: [exec_id]
+      properties:
+        exec_id: { type: string, minLength: 1, maxLength: 64 }
+
+    SettleView:
+      type: object
+      required: [balance, status]
+      properties:
+        balance: { $ref: "#/components/schemas/BalanceView" }
+        status: { type: string, enum: [confirmed, refunded] }
+
+    OfflineSyncBody:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            type: object
+            required: [exec_id, stage, points]
+            properties:
+              exec_id: { type: string, minLength: 1, maxLength: 64 }
+              task_id: { type: string, maxLength: 36, nullable: true }
+              stage: { type: string, minLength: 1, maxLength: 16 }
+              points: { type: integer, exclusiveMinimum: 0 }
+
+    OfflineItemView:
+      type: object
+      required: [exec_id, status, detail]
+      properties:
+        exec_id: { type: string }
+        status: { type: string, enum: [applied, duplicate, insufficient] }
+        detail: { type: string }
+
+    OfflineSyncView:
+      type: object
+      required: [applied, duplicate, insufficient, frozen, items]
+      properties:
+        applied: { type: integer }
+        duplicate: { type: integer }
+        insufficient: { type: integer }
+        frozen: { type: boolean }
+        balance: { $ref: "#/components/schemas/BalanceView" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OfflineItemView" }
+
+    EnvelopeBalanceView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/BalanceView" }
+
+    EnvelopeLedgerPageView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/LedgerPageView" }
+
+    EnvelopeReserveView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/ReserveView" }
+
+    EnvelopeSettleView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/SettleView" }
+
+    EnvelopeOfflineSyncView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/OfflineSyncView" }
+
+    # ---- 权益与内容域（SP2-6）----
+    SnapshotView:
+      type: object
+      required: [payload, signature, key_version, issued_at]
+      properties:
+        payload: { type: object }
+        signature: { type: string }
+        key_version: { type: string }
+        issued_at: { type: string, format: date-time }
+
+    ProblemView:
+      type: object
+      required: [business_id, competition, year, problem_code, title, prompt_zh, visibility]
+      properties:
+        business_id: { type: string }
+        competition: { type: string }
+        year: { type: integer }
+        problem_code: { type: string }
+        title: { type: string }
+        tags: { type: array, items: { type: string } }
+        prompt_zh: { type: string }
+        prompt_en: { type: string }
+        attachments: { type: array, items: { type: object } }
+        scoring: { type: string }
+        dataset_hint: { type: string }
+        visibility: { type: string, enum: [public, member] }
+
+    ProblemBody:
+      type: object
+      required: [business_id, competition, year, problem_code, title, prompt_zh]
+      properties:
+        business_id: { type: string, minLength: 1, maxLength: 64 }
+        competition: { type: string, minLength: 1, maxLength: 16 }
+        year: { type: integer }
+        problem_code: { type: string, minLength: 1, maxLength: 8 }
+        title: { type: string, minLength: 1, maxLength: 128 }
+        tags: { type: array, items: { type: string } }
+        prompt_zh: { type: string, minLength: 1, maxLength: 8192 }
+        prompt_en: { type: string }
+        attachments: { type: array, items: { type: object } }
+        scoring: { type: string }
+        dataset_hint: { type: string }
+        visibility: { type: string, enum: [public, member], default: public }
+
+    TemplateView:
+      type: object
+      required: [business_id, competition, format, oss_key, sha256, version, tier]
+      properties:
+        business_id: { type: string }
+        competition: { type: string }
+        format: { type: string, enum: [latex, docx] }
+        oss_key: { type: string }
+        sha256: { type: string }
+        version: { type: integer }
+        changelog: { type: string }
+        tier: { type: string, enum: [member_only, free] }
+
+    TemplateBody:
+      type: object
+      required: [business_id, competition, format, oss_key, sha256]
+      properties:
+        business_id: { type: string, minLength: 1, maxLength: 64 }
+        competition: { type: string, minLength: 1, maxLength: 16 }
+        format: { type: string, minLength: 1, maxLength: 16 }
+        oss_key: { type: string, minLength: 1, maxLength: 256 }
+        sha256: { type: string, minLength: 1, maxLength: 64 }
+        version: { type: integer, default: 1 }
+        changelog: { type: string }
+        tier: { type: string, enum: [member_only, free], default: member_only }
+
+    CaseView:
+      type: object
+      required: [business_id, problem_id, title, oss_key, sha256, compliance_note]
+      properties:
+        business_id: { type: string }
+        problem_id: { type: string }
+        title: { type: string }
+        award: { type: string }
+        method_tags: { type: array, items: { type: string } }
+        oss_key: { type: string }
+        sha256: { type: string }
+        compliance_note: { type: string, description: 合规声明，客户端强制展示 }
+
+    CaseBody:
+      type: object
+      required: [business_id, problem_id, title, oss_key, sha256]
+      properties:
+        business_id: { type: string, minLength: 1, maxLength: 64 }
+        problem_id: { type: string, minLength: 1, maxLength: 64 }
+        title: { type: string, minLength: 1, maxLength: 128 }
+        award: { type: string }
+        method_tags: { type: array, items: { type: string } }
+        oss_key: { type: string, minLength: 1, maxLength: 256 }
+        sha256: { type: string, minLength: 1, maxLength: 64 }
+        compliance_note: { type: string, minLength: 1, maxLength: 256, default: 仅作方法参照，禁止大段抄袭 }
+
+    ManifestView:
+      type: object
+      required: [scope, version, items, updated_at]
+      properties:
+        scope: { type: string, enum: [problems, templates, cases] }
+        version: { type: integer }
+        items: { type: array, items: { type: object } }
+        updated_at: { type: string, format: date-time }
+
+    EnvelopeSnapshotView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/SnapshotView" }
+
+    EnvelopeListProblemView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/ProblemView" }
+
+    EnvelopeProblemView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/ProblemView" }
+
+    EnvelopeListTemplateView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/TemplateView" }
+
+    EnvelopeTemplateView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/TemplateView" }
+
+    EnvelopeListCaseView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/CaseView" }
+
+    EnvelopeCaseView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/CaseView" }
+
+    EnvelopeListManifestView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: "#/components/schemas/ManifestView" }
+
+    # ---- 通知与调度域（SP2-7）----
+    VerificationCodeBody:
+      type: object
+      required: [target]
+      properties:
+        target: { type: string, minLength: 1, maxLength: 128 }
+
+    VerificationCodeView:
+      type: object
+      required: [code, target]
+      properties:
+        code: { type: string }
+        target: { type: string }
+
+    SchedulerView:
+      type: object
+      required: [result]
+      properties:
+        result: { type: string }
+
+    ReconcileView:
+      type: object
+      required: [alerted, differences]
+      properties:
+        alerted: { type: boolean }
+        differences:
+          type: array
+          items:
+            type: object
+            required: [user_id, balance, ledger_net]
+            properties:
+              user_id: { type: string }
+              balance: { type: integer }
+              ledger_net: { type: integer }
+
+    EnvelopeVerificationCodeView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/VerificationCodeView" }
+
+    EnvelopeSchedulerView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/SchedulerView" }
+
+    EnvelopeReconcileView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/ReconcileView" }
+
+    # ---- 行为分析（SP4-2）与遥测（SP4-1）----
+    FunnelView:
+      type: object
+      required: [steps, conversion_rates]
+      properties:
+        steps:
+          type: array
+          items: { type: object }
+        conversion_rates: { type: object }
+
+    AnalyticsDashboardView:
+      type: object
+      required: [dau, new_users, pay_conversion_rate, points_consumed, stage_success_rates, content_usage]
+      properties:
+        dau: { type: integer }
+        new_users: { type: integer }
+        pay_conversion_rate: { type: number }
+        points_consumed: { type: integer }
+        stage_success_rates: { type: object }
+        content_usage: { type: integer }
+
+    TelemetryBatchBody:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: object
+            required: [event_name, distinct_id]
+            properties:
+              event_name: { type: string, minLength: 1, maxLength: 32 }
+              distinct_id: { type: string, minLength: 1, maxLength: 128 }
+              props: { type: object }
+              app_version: { type: string }
+              os: { type: string }
+              channel: { type: string, default: stable }
+
+    IngestView:
+      type: object
+      required: [accepted, rejected, reasons]
+      properties:
+        accepted: { type: integer }
+        rejected: { type: integer }
+        reasons:
+          type: array
+          items: { type: string }
+
+    EnvelopeFunnelView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/FunnelView" }
+
+    EnvelopeAnalyticsDashboardView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/AnalyticsDashboardView" }
+
+    EnvelopeIngestView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/IngestView" }
 
     Envelope:
       type: object
