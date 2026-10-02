@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://erdos.local/contracts/engine-rpc.schema.json",
+  "title": "Erdos Agent 引擎 JSON-RPC 2.0 契约（SP1-1 引擎运行时与 IPC 骨架）",
+  "description": "定义引擎 6 个 RPC 方法与 3 个 NDJSON 事件。通信走 stdio 管道，每行一个 JSON（NDJSON）。",
+  "definitions": {
+    "rpcId": { "type": ["string", "number", "null"] },
+    "traceId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "stageName": { "type": "string", "enum": ["analysis", "modeling", "solving", "writing"] },
+    "gateName": { "type": "string", "minLength": 1, "maxLength": 32 },
+    "engineStatus": { "type": "string", "enum": ["idle", "running", "paused", "stopped"] },
+    "stageStatus": { "type": "string", "enum": ["pending", "running", "paused", "done", "failed", "cancelled"] }
+  },
+  "methods": {
+    "start_stage": {
+      "summary": "启动一个阶段（四阶段：analysis/modeling/solving/writing）",
+      "params": {
+        "type": "object",
+        "required": ["task_id", "stage"],
+        "additionalProperties": false,
+        "properties": {
+          "task_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "stage": { "$ref": "#/definitions/stageName" }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["task_id", "stage", "status"],
+        "properties": {
+          "task_id": { "type": "string" },
+          "stage": { "$ref": "#/definitions/stageName" },
+          "status": { "$ref": "#/definitions/stageStatus" }
+        }
+      }
+    },
+    "pause": {
+      "summary": "暂停当前任务",
+      "params": { "type": "object", "required": ["task_id"], "additionalProperties": false, "properties": { "task_id": { "type": "string" } } },
+      "result": { "type": "object", "required": ["task_id", "status"], "properties": { "task_id": { "type": "string" }, "status": { "$ref": "#/definitions/engineStatus" } } }
+    },
+    "resume": {
+      "summary": "恢复暂停的任务",
+      "params": { "type": "object", "required": ["task_id"], "additionalProperties": false, "properties": { "task_id": { "type": "string" } } },
+      "result": { "type": "object", "required": ["task_id", "status"], "properties": { "task_id": { "type": "string" }, "status": { "$ref": "#/definitions/engineStatus" } } }
+    },
+    "cancel": {
+      "summary": "取消当前任务",
+      "params": { "type": "object", "required": ["task_id"], "additionalProperties": false, "properties": { "task_id": { "type": "string" } } },
+      "result": { "type": "object", "required": ["task_id", "status"], "properties": { "task_id": { "type": "string" }, "status": { "$ref": "#/definitions/engineStatus" } } }
+    },
+    "get_status": {
+      "summary": "查询引擎与当前任务状态",
+      "params": { "type": "object", "additionalProperties": false, "properties": {} },
+      "result": {
+        "type": "object",
+        "required": ["engine", "task"],
+        "properties": {
+          "engine": { "$ref": "#/definitions/engineStatus" },
+          "task": {
+            "type": ["object", "null"],
+            "properties": {
+              "task_id": { "type": "string" },
+              "stage": { "$ref": "#/definitions/stageName" },
+              "status": { "$ref": "#/definitions/stageStatus" }
+            }
+          }
+        }
+      }
+    },
+    "answer_gate": {
+      "summary": "回答门禁评审（通过/驳回）",
+      "params": {
+        "type": "object",
+        "required": ["task_id", "gate", "decision"],
+        "additionalProperties": false,
+        "properties": {
+          "task_id": { "type": "string" },
+          "gate": { "$ref": "#/definitions/gateName" },
+          "decision": { "type": "string", "enum": ["pass", "reject"] },
+          "feedback": { "type": "string", "maxLength": 2048 }
+        }
+      },
+      "result": { "type": "object", "required": ["task_id", "gate", "decision"], "properties": { "task_id": { "type": "string" }, "gate": { "$ref": "#/definitions/gateName" }, "decision": { "type": "string" } } }
+    }
+  },
+  "events": {
+    "stage.progress": {
+      "summary": "阶段进度事件",
+      "required": ["trace_id", "event", "task_id", "stage", "progress", "timestamp"],
+      "properties": {
+        "trace_id": { "$ref": "#/definitions/traceId" },
+        "event": { "const": "stage.progress" },
+        "task_id": { "type": "string" },
+        "stage": { "$ref": "#/definitions/stageName" },
+        "progress": { "type": "number", "minimum": 0, "maximum": 1 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "artifact.ready": {
+      "summary": "产物就绪事件（sha256 校验）",
+      "required": ["trace_id", "event", "task_id", "artifact", "sha256", "timestamp"],
+      "properties": {
+        "trace_id": { "$ref": "#/definitions/traceId" },
+        "event": { "const": "artifact.ready" },
+        "task_id": { "type": "string" },
+        "artifact": { "type": "string", "enum": ["figure", "table", "data", "code", "paper"] },
+        "sha256": { "type": "string", "minLength": 64, "maxLength": 64 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "gate.failed": {
+      "summary": "门禁失败事件",
+      "required": ["trace_id", "event", "task_id", "gate", "reason", "timestamp"],
+      "properties": {
+        "trace_id": { "$ref": "#/definitions/traceId" },
+        "event": { "const": "gate.failed" },
+        "task_id": { "type": "string" },
+        "gate": { "$ref": "#/definitions/gateName" },
+        "reason": { "type": "string", "maxLength": 1024 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}
