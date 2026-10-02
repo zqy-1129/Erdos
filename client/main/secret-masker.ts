@@ -14,17 +14,6 @@ const KEY_PATTERNS: RegExp[] = [
   /AKIA[0-9A-Z]{16}/g, // AWS Access Key
 ];
 
-/** 白名单字段：命中则整条日志脱敏（不含 Key 内容）。 */
-const ALLOWED_KEYS = new Set([
-  "page",
-  "feature",
-  "stage",
-  "task_id",
-  "event",
-  "trace_id",
-  "timestamp",
-]);
-
 /** 脱敏单条 Key：仅保留前后 4 位。 */
 export function maskSecret(secret: string): string {
   if (secret.length <= 8) return "****";

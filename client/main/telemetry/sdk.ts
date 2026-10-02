@@ -161,7 +161,7 @@ export function sanitizeProps(props: Record<string, unknown>): Record<string, un
 }
 
 function toQueued(row: OutboxRow): QueuedEvent {
-  let props: Record<string, unknown> = {};
+  let props: Record<string, unknown>;
   try {
     props = JSON.parse(row.props) as Record<string, unknown>;
   } catch {

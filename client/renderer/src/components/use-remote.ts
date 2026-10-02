@@ -47,7 +47,6 @@ export function useRemoteData<T>(loader: () => Promise<T>): RemoteData<T> {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick]);
 
   return { data, loading, error: error?.message ?? null, errorKind: error?.kind ?? null, reload };

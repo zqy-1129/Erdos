@@ -16,9 +16,7 @@ import type {
   EntitlementView,
   ErdosBridge,
   HistoryTask,
-  KeyItemView,
   KeyTestResult,
-  SessionView,
 } from "./bridge.ts";
 import { BRIDGE_CHANNELS } from "./bridge.ts";
 import type { EngineEvent, StageName } from "../../../shared/ipc.ts";
