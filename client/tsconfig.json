@@ -3,6 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
@@ -11,5 +12,5 @@
     "isolatedModules": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["shared/**/*.ts", "main/**/*.ts", "renderer/**/*.ts", "tests/**/*.ts"]
+  "include": ["shared/**/*.ts", "main/**/*.ts", "renderer/**/*.ts", "renderer/**/*.tsx", "tests/**/*.ts"]
 }
