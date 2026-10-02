@@ -32,4 +32,4 @@ jobs:
       - name: Annotate failures
         if: failure()
         run: |
-          tail -60 pytest.log | sed 's/^/::error::/' || true
+          awk '/ERROR|FAILED|short test summary/{flag=1} flag' pytest.log | head -80 | sed 's/^/::error::/' || true
