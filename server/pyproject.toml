@@ -66,6 +66,7 @@ ignore_missing_imports = true
 # ---- pytest ----
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]  # scripts/ 位于仓库根：pytest 入口（CI）不含 cwd 于 sys.path，显式注入
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-q --cov=app --cov-report=term-missing --cov-fail-under=80"
