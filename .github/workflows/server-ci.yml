@@ -32,4 +32,4 @@ jobs:
       - name: Annotate failures
         if: failure()
         run: |
-          awk '/ERROR|FAILED|short test summary/{flag=1} flag' pytest.log | head -80 | sed 's/^/::error::/' || true
+          grep -n -B2 -A25 "ImportError while importing\|ERROR collecting" pytest.log | head -60 | sed 's/^/::error::/' || true
