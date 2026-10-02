@@ -1,6 +1,6 @@
 """在线状态接口（看板 FR-1/M1/M2）：心跳登记、分钟聚合与上线事件投影。"""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -69,9 +69,15 @@ async def heartbeat(
             settings.presence_online_window_seconds,
         )
         result = await service.heartbeat(event)
-        await SQLAlchemyOnlineTrendRepository(uow.session).upsert_minute(
-            minute_ts=_truncate_minute(now), count=result.stats.current_online
+        minute = _truncate_minute(now)
+        created = await SQLAlchemyOnlineTrendRepository(uow.session).upsert_minute(
+            minute_ts=minute, count=result.stats.current_online
         )
+        # 分钟切换（新建分钟桶）时顺带裁剪，避免每 30s 心跳都做全表删除
+        if created:
+            await SQLAlchemyOnlineTrendRepository(uow.session).prune_before(
+                minute - timedelta(days=settings.presence_trend_retention_days)
+            )
         if result.session_created:
             await SQLAlchemyDashboardEventRepository(uow.session).append(
                 occurred_at=now,

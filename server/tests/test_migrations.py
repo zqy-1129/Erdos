@@ -7,11 +7,11 @@ from alembic import command
 from alembic.config import Config
 
 from app.repository.models import (
+    Account,
     AuditLog,
     AuthRefreshToken,
     Device,
     MonitoringMinuteSnapshot,
-    Account,
 )
 
 SERVER_ROOT = Path(__file__).resolve().parents[1]

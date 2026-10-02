@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,7 +33,7 @@ class SQLAlchemyOnlineTrendRepository(OnlineTrendRepository):
         rows = (await self._session.execute(stmt)).scalars().all()
         return [TrendPoint(ts=row.minute_ts, value=row.online_count) for row in rows]
 
-    async def upsert_minute(self, minute_ts: datetime, count: int) -> None:
+    async def upsert_minute(self, minute_ts: datetime, count: int) -> bool:
         stmt = select(PresenceMinuteAgg).where(PresenceMinuteAgg.minute_ts == minute_ts)
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         if row is None:
@@ -42,12 +42,18 @@ class SQLAlchemyOnlineTrendRepository(OnlineTrendRepository):
                     PresenceMinuteAgg(minute_ts=minute_ts, online_count=count)
                 )
                 await self._session.flush()
-                return
+                return True
             except IntegrityError:
                 await self._session.rollback()
                 row = (await self._session.execute(stmt)).scalar_one()
         row.online_count = count
         await self._session.flush()
+        return False
+
+    async def prune_before(self, cutoff: datetime) -> int:
+        stmt = delete(PresenceMinuteAgg).where(PresenceMinuteAgg.minute_ts < cutoff)
+        result = await self._session.execute(stmt)
+        return int(getattr(result, "rowcount", 0) or 0)
 
 
 class SQLAlchemyUsersTrendRepository(UsersTrendRepository):

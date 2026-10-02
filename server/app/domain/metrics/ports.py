@@ -40,8 +40,12 @@ class OnlineTrendRepository(Protocol):
         """返回 [start, end) 区间内的分钟采样点（升序）。"""
         ...
 
-    async def upsert_minute(self, minute_ts: datetime, count: int) -> None:
-        """写入/更新某分钟的在线数（最新值覆盖）。"""
+    async def upsert_minute(self, minute_ts: datetime, count: int) -> bool:
+        """写入/更新某分钟的在线数（最新值覆盖）；返回是否新建了该分钟桶。"""
+        ...
+
+    async def prune_before(self, cutoff: datetime) -> int:
+        """删除 minute_ts < cutoff 的分钟桶，返回删除行数。"""
         ...
 
 
