@@ -47,6 +47,8 @@ select { padding:6px 10px; border:1px solid var(--border); border-radius:8px;
   border:1px solid var(--border); border-radius:8px; background:var(--surface-muted); }
 #mchart { width:100%; height:200px; display:block;
   border:1px solid var(--border); border-radius:8px; background:var(--surface-muted); }
+#pchart, #bchart { width:100%; height:180px; display:block;
+  border:1px solid var(--border); border-radius:8px; background:var(--surface-muted); }
 .mk-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin:12px 0; }
 .mk { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px; }
 .mk .k { color:var(--muted); font-size:12px; white-space:nowrap; }
@@ -173,6 +175,52 @@ td.num { font-variant-numeric:tabular-nums; }
     <div class="mk-kpis" id="monKpis"><div class="empty">等待首次采样…</div></div>
     <canvas id="mchart" width="1024" height="200"></canvas>
     <div class="hint">红线为告警阈值 · SSE 实时刷新（monitoring.snapshot）· 指标单位随选择变化</div>
+  </div>
+
+  <div class="two" style="margin-top:12px">
+    <div class="card">
+      <h3>
+        <span>积分分析 <span class="sub">SP2-4 · P3</span></span>
+        <span class="controls">
+          <select id="ptsMetric">
+            <option value="granted">发放</option>
+            <option value="consumed" selected>消耗</option>
+            <option value="refunded">退还</option>
+          </select>
+          <span id="ptsRangeBtns">
+            <button data-d="7">7d</button>
+            <button data-d="30" class="on">30d</button>
+            <button data-d="90">90d</button>
+          </span>
+        </span>
+      </h3>
+      <div class="mk-kpis" id="ptsKpis"><div class="empty">加载中…</div></div>
+      <canvas id="pchart" width="1024" height="180"></canvas>
+      <div class="hint">日聚合口径：发放=grant · 消耗=reserve 已确认 · 退还=reserve 已退还（UTC 日）</div>
+      <h3 style="margin-top:10px">流水类型 × 状态分布</h3>
+      <div id="pdist"><div class="empty">暂无数据</div></div>
+    </div>
+    <div class="card">
+      <h3>
+        <span>资产明细 <span class="sub">SP2-5 · P4</span></span>
+        <span class="controls">
+          <select id="bilMetric">
+            <option value="revenue">收入</option>
+            <option value="refund">退款</option>
+          </select>
+          <span id="bilRangeBtns">
+            <button data-d="7">7d</button>
+            <button data-d="30" class="on">30d</button>
+            <button data-d="90">90d</button>
+          </span>
+        </span>
+      </h3>
+      <div class="mk-kpis" id="bilKpis"><div class="empty">加载中…</div></div>
+      <canvas id="bchart" width="1024" height="180"></canvas>
+      <div class="hint">金额口径：整数分入库（¥=分/100）· 收入按支付日聚合 · 退款单列</div>
+      <h3 style="margin-top:10px">商品销售分布</h3>
+      <div id="bprod"><div class="empty">暂无数据</div></div>
+    </div>
   </div>
 
   <div class="two" style="margin-top:12px">
@@ -702,6 +750,147 @@ function onMonSnapshot(p) {
   drawMonChart();
 }
 
+/* ---------- 运营报表：P3 积分分析 + P4 资产明细 ---------- */
+const RPT_PAD_L = 56, RPT_PAD_R = 16, RPT_PAD_T = 14, RPT_AXIS = 30;
+let ptsMetric = "consumed", ptsDays = 30, ptsPoints = [];
+let bilMetric = "revenue", bilDays = 30, bilPoints = [];
+let reportTimer = null;
+
+function fmtInt(n) { return Number(n || 0).toLocaleString("zh-CN"); }
+function fmtYuan(cents) {
+  const n = Number(cents || 0) / 100;
+  if (!isFinite(n)) return "—";
+  return "¥" + n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtDay(s) {
+  const t = parseTs(s + "T00:00");
+  const d = new Date(t);
+  return isNaN(t) ? s : `${d.getMonth() + 1}/${d.getDate()}`;
+}
+function drawReportChart(cvId, points, key, fmt) {
+  const cv = $(cvId);
+  const ctx = cv.getContext("2d");
+  const w = cv.width, h = cv.height;
+  const plotW = w - RPT_PAD_L - RPT_PAD_R, plotH = h - RPT_AXIS - RPT_PAD_T;
+  const font = cssVar("--font-sans") || "sans-serif";
+  const muted = cssVar("--text-muted") || "#888";
+  const textC = cssVar("--text") || "#111";
+  const border = cssVar("--border") || "rgba(0,0,0,.12)";
+  const brand = cssVar("--brand") || "#0FDC78";
+  ctx.clearRect(0, 0, w, h);
+  if (!points.length) {
+    ctx.font = `400 13px ${font}`;
+    ctx.fillStyle = muted; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("暂无数据", w / 2, h / 2);
+    return;
+  }
+  const from = points[0].ts, to = now();
+  const span = Math.max(to - from, 1);
+  const maxV = Math.max(1, ...points.map((p) => p[key]));
+  const X = (t) => RPT_PAD_L + ((t - from) / span) * plotW;
+  const Y = (v) => RPT_PAD_T + plotH - (v / maxV) * plotH;
+  ctx.font = `400 12px ${font}`;
+  ctx.textBaseline = "middle";
+  for (let i = 0; i <= 3; i++) {
+    const v = (maxV / 3) * i;
+    const y = Y(v);
+    ctx.strokeStyle = border; ctx.globalAlpha = 0.35; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(X(from), y); ctx.lineTo(X(to), y); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = muted; ctx.textAlign = "right";
+    ctx.fillText(fmt(v), RPT_PAD_L - 10, y);
+  }
+  for (let i = 0; i <= 5; i++) {
+    const x = RPT_PAD_L + (plotW / 5) * i;
+    ctx.strokeStyle = border; ctx.globalAlpha = 0.35;
+    ctx.beginPath(); ctx.moveTo(x, RPT_PAD_T); ctx.lineTo(x, RPT_PAD_T + plotH); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = muted;
+    ctx.beginPath(); ctx.moveTo(x, RPT_PAD_T + plotH); ctx.lineTo(x, RPT_PAD_T + plotH + 5); ctx.stroke();
+    ctx.fillStyle = muted;
+    ctx.textAlign = i === 0 ? "left" : i === 5 ? "right" : "center";
+    ctx.fillText(fmtDay(new Date(from + (span / 5) * i).toISOString().slice(0, 10)), x, RPT_PAD_T + plotH + 16);
+  }
+  if (points.length > 1) {
+    ctx.strokeStyle = brand; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.lineCap = "round";
+    ctx.beginPath();
+    points.forEach((p, i) => (i === 0 ? ctx.moveTo(X(p.ts), Y(p[key])) : ctx.lineTo(X(p.ts), Y(p[key]))));
+    ctx.stroke();
+  }
+  const last = points[points.length - 1];
+  ctx.fillStyle = brand;
+  ctx.beginPath(); ctx.arc(X(last.ts), Y(last[key]), 4, 0, 7); ctx.fill();
+  chip(ctx, X(last.ts), Y(last[key]) - 12, `最新 ${fmt(last[key])}`, textC, brand);
+  ctx.strokeStyle = border; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(RPT_PAD_L - 0.5, RPT_PAD_T); ctx.lineTo(RPT_PAD_L - 0.5, RPT_PAD_T + plotH); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(w - RPT_PAD_R + 0.5, RPT_PAD_T); ctx.lineTo(w - RPT_PAD_R + 0.5, RPT_PAD_T + plotH); ctx.stroke();
+}
+async function fetchPointsReporting() {
+  try {
+    const [sum, trend, dist] = await Promise.all([
+      api("/v1/admin/dashboard/points/summary"),
+      api(`/v1/admin/dashboard/points/trend?days=${ptsDays}`),
+      api("/v1/admin/dashboard/points/distribution"),
+    ]);
+    $("ptsKpis").innerHTML = [
+      ["余额总量", fmtInt(sum.total_balance)],
+      ["购买 / 月度", `${fmtInt(sum.total_purchased)} / ${fmtInt(sum.total_monthly)}`],
+      ["挂起预扣", fmtInt(sum.reserved_points)],
+      ["冻结账户", `${fmtInt(sum.frozen_count)} <span class="sub">/ ${fmtInt(sum.account_count)} 账户</span>`],
+    ].map(([k, v]) => `<div class="mk"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+    ptsPoints = trend.series.map((r) => ({
+      ts: parseTs(r.stat_date + "T00:00"),
+      granted: r.granted, consumed: r.consumed, refunded: r.refunded,
+    }));
+    drawReportChart("pchart", ptsPoints, ptsMetric, fmtInt);
+    $("pdist").innerHTML = dist.items.length
+      ? "<table><thead><tr><th>类型</th><th>状态</th><th>笔数</th></tr></thead><tbody>" +
+        dist.items.map((r) =>
+          `<tr><td>${r.kind}</td><td>${r.status}</td><td class="num">${fmtInt(r.count)}</td></tr>`).join("") +
+        "</tbody></table>"
+      : '<div class="empty">暂无数据</div>';
+  } catch (e) { toast("积分分析加载失败：" + e.message); }
+}
+async function fetchBillingReporting() {
+  try {
+    const [sum, trend, prods] = await Promise.all([
+      api("/v1/admin/dashboard/billing/summary"),
+      api(`/v1/admin/dashboard/billing/revenue?days=${bilDays}`),
+      api("/v1/admin/dashboard/billing/products"),
+    ]);
+    $("bilKpis").innerHTML = [
+      ["GMV（已支付）", fmtYuan(sum.gmv_cents)],
+      ["退款", fmtYuan(sum.refunded_cents)],
+      ["活跃订阅", fmtInt(sum.active_subscriptions)],
+      ["已支付订单", `${fmtInt(sum.paid_order_count)} <span class="sub">/ 退款 ${fmtInt(sum.refunded_order_count)}</span>`],
+    ].map(([k, v]) => `<div class="mk"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+    bilPoints = trend.series.map((r) => ({
+      ts: parseTs(r.stat_date + "T00:00"),
+      revenue: r.revenue_cents / 100, refund: r.refund_cents / 100,
+    }));
+    drawReportChart("bchart", bilPoints, bilMetric, fmtYuan);
+    $("bprod").innerHTML = prods.items.length
+      ? "<table><thead><tr><th>商品</th><th>订单</th><th>金额</th></tr></thead><tbody>" +
+        prods.items.map((r) =>
+          `<tr><td>${r.product_name}<div class="sub">${r.product_code}</div></td>` +
+          `<td class="num">${fmtInt(r.order_count)}</td><td class="num">${fmtYuan(r.amount_cents)}</td></tr>`).join("") +
+        "</tbody></table>"
+      : '<div class="empty">暂无数据</div>';
+  } catch (e) { toast("资产明细加载失败：" + e.message); }
+}
+$("ptsMetric").onchange = () => { ptsMetric = $("ptsMetric").value; drawReportChart("pchart", ptsPoints, ptsMetric, fmtInt); };
+$("bilMetric").onchange = () => { bilMetric = $("bilMetric").value; drawReportChart("bchart", bilPoints, bilMetric, fmtYuan); };
+document.querySelectorAll("#ptsRangeBtns button").forEach((b) => (b.onclick = () => {
+  ptsDays = Number(b.dataset.d);
+  document.querySelectorAll("#ptsRangeBtns button").forEach((x) => x.classList.toggle("on", x === b));
+  fetchPointsReporting();
+}));
+document.querySelectorAll("#bilRangeBtns button").forEach((b) => (b.onclick = () => {
+  bilDays = Number(b.dataset.d);
+  document.querySelectorAll("#bilRangeBtns button").forEach((x) => x.classList.toggle("on", x === b));
+  fetchBillingReporting();
+}));
+
 /* ---------- SSE ---------- */
 function appendLog(id, event, payload) {
   const box = $("log");
@@ -811,7 +1000,8 @@ $("monGran").onchange = fetchMonTrend;
 $("apply").onclick = () => {
   tokenValue = $("token").value.trim();
   localStorage.setItem("erdos_token", tokenValue);
-  refreshOnline(); loadTotals(); fetchTrend(); fetchEvents(); fetchMonitoring(); fetchMonTrend(); connectSSE();
+  refreshOnline(); loadTotals(); fetchTrend(); fetchEvents(); fetchMonitoring(); fetchMonTrend();
+  fetchPointsReporting(); fetchBillingReporting(); connectSSE();
 };
 
 // 初始化 + 15s 轮询兜底（SSE 断线时仍保持数据新鲜）
@@ -820,10 +1010,13 @@ loadTotals();
 fetchTrend();
 fetchMonitoring();
 fetchMonTrend();
+fetchPointsReporting();
+fetchBillingReporting();
 connectSSE();
 pollTimer = setInterval(() => { refreshOnline(); fetchTrend(); fetchEvents(); fetchMonitoring(); }, 15000);
-addEventListener("resize", () => { drawChart(); drawMonChart(); });
-addEventListener("beforeunload", () => sseController && sseController.abort());
+reportTimer = setInterval(() => { fetchPointsReporting(); fetchBillingReporting(); }, 60000);
+addEventListener("resize", () => { drawChart(); drawMonChart(); drawReportChart("pchart", ptsPoints, ptsMetric, fmtInt); drawReportChart("bchart", bilPoints, bilMetric, fmtYuan); });
+addEventListener("beforeunload", () => { sseController && sseController.abort(); clearTimeout(reportTimer); });
 </script>
 </body>
 </html>

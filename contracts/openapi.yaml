@@ -270,6 +270,119 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /v1/admin/dashboard/points/summary:
+    get:
+      tags: [dashboard]
+      operationId: getPointsSummary
+      summary: 积分域总览（P3 积分分析）
+      description: 双余额总量/挂起预扣/冻结账户/流水量与 24h 离线补报计数。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 积分域总览（金额/积分为整数）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopePointsSummaryView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/admin/dashboard/points/trend:
+    get:
+      tags: [dashboard]
+      operationId: getPointsTrend
+      summary: 积分发放/消耗/退还日趋势（P3 积分分析）
+      description: 最近 N 天按 UTC 日聚合；granted=grant，consumed=reserve+confirmed，refunded=reserve+refunded；无数据日补 0。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 90, default: 30 }
+      responses:
+        "200":
+          description: 积分日序列（升序、零值填充）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopePointsTrendView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/admin/dashboard/points/distribution:
+    get:
+      tags: [dashboard]
+      operationId: getPointsDistribution
+      summary: 积分流水类型×状态分布（P3 积分分析）
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 流水类型×状态计数列表
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopePointsDistributionView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/admin/dashboard/billing/summary:
+    get:
+      tags: [dashboard]
+      operationId: getBillingSummary
+      summary: 计费资产总览（P4 资产明细）
+      description: GMV/退款/订单状态计数/订阅状态计数；金额一律整数分。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 计费资产总览（金额为分）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeBillingSummaryView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/admin/dashboard/billing/revenue:
+    get:
+      tags: [dashboard]
+      operationId: getBillingRevenue
+      summary: 收入/退款日趋势（P4 资产明细）
+      description: 按 paid_at UTC 日聚合；refunded 订单金额单列退款；无数据日补 0；金额为分。
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 90, default: 30 }
+      responses:
+        "200":
+          description: 收入日序列（升序、零值填充）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeRevenueTrendView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/admin/dashboard/billing/products:
+    get:
+      tags: [dashboard]
+      operationId: getBillingProductSales
+      summary: 商品销售分布（P4 资产明细）
+      description: 已支付口径（paid/refunded）按商品聚合；金额为分。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 商品销售分布列表
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeProductSalesListView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /v1/admin/monitoring/overview:
     get:
       tags: [monitoring]
@@ -976,6 +1089,141 @@ components:
         - type: object
           properties:
             data: { $ref: "#/components/schemas/UsersTotalView" }
+
+    PointsSummaryView:
+      type: object
+      required: [total_balance, total_purchased, total_monthly, account_count, frozen_count, reserved_points, ledger_count, offline_sync_last_24h]
+      properties:
+        total_balance: { type: integer }
+        total_purchased: { type: integer }
+        total_monthly: { type: integer }
+        account_count: { type: integer }
+        frozen_count: { type: integer }
+        reserved_points: { type: integer }
+        ledger_count: { type: integer }
+        offline_sync_last_24h: { type: integer }
+
+    PointsDailyView:
+      type: object
+      required: [stat_date, granted, consumed, refunded]
+      properties:
+        stat_date: { type: string, format: date }
+        granted: { type: integer }
+        consumed: { type: integer }
+        refunded: { type: integer }
+
+    PointsTrendView:
+      type: object
+      required: [days, series]
+      properties:
+        days: { type: integer }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/PointsDailyView" }
+
+    PointDistributionRow:
+      type: object
+      required: [kind, status, count]
+      properties:
+        kind: { type: string }
+        status: { type: string }
+        count: { type: integer }
+
+    PointsDistributionView:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PointDistributionRow" }
+
+    BillingSummaryView:
+      type: object
+      required: [gmv_cents, refunded_cents, paid_order_count, refunded_order_count, closed_order_count, active_subscriptions, expired_subscriptions]
+      properties:
+        gmv_cents: { type: integer, description: 已支付订单金额合计（分） }
+        refunded_cents: { type: integer, description: 退款金额合计（分） }
+        paid_order_count: { type: integer }
+        refunded_order_count: { type: integer }
+        closed_order_count: { type: integer }
+        active_subscriptions: { type: integer }
+        expired_subscriptions: { type: integer }
+
+    RevenueDailyView:
+      type: object
+      required: [stat_date, revenue_cents, refund_cents]
+      properties:
+        stat_date: { type: string, format: date }
+        revenue_cents: { type: integer }
+        refund_cents: { type: integer }
+
+    RevenueTrendView:
+      type: object
+      required: [days, series]
+      properties:
+        days: { type: integer }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/RevenueDailyView" }
+
+    ProductSalesView:
+      type: object
+      required: [product_code, product_name, order_count, amount_cents]
+      properties:
+        product_code: { type: string }
+        product_name: { type: string }
+        order_count: { type: integer }
+        amount_cents: { type: integer }
+
+    ProductSalesListView:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ProductSalesView" }
+
+    EnvelopePointsSummaryView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/PointsSummaryView" }
+
+    EnvelopePointsTrendView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/PointsTrendView" }
+
+    EnvelopePointsDistributionView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/PointsDistributionView" }
+
+    EnvelopeBillingSummaryView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/BillingSummaryView" }
+
+    EnvelopeRevenueTrendView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/RevenueTrendView" }
+
+    EnvelopeProductSalesListView:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/ProductSalesListView" }
 
     Envelope:
       type: object

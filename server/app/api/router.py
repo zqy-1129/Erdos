@@ -15,6 +15,7 @@ from app.api.v1 import (
     notifications,
     points,
     presence,
+    reporting,
     telemetry,
 )
 
@@ -32,3 +33,4 @@ api_router.include_router(entitlements.router)
 api_router.include_router(notifications.router)
 api_router.include_router(telemetry.router)
 api_router.include_router(analytics.router)
+api_router.include_router(reporting.router)
