@@ -51,6 +51,7 @@ from app.infra.message_bus import MessageBus
 from app.infra.metrics import metrics_response
 from app.infra.monitoring import MonitoringCollector, set_collector
 from app.infra.notification_sender import LogNotificationSender
+from app.infra.presence_aggregator import MinuteAggregator
 from app.infra.redis_state import build_code_limiter, build_lockout, build_redis_client
 from app.infra.sampling import run_monitoring_loop
 
@@ -92,14 +93,22 @@ def create_app(
     session_factory = create_session_factory(engine)
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        task = asyncio.create_task(run_monitoring_loop(_))
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        task = asyncio.create_task(run_monitoring_loop(app))
+        # 在线分钟桶聚合后台落库（SP2-8 优化项 1：消除心跳单行漏斗）
+        agg_task = asyncio.create_task(
+            app.state.minute_aggregator.run_loop(config.presence_aggregate_interval_seconds)
+        )
         try:
             yield
         finally:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            for t in (task, agg_task):
+                t.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await t
+            # 最后落库一次（聚合窗口内未写桶不丢）
+            with contextlib.suppress(Exception):
+                await app.state.minute_aggregator.flush_and_prune()
             await engine.dispose()
 
     app = FastAPI(
@@ -114,6 +123,10 @@ def create_app(
     # dev/test/prod 环境策略见 _default_introspector（SP2-2 JWT 验签收口）
     app.state.introspector = introspector or _default_introspector(config, token_manager)
     app.state.event_broker = EventBroker()  # 看板实时推送（进程内，单实例）
+    # 在线分钟桶进程内聚合器（SP2-8 优化项 1）：心跳侧 record，后台循环落库
+    app.state.minute_aggregator = MinuteAggregator(
+        session_factory, config.presence_trend_retention_days
+    )
     # SP2-2 认证授权：令牌管理器 / 凭据源 / 防爆破（进程级单例）
     app.state.token_manager = token_manager
     hasher = BcryptPasswordHasher()

@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     # 看板（dashboard）
     presence_online_window_seconds: float = 90.0  # 在线判定滑动窗口（≈3 个心跳周期）
     presence_trend_retention_days: int = 30  # 在线分钟桶保留天数（看板收尾项）
+    presence_aggregate_interval_seconds: float = 60.0  # 分钟桶进程内聚合落库周期（SP2-8 优化项 1）
     dashboard_admin_roles: str = "admin,operator"  # 逗号分隔的看板访问角色
 
     # 运行监测（monitoring：采样、窗口与沉淀保留）
