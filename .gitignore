@@ -31,3 +31,5 @@ draft_*/
 node_modules/
 client/dist/
 *.tsbuildinfo
+# 便携版 PostgreSQL（SP2-8 PG 压测环境，用完即删）
+.pg/
