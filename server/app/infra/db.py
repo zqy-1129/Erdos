@@ -35,11 +35,12 @@ def create_engine(database_url: str, *, echo: bool = False) -> AsyncEngine:
         kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30}
     else:
         # asyncpg 连接池：默认 5+10 在写密集并发下排队明显（SP2-8 CI 压测实测
-        # P95 数百 ms），显式放宽至 10+90 上限 100；生产如需调整再提升为配置项。
+        # P95 数百 ms），显式放宽至 10+90 上限 100；可通过 ERDOS_DB_POOL_SIZE /
+        # ERDOS_DB_POOL_MAX_OVERFLOW 覆盖（压测验收建议 106/0：池常驻不收缩）。
         kwargs.update(
             pool_pre_ping=True,
-            pool_size=10,
-            max_overflow=90,
+            pool_size=int(os.environ.get("ERDOS_DB_POOL_SIZE", "10")),
+            max_overflow=int(os.environ.get("ERDOS_DB_POOL_MAX_OVERFLOW", "90")),
             pool_timeout=30,
         )
         # 压测专用：ERDOS_DB_SYNC_COMMIT=off 关闭同步提交（连接级 server_settings）。

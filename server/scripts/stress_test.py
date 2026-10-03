@@ -1,37 +1,47 @@
 """Erdos 服务端压力测试（独立脚本，非 pytest）。
 
-对已实现的关键资金域/高频路径做并发与高负载评估：
-  1. 积分 reserve 高并发防超扣（100 并发 × 余额 10000，各扣 100）
-  2. 计费支付回调幂等重放（同 payment_no 100 次）
-  3. 下单幂等并发（同 idempotency_key 100 并发）
-  4. 注册防刷赠分（同指纹 50 并发注册）
-  5. presence 心跳高频吞吐（500 次连续）
+场景（SP2-8 口径，2026-10-03 修订）：
+  判定集（生产形状写密集，PG 模式 P95 < 200ms Go 门槛）：
+    1b 积分 reserve 多用户 100 并发
+    2  支付回调幂等重放 100
+    3  下单幂等 100 并发
+  参考集（一致性/吞吐，不参与延迟门槛）：
+    1a 积分 reserve 同账户 100 并发（单行锁漏斗上界；防超扣/幂等断言）
+    4  注册防刷 50 并发（bcrypt cost=12 CPU 红线）
+    5  presence 心跳 500 次（分钟桶全局单行漏斗）
 
-运行：<venv>/Scripts/python.exe scripts/stress_test.py
-      默认 SQLite 临时库；设置 ERDOS_DATABASE_URL 后按 PostgreSQL 驱动执行，
-      并按 SP2-8 验收口径做 P95 < 200ms 判定（ERDOS_PERF_P95_MS 可覆盖阈值）。
-输出：每项的结果 + 吞吐/延迟 + 一致性校验结论。
+运行模式：
+  默认（ASGI 直连）：<venv>/Scripts/python.exe scripts/stress_test.py
+  真实 HTTP（推荐验收口径）：ERDOS_STRESS_REAL_HTTP=1 时脚本自行拉起
+  uvicorn 子进程（127.0.0.1 随机端口）并走 TCP 客户端——规避 ASGITransport
+  同事件循环「百协程同时 checkout」的伪竞争（2026-10-03 定位，见
+  reports/SP2-8验收预案 口径修订与根因记录）。
+连接串：ERDOS_DATABASE_URL（默认 SQLite 临时库）。池参数 ERDOS_DB_POOL_SIZE /
+  ERDOS_DB_POOL_MAX_OVERFLOW 可覆盖（PG 验收建议 106/0：池常驻不收缩，规避
+  Windows asyncpg 建连 ~15ms 串行 + overflow 场景间回收重建）。
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import socket
 import statistics
+import subprocess
+import sys
 import tempfile
 import time
 from datetime import UTC, datetime
 
-from httpx import ASGITransport, AsyncClient
+import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.config import Settings
 from app.domain.billing.service import callback_digest
+from app.infra.db import create_engine, create_session_factory
 from app.main import create_app
-from app.repository.models import Base
-from app.repository.points import (
-    SQLAlchemyLedgerRepository,
-    SQLAlchemyPointAccountRepository,
-)
+from app.repository.models import Base, PointAccount, PointLedger, Product
 
 # 回调 HMAC 验签共享密钥（压测专用；与生产 ERDOS_PAYMENT_CALLBACK_SECRET 无关）
 STRESS_CALLBACK_SECRET = "stress-test-callback-secret"
@@ -42,7 +52,61 @@ _PERF_P95: list[tuple[str, float]] = []
 _REF_P95: list[tuple[str, float]] = []
 
 
-async def _build_app(db_url: str) -> tuple[AsyncClient, object]:
+class Ctx:
+    """压测上下文：被测 HTTP 客户端 + 种子/校验用独立引擎。"""
+
+    def __init__(self, client: httpx.AsyncClient, seed_engine: AsyncEngine) -> None:
+        self.client = client
+        self.seed_engine = seed_engine
+        self.proc: subprocess.Popen[bytes] | None = None
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+async def _wait_ready(client: httpx.AsyncClient, tries: int = 60) -> None:
+    for _ in range(tries):
+        try:
+            r = await client.get("/v1/health")
+            if r.status_code == 200:
+                return
+        except httpx.HTTPError:
+            pass
+        await asyncio.sleep(0.5)
+    raise RuntimeError("uvicorn 服务未在预期时间内就绪")
+
+
+async def _build_context(db_url: str) -> Ctx:
+    """按 ERDOS_STRESS_REAL_HTTP 选择被测形态；种子引擎两形态均独立于被测服务。"""
+    seed_engine = create_engine(db_url)
+    real_http = os.environ.get("ERDOS_STRESS_REAL_HTTP") == "1"
+    if real_http:
+        port = _free_port()
+        env = dict(os.environ)
+        env["ERDOS_DATABASE_URL"] = db_url
+        env["ERDOS_PAYMENT_CALLBACK_SECRET"] = STRESS_CALLBACK_SECRET
+        env["ERDOS_AUTH_ENFORCE"] = "false"
+        env["ERDOS_RATE_LIMIT_REQUESTS"] = "100000"
+        env["ERDOS_AUDIT_RATE_LIMIT_REQUESTS"] = "100000"
+        proc = subprocess.Popen(
+            [
+                sys.executable, "-m", "uvicorn", "app.main:app",
+                "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning",
+            ],
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        client = httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=60.0)
+        await _wait_ready(client)
+        ctx = Ctx(client, seed_engine)
+        ctx.proc = proc
+        return ctx
+
     settings = Settings(
         env="test",
         database_url=db_url,
@@ -52,20 +116,20 @@ async def _build_app(db_url: str) -> tuple[AsyncClient, object]:
         payment_callback_secret=STRESS_CALLBACK_SECRET,
     )
     app = create_app(settings)
-    engine = app.state.engine
-    async with engine.begin() as conn:
+    app_engine = app.state.engine
+    async with app_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    transport = ASGITransport(app=app)
-    client = AsyncClient(transport=transport, base_url="http://testserver")
-    return client, app
+    transport = httpx.ASGITransport(app=app)
+    ctx = Ctx(httpx.AsyncClient(transport=transport, base_url="http://testserver"), seed_engine)
+    return ctx
 
 
-async def _seed_products(app) -> None:
-    from app.repository.models import Product
-
-    async with app.state.session_factory() as session:
-        from sqlalchemy import select
-
+# ----------------------------------------------------------------------
+# 种子与校验（独立引擎，绕过被测服务，避免污染延迟测量）
+# ----------------------------------------------------------------------
+async def _seed_products(ctx: Ctx) -> None:
+    factory = create_session_factory(ctx.seed_engine)
+    async with factory() as session:
         existing = (
             await session.execute(select(Product).where(Product.code == "pack_400"))
         ).scalar_one_or_none()
@@ -79,14 +143,49 @@ async def _seed_products(app) -> None:
             await session.commit()
 
 
-async def _seed_points(app, user_id: str, purchased: int) -> None:
-    async with app.state.session_factory() as session:
-        repo = SQLAlchemyPointAccountRepository(session)
-        await repo.get_or_create(user_id, datetime.now(UTC))
-        await repo.credit(user_id, "purchased", purchased, datetime.now(UTC))
+async def _seed_points(ctx: Ctx, user_id: str, purchased: int) -> None:
+    factory = create_session_factory(ctx.seed_engine)
+    async with factory() as session:
+        row = (
+            await session.execute(select(PointAccount).where(PointAccount.user_id == user_id))
+        ).scalar_one_or_none()
+        if row is None:
+            session.add(
+                PointAccount(
+                    user_id=user_id, purchased_balance=purchased, monthly_balance=0,
+                    frozen=False, version=0,
+                )
+            )
+        else:
+            row.purchased_balance = purchased
         await session.commit()
 
 
+async def _balance(ctx: Ctx, user_id: str) -> PointAccount | None:
+    factory = create_session_factory(ctx.seed_engine)
+    async with factory() as session:
+        return (
+            await session.execute(select(PointAccount).where(PointAccount.user_id == user_id))
+        ).scalar_one_or_none()
+
+
+async def _ledgers(ctx: Ctx, user_id: str, prefix: str) -> list[PointLedger]:
+    factory = create_session_factory(ctx.seed_engine)
+    async with factory() as session:
+        rows = (
+            await session.execute(
+                select(PointLedger).where(
+                    PointLedger.user_id == user_id,
+                    PointLedger.exec_id.startswith(prefix),
+                )
+            )
+        ).scalars().all()
+        return list(rows)
+
+
+# ----------------------------------------------------------------------
+# 测量
+# ----------------------------------------------------------------------
 async def _measure(label: str, coros: list, *, perf: bool = True) -> dict:
     """并发执行一组协程，采集吞吐与延迟。
 
@@ -121,19 +220,33 @@ async def _measure(label: str, coros: list, *, perf: bool = True) -> dict:
     return result
 
 
-async def stress_reserve(client, app) -> None:
-    """场景 1：积分 reserve 100 并发防超扣（同账户一致性漏斗，参考口径）。
+# ----------------------------------------------------------------------
+# 场景
+# ----------------------------------------------------------------------
+async def _warmup_pool(ctx: Ctx) -> None:
+    """预热连接池（稳态口径）：生产连接池常驻，建连只发生在启动/扩容瞬间。
 
-    同一 user 余额单行并发 UPDATE：延迟为单行串行化上界，不代表生产
-    （生产写分散在多用户）；一致性断言（防超扣/幂等/流水总额）必须 100%。
+    asyncpg 在 Windows 上建连 ~15ms/个且串行化（实测 100 连接 1.5s）；
+    若不预热且池会收缩，每场景首波请求的 P95 被建连成本污染。
     """
-    await _seed_points(app, "u1", 10000)
-    async with app.state.session_factory() as s:
-        repo = SQLAlchemyLedgerRepository(s)
-        await repo.find("u1", "__warm__", "reserve")  # 预热
+    async def one(_i: int) -> int:
+        r = await ctx.client.get("/v1/health")
+        return r.status_code
+
+    m = await _measure("连接池预热（不计判定）", [one(i) for i in range(100)], perf=False)
+    assert all(c == 200 for c in m["results"]), "预热请求应全部成功"
+    print(f"[0] {m['label']}: 100/100, {m['elapsed_s']}s")
+
+
+async def stress_reserve(ctx: Ctx) -> None:
+    """场景 1a：同账户 100 并发 reserve（单行锁漏斗上界，参考口径）。
+
+    一致性断言（防超扣/幂等/流水总额）必须 100%。
+    """
+    await _seed_points(ctx, "u1", 10000)
 
     async def one(i: int) -> int:
-        r = await client.post(
+        r = await ctx.client.post(
             "/v1/points/reserve",
             json={"exec_id": f"stress-{i}", "stage": "analysis", "points": 100},
             headers={"Authorization": "Bearer u1"},
@@ -143,25 +256,23 @@ async def stress_reserve(client, app) -> None:
     m = await _measure("积分 reserve 同账户 100 并发（一致性漏斗）", [one(i) for i in range(100)], perf=False)
     ok_count = sum(1 for c in m["results"] if c == 200)
 
-    async with app.state.session_factory() as s:
-        bal = await SQLAlchemyPointAccountRepository(s).get("u1")
-        items, _ = await SQLAlchemyLedgerRepository(s).list_by_user("u1", 500, 0)
-        reserves = [it for it in items if it.kind == "reserve" and it.exec_id.startswith("stress-")]
+    bal = await _balance(ctx, "u1")
+    reserves = await _ledgers(ctx, "u1", "stress-")
 
     print(f"[1a] {m['label']}: {ok_count}/100 成功, QPS={m['qps']}, P50={m['lat_p50_ms']}ms, P95={m['lat_p95_ms']}ms")
-    print(f"    余额={bal.purchased_balance}, 成功流水={len(reserves)}, 扣减总额={sum(-it.delta for it in reserves)}")
+    print(f"    余额={bal.purchased_balance if bal else 'NA'}, 成功流水={len(reserves)}, 扣减总额={sum(-it.delta for it in reserves)}")
     assert ok_count == 100, "100 并发应全部成功（余额 10000 足够）"
-    assert bal.purchased_balance == 0, "余额应恰好扣净，不为负"
+    assert bal is not None and bal.purchased_balance == 0, "余额应恰好扣净，不为负"
     assert sum(-it.delta for it in reserves) == 10000, "流水总额应等于扣减额，无重复/丢失"
 
 
-async def stress_reserve_multi_user(client, app) -> None:
+async def stress_reserve_multi_user(ctx: Ctx) -> None:
     """场景 1b：多用户并发 reserve（生产形状写密集，参与 P95<200ms 判定）。"""
     for i in range(100):
-        await _seed_points(app, f"mu-{i}", 100)
+        await _seed_points(ctx, f"mu-{i}", 100)
 
     async def one(i: int) -> int:
-        r = await client.post(
+        r = await ctx.client.post(
             "/v1/points/reserve",
             json={"exec_id": f"stress-mu-{i}", "stage": "analysis", "points": 100},
             headers={"Authorization": f"Bearer mu-{i}"},
@@ -169,15 +280,18 @@ async def stress_reserve_multi_user(client, app) -> None:
         return r.status_code
 
     m = await _measure("积分 reserve 多用户 100 并发", [one(i) for i in range(100)])
+    from collections import Counter
+
+    dist = dict(Counter(m["results"]))
     ok_count = sum(1 for c in m["results"] if c == 200)
-    print(f"[1b] {m['label']}: {ok_count}/100 成功, QPS={m['qps']}, P50={m['lat_p50_ms']}ms, P95={m['lat_p95_ms']}ms")
+    print(f"[1b] {m['label']}: {ok_count}/100 成功, 状态分布={dist}, QPS={m['qps']}, P50={m['lat_p50_ms']}ms, P95={m['lat_p95_ms']}ms")
     assert ok_count == 100, "多用户并发 reserve 应全部成功"
 
 
-async def stress_callback_replay(client, app) -> None:
-    """场景 2：支付回调同 payment_no 重放 100 次幂等。"""
-    await _seed_products(app)
-    r = await client.post(
+async def stress_callback_replay(ctx: Ctx) -> None:
+    """场景 2：支付回调同 payment_no 重放 100 次幂等（判定集）。"""
+    await _seed_products(ctx)
+    r = await ctx.client.post(
         "/v1/billing/orders",
         json={"product_code": "pack_400", "channel": "mock", "idempotency_key": "cb-key"},
         headers={"Authorization": "Bearer u1"},
@@ -185,7 +299,7 @@ async def stress_callback_replay(client, app) -> None:
     order_id = r.json()["data"]["order"]["id"]
 
     async def one(_i: int) -> int:
-        r = await client.post(
+        r = await ctx.client.post(
             "/v1/billing/callbacks/payment",
             json={
                 "payment_no": "stress-pay-1",
@@ -196,20 +310,19 @@ async def stress_callback_replay(client, app) -> None:
         return r.status_code
 
     m = await _measure("回调重放 100 次", [one(i) for i in range(100)])
-    async with app.state.session_factory() as s:
-        bal = await SQLAlchemyPointAccountRepository(s).get("u1")
+    bal = await _balance(ctx, "u1")
 
     print(f"[2] {m['label']}: QPS={m['qps']}, P50={m['lat_p50_ms']}ms, P95={m['lat_p95_ms']}ms")
-    print(f"    购买余额={bal.purchased_balance if bal else 0}（应恰好 400，只入账一次）")
+    print(f"    购买余额={bal.purchased_balance if bal else 'NA'}（应恰好 400，只入账一次）")
     assert bal is not None and bal.purchased_balance == 400, "回调重放 100 次应只入账一次"
 
 
-async def stress_order_idempotency(client, app) -> None:
-    """场景 3：同 idempotency_key 100 并发下单，只生成一单。"""
-    await _seed_products(app)
+async def stress_order_idempotency(ctx: Ctx) -> None:
+    """场景 3：同 idempotency_key 100 并发下单，只生成一单（判定集）。"""
+    await _seed_products(ctx)
 
     async def one(_i: int) -> str:
-        r = await client.post(
+        r = await ctx.client.post(
             "/v1/billing/orders",
             json={"product_code": "pack_400", "channel": "mock", "idempotency_key": "stress-oid"},
             headers={"Authorization": "Bearer u1"},
@@ -223,13 +336,13 @@ async def stress_order_idempotency(client, app) -> None:
     assert len(unique_ids) == 1, "同 idempotency_key 并发下单应只生成一单"
 
 
-async def stress_registration_gift(client, app) -> None:
-    """场景 4：同指纹 50 并发注册，赠分只一次（bcrypt-12 CPU 红线，参考口径）。"""
+async def stress_registration_gift(ctx: Ctx) -> None:
+    """场景 4：同指纹 50 并发注册（bcrypt-12 CPU 红线，参考口径）。"""
     fingerprint = "stress-fp-1"
 
     async def one(i: int) -> int:
         try:
-            r = await client.post(
+            r = await ctx.client.post(
                 "/v1/auth/register",
                 json={
                     "email": f"stress{i}@example.com",
@@ -245,19 +358,14 @@ async def stress_registration_gift(client, app) -> None:
     ok = sum(1 for c in m["results"] if c == 200)
     failed = sum(1 for c in m["results"] if c == -1)
     print(f"[4] {m['label']}: {ok}/50 成功, {failed} 异常, QPS={m['qps']}, P50={m['lat_p50_ms']}ms, P95={m['lat_p95_ms']}ms")
-    print("    （赠分去重校验见注册流程，此处验证并发下无崩溃；异常多为 SQLite 写锁竞争）")
     assert ok >= 1, "至少一个注册成功"
 
 
-async def stress_presence_heartbeat(client, app) -> None:
-    """场景 5：presence 心跳高频吞吐（500 次，分钟桶全局单行漏斗，参考口径）。
-
-    每分钟在线计数为单行聚合（presence_minute_agg），500 并发同分钟内
-    均落在同一行：延迟为分钟桶串行化上界；吞吐与 90% 成功率断言保留。
-    """
+async def stress_presence_heartbeat(ctx: Ctx) -> None:
+    """场景 5：presence 心跳高频吞吐（500 次，分钟桶全局单行漏斗，参考口径）。"""
     async def one(_i: int) -> int:
         try:
-            r = await client.post(
+            r = await ctx.client.post(
                 "/v1/presence/heartbeat",
                 json={"device_id": "stress-dev"},
                 headers={"Authorization": "Bearer u1"},
@@ -276,23 +384,25 @@ async def stress_presence_heartbeat(client, app) -> None:
 async def main() -> None:
     db_url = os.environ.get("ERDOS_DATABASE_URL")
     driver = "PostgreSQL" if db_url else "SQLite"
+    real_http = os.environ.get("ERDOS_STRESS_REAL_HTTP") == "1"
     if not db_url:
         db_file = os.path.join(tempfile.gettempdir(), "erdos_stress.db")
         if os.path.exists(db_file):
             os.remove(db_file)
         db_url = f"sqlite+aiosqlite:///{db_file}"
 
-    client, app = await _build_app(db_url)
+    ctx = await _build_context(db_url)
     try:
         print("=" * 60)
-        print(f"Erdos 服务端压力测试（{driver} 单实例）")
+        print(f"Erdos 服务端压力测试（{driver} 单实例，{'真实 HTTP' if real_http else 'ASGI 直连'}）")
         print("=" * 60)
-        await stress_reserve(client, app)
-        await stress_reserve_multi_user(client, app)
-        await stress_callback_replay(client, app)
-        await stress_order_idempotency(client, app)
-        await stress_registration_gift(client, app)
-        await stress_presence_heartbeat(client, app)
+        await _warmup_pool(ctx)
+        await stress_reserve(ctx)
+        await stress_reserve_multi_user(ctx)
+        await stress_callback_replay(ctx)
+        await stress_order_idempotency(ctx)
+        await stress_registration_gift(ctx)
+        await stress_presence_heartbeat(ctx)
         print("=" * 60)
         print("全部压力场景通过")
 
@@ -300,9 +410,9 @@ async def main() -> None:
         if db_url.startswith("postgresql"):
             threshold = float(os.environ.get("ERDOS_PERF_P95_MS", "200"))
             worst = max((p95 for _, p95 in _PERF_P95), default=0.0)
-            print("判定集（生产形状写密集）：" +
+            print(f"判定集（生产形状写密集）：" +
                   "；".join(f"{label}={p95}ms" for label, p95 in _PERF_P95))
-            print("参考集（漏斗/CPU 红线，不参与门槛）：" +
+            print(f"参考集（漏斗/CPU 红线，不参与门槛）：" +
                   "；".join(f"{label}={p95}ms" for label, p95 in _REF_P95))
             failed = [f"{label}={p95}ms" for label, p95 in _PERF_P95 if p95 > threshold]
             if failed:
@@ -311,8 +421,14 @@ async def main() -> None:
                 )
             print(f"SP2-8 性能验收 Go：判定集全部 P95 ≤ {threshold}ms（最差 {worst}ms）")
     finally:
-        await client.aclose()
-        await app.state.engine.dispose()
+        await ctx.client.aclose()
+        await ctx.seed_engine.dispose()
+        if ctx.proc is not None:
+            ctx.proc.terminate()
+            try:
+                ctx.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                ctx.proc.kill()
 
 
 if __name__ == "__main__":
