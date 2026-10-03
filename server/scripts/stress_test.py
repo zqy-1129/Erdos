@@ -31,7 +31,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import UTC, datetime
 
 import httpx
 from sqlalchemy import select
@@ -410,9 +409,9 @@ async def main() -> None:
         if db_url.startswith("postgresql"):
             threshold = float(os.environ.get("ERDOS_PERF_P95_MS", "200"))
             worst = max((p95 for _, p95 in _PERF_P95), default=0.0)
-            print(f"判定集（生产形状写密集）：" +
+            print("判定集（生产形状写密集）：" +
                   "；".join(f"{label}={p95}ms" for label, p95 in _PERF_P95))
-            print(f"参考集（漏斗/CPU 红线，不参与门槛）：" +
+            print("参考集（漏斗/CPU 红线，不参与门槛）：" +
                   "；".join(f"{label}={p95}ms" for label, p95 in _REF_P95))
             failed = [f"{label}={p95}ms" for label, p95 in _PERF_P95 if p95 > threshold]
             if failed:
