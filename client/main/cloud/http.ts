@@ -23,6 +23,8 @@ export interface CloudHttpOptions {
   timeoutMs?: number;
   maxRetries?: number;
   retryBackoffMs?: number;
+  /** 收到 401/403 时回调（业务通道挂会话清理：回退匿名，防死循环 401）。 */
+  onUnauthorized?: (status: number) => void;
   fetchImpl?: FetchLike;
 }
 
@@ -32,6 +34,7 @@ export class CloudHttpClient {
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly retryBackoffMs: number;
+  private readonly onUnauthorized?: (status: number) => void;
   private readonly fetchImpl: FetchLike;
 
   constructor(options: CloudHttpOptions) {
@@ -40,6 +43,7 @@ export class CloudHttpClient {
     this.timeoutMs = options.timeoutMs ?? 10_000;
     this.maxRetries = options.maxRetries ?? 2;
     this.retryBackoffMs = options.retryBackoffMs ?? 400;
+    this.onUnauthorized = options.onUnauthorized;
     this.fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
   }
 
@@ -77,6 +81,11 @@ export class CloudHttpClient {
           signal: AbortSignal.timeout(this.timeoutMs),
         });
         if (response.status === 401 || response.status === 403) {
+          try {
+            this.onUnauthorized?.(response.status);
+          } catch {
+            // 回调异常不改变请求语义：仍按未授权抛出
+          }
           throw new CloudApiError(null, response.status, `未授权（HTTP ${response.status}）`);
         }
         const text = await response.text();

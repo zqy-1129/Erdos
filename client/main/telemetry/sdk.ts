@@ -33,6 +33,22 @@ export const FORBIDDEN_PROPS = new Set([
   "trail_detail",
 ]);
 
+/** 敏感字段名子串（大小写不敏感）：命中即剥离（token/口令/密钥等扩展守卫生）。 */
+const FORBIDDEN_FRAGMENTS = [
+  "api_key",
+  "key",
+  "secret",
+  "token",
+  "password",
+  "authorization",
+  "credential",
+  "prompt",
+  "paper",
+  "model_output",
+  "file_path",
+  "trail_detail",
+];
+
 /** 服务端单批容量上限（/v1/telemetry/events max 1000）。 */
 export const MAX_BATCH_SIZE = 1000;
 
@@ -151,11 +167,15 @@ export interface TelemetryOptions {
   onAutoFlushError?: (error: unknown) => void;
 }
 
-/** props 隐私过滤：剥离违禁字段（其余字段原样保留）。 */
+/** props 隐私过滤：剥离违禁字段（精确项 + 敏感子串大小写不敏感，其余字段原样保留）。 */
 export function sanitizeProps(props: Record<string, unknown>): Record<string, unknown> {
   const cleaned: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(props)) {
-    if (!FORBIDDEN_PROPS.has(key)) cleaned[key] = value;
+    const lower = key.toLowerCase();
+    if (FORBIDDEN_PROPS.has(key) || FORBIDDEN_FRAGMENTS.some((f) => lower.includes(f))) {
+      continue;
+    }
+    cleaned[key] = value;
   }
   return cleaned;
 }
@@ -282,6 +302,8 @@ export interface CloudTelemetryOptions {
   baseUrl: string;
   /** 可选登录态（事件端点公开，登录用户附带 Bearer）。 */
   getToken?: TokenProvider;
+  /** 401/403 清会话回调（挂 SessionTokenProvider.clearSession 回退匿名）。 */
+  onUnauthorized?: (status: number) => void;
   store?: OutboxStore;
   batchSize?: number;
   autoFlushAt?: number;
@@ -297,6 +319,7 @@ export function createCloudTelemetry(options: CloudTelemetryOptions): TelemetryS
   const http = new CloudHttpClient({
     baseUrl: options.baseUrl,
     getToken: options.getToken,
+    onUnauthorized: options.onUnauthorized,
     timeoutMs: options.timeoutMs,
     maxRetries: options.maxRetries,
   });

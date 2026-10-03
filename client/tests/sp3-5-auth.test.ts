@@ -220,6 +220,46 @@ describe("SessionTokenProvider 登录态", () => {
     }
   });
 
+  it("业务 401 清会话：clearSession 回退匿名（未过期令牌被吊销场景）", async () => {
+    const state = newState();
+    const { baseUrl, close } = await startStub(state);
+    try {
+      const store = new CapturingStore();
+      const provider = new SessionTokenProvider({
+        auth: makeAuth(baseUrl),
+        store,
+        clock: () => 1_000_000,
+      });
+      await provider.login("alice", "secret");
+      assert.equal(provider.signedIn(), true);
+
+      provider.clearSession(); // 业务通道 401/403 回调（CloudHttpClient.onUnauthorized）
+      assert.equal(provider.signedIn(), false);
+      assert.equal(store.load(), null); // 本地会话已清（含落库）
+      assert.equal(await provider.getToken(), null); // 回退匿名
+    } finally {
+      await close();
+    }
+  });
+
+  it("CloudHttpClient 收到 401 时触发 onUnauthorized 回调并抛未授权", async () => {
+    let unauthorizedCalls = 0;
+    const http = new CloudHttpClient({
+      baseUrl: "http://stub",
+      onUnauthorized: (status) => {
+        unauthorizedCalls += 1;
+        assert.equal(status, 401);
+      },
+      fetchImpl: async () => ({
+        status: 401,
+        ok: false,
+        text: async () => JSON.stringify({ code: 40101, message: "未认证", detail: null }),
+      }),
+    });
+    await assert.rejects(() => http.get("/v1/points/balance"), CloudApiError);
+    assert.equal(unauthorizedCalls, 1);
+  });
+
   it("从存储恢复会话并按剩余有效期轮换", async () => {
     const state = newState();
     state.current = "rt-1";

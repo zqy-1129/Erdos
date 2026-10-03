@@ -84,6 +84,8 @@ export interface CloudEntitlementOptions {
   baseUrl: string;
   /** 令牌提供者（SP3-5 登录态接入；缺省匿名）。 */
   getToken?: (() => Promise<string | null>) | undefined;
+  /** 401/403 清会话回调（挂 SessionTokenProvider.clearSession 回退匿名）。 */
+  onUnauthorized?: ((status: number) => void) | undefined;
   timeoutMs?: number;
   maxRetries?: number;
 }
@@ -95,6 +97,7 @@ export function createCloudEntitlementService(
   const http = new CloudHttpClient({
     baseUrl: options.baseUrl,
     getToken: options.getToken,
+    onUnauthorized: options.onUnauthorized,
     timeoutMs: options.timeoutMs,
     maxRetries: options.maxRetries,
   });

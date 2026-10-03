@@ -173,6 +173,15 @@ export class SessionTokenProvider {
     this.store.save(null);
   }
 
+  /**
+   * 业务请求 401/403 时的会话清理（回退匿名，SP3-5 红线）。
+   * 由 CloudHttpClient.onUnauthorized 回调挂接（见 createSessionAuth 装配说明）；
+   * 与刷新失败清理区分：此路径针对「未过期令牌被服务端吊销」的死循环 401。
+   */
+  clearSession(): void {
+    this.clear();
+  }
+
   private expiring(session: StoredSession): boolean {
     return session.pair.expires_in <= 0 ||
       this.clock() + this.skewMs >= session.issued_at_ms + session.pair.expires_in * 1000;
@@ -215,6 +224,8 @@ export interface SessionAuthOptions {
   deviceId?: string;
   timeoutMs?: number;
   maxRetries?: number;
+  /** 业务通道 401/403 清会话回调（默认挂 tokens.clearSession，回退匿名）。 */
+  onUnauthorized?: (status: number) => void;
 }
 
 /** 装配鉴权通道：匿名 AuthClient + 登录态提供者；getToken 为已绑定的 TokenProvider。 */
@@ -236,5 +247,11 @@ export function createSessionAuth(options: SessionAuthOptions): {
     skewMs: options.skewMs,
     deviceId: options.deviceId,
   });
-  return { client, tokens, getToken: () => tokens.getToken() };
+  // 默认 401 清会话：业务通道（权益/遥测等）在装配 CloudHttpClient 时传
+  // onUnauthorized: options.onUnauthorized ?? (() => tokens.clearSession())
+  return {
+    client,
+    tokens,
+    getToken: () => tokens.getToken(),
+  };
 }

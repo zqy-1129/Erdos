@@ -41,7 +41,7 @@ export class KeyVault {
   /** 读取 Key：解密后返回明文（仅内存，调用方须立即注入引擎后丢弃）。 */
   load(scope: string): string | null {
     const ciphertext = this.store.get(scope);
-    if (ciphertext === null) return null;
+    if (ciphertext === null || ciphertext === "") return null; // 空密文=已删除（remove 语义）
     return this.encryptor.decrypt(ciphertext);
   }
 
@@ -50,7 +50,7 @@ export class KeyVault {
     return this.store.has(scope);
   }
 
-  /** 删除 Key（密文）。 */
+  /** 删除 Key（密文）。约定：空密文视为已删除——SQLite 实现需按此语义处理行。 */
   remove(scope: string): void {
     this.store.set(scope, "");
   }

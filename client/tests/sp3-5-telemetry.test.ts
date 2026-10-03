@@ -85,6 +85,26 @@ describe("TelemetrySdk 采集与过滤", () => {
     assert.equal(rows[0].channel, "stable");
     assert.equal(rows[0].app_version, "");
   });
+
+  it("隐私红线扩展：token/password/authorization 及大小写变体采集时即剥离", () => {
+    const outbox = new InMemoryOutboxStore();
+    const sdk = new TelemetrySdk({ uploader: new FakeUploader(), store: outbox, autoFlushAt: 100 });
+    sdk.capture({
+      event_name: "app_error",
+      distinct_id: "u1",
+      props: {
+        error_code: "E2",
+        refresh_token: "rt-abc",
+        ACCESS_TOKEN: "at-xyz",
+        Password: "p@ss",
+        authorization: "Bearer xxx",
+        okField: "keep",
+      },
+    });
+    const rows = outbox.list(10);
+    const stored = JSON.parse(rows[0].props) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(stored).sort(), ["error_code", "okField"]);
+  });
 });
 
 describe("TelemetrySdk 批量上报与重试", () => {

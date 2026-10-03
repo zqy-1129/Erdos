@@ -44,6 +44,7 @@ describe("KeyVault 密钥管家", () => {
 
     vault.remove("openai");
     assert.equal(vault.has("openai"), false);
+    assert.equal(vault.load("openai"), null); // 删除后读取为 null（空密文=已删除语义）
   });
 
   it("零明文落盘：store 中只有密文，无明文 Key", () => {
@@ -86,6 +87,28 @@ describe("SecretMasker 日志脱敏", () => {
     assert.equal("api_key" in masked, false); // Key 字段丢弃
     assert.equal(masked.page, "home"); // 白名单字段保留
     assert.equal(containsSecret(String(masked.message)), false);
+  });
+
+  it("maskLogPayload 丢弃 token/password/authorization 变体字段", () => {
+    const payload = {
+      page: "settings",
+      refresh_token: "rt-xxx",
+      Password: "p@ss",
+      Authorization: "Bearer abc.def.ghi",
+      note: "ok",
+    };
+    const masked = maskLogPayload(payload);
+    assert.equal("refresh_token" in masked, false);
+    assert.equal("Password" in masked, false);
+    assert.equal("Authorization" in masked, false);
+    assert.equal(masked.note, "ok");
+  });
+
+  it("maskText 脱敏裸 JWT", () => {
+    const text = "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature-part-12345 leaked";
+    const masked = maskText(text);
+    assert.equal(containsSecret(masked), false);
+    assert.ok(!masked.includes("eyJhbGciOiJIUzI1NiJ9"));
   });
 });
 
