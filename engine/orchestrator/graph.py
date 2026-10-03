@@ -20,11 +20,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
+from engine.trail.redact import redact_sensitive  # 检查点脱敏（密钥域红线，公共实现）
+
 # 四阶段固定顺序（禁止跳级）
 STAGES = ("analysis", "modeling", "solving", "writing")
-
-# 敏感键片段：检查点落库前剔除（SP1-2 红线：检查点不落 Key 明文）
-_SENSITIVE_FRAGMENTS = ("key", "secret", "token", "password", "credential")
 
 
 class StageStatus(StrEnum):
@@ -40,19 +39,6 @@ class CheckpointStore(Protocol):
     def save_stage(self, task_id: str, stage: str, status: str, step: int, data: dict) -> None: ...
     def completed_stages(self, task_id: str) -> list: ...
     def delete_stage(self, task_id: str, stage: str) -> None: ...
-
-
-def redact_sensitive(data: Any) -> Any:
-    """递归剔除敏感键（key/secret/token/…）：检查点不落明文敏感字段。"""
-    if isinstance(data, dict):
-        return {
-            k: redact_sensitive(v)
-            for k, v in data.items()
-            if not any(fragment in k.lower() for fragment in _SENSITIVE_FRAGMENTS)
-        }
-    if isinstance(data, list):
-        return [redact_sensitive(item) for item in data]
-    return data
 
 
 @dataclass(frozen=True, slots=True)

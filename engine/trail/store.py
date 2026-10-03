@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from engine.trail.redact import TRAIL_SENSITIVE_FRAGMENTS, redact_sensitive
+
 
 # 四类事件类型（对齐《数据模型设计》audit_trail.event_type）
 class EventType:
@@ -75,11 +77,15 @@ class TrailStore:
     def append_event(
         self, task_id: str, stage: str, event_type: str, detail: dict[str, Any], ts: str | None = None
     ) -> int:
-        """追加一条留痕事件，返回自增 id。写入失败抛异常（不静默丢弃）。"""
+        """追加一条留痕事件，返回自增 id。写入失败抛异常（不静默丢弃）。
+
+        detail 落库前经 redact_sensitive 脱敏（密钥域红线：留痕不含凭据/授权片段）。
+        """
         ts = ts or datetime.now(UTC).isoformat()
+        safe_detail = redact_sensitive(detail, TRAIL_SENSITIVE_FRAGMENTS)
         cursor = self._conn.execute(
             "INSERT INTO audit_trail (task_id, stage, event_type, detail, ts) VALUES (?, ?, ?, ?, ?)",
-            (task_id, stage, event_type, json.dumps(detail, ensure_ascii=False), ts),
+            (task_id, stage, event_type, json.dumps(safe_detail, ensure_ascii=False), ts),
         )
         self._conn.commit()
         return int(cursor.lastrowid or 0)

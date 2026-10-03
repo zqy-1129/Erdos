@@ -38,6 +38,25 @@ def test_four_event_types_all_recorded(tmp_path) -> None:
     }
 
 
+def test_append_event_redacts_sensitive_detail(tmp_path) -> None:
+    """密钥域红线：留痕落库前剔除敏感键（含 authorization）。"""
+    _, store = _recorder(tmp_path)
+    store.append_event(
+        "t1",
+        "analysis",
+        "model_call",
+        {
+            "model": "deepseek-chat",
+            "total_tokens": 30,
+            "api_key": "sk-plain-secret",
+            "authorization": "Bearer eyJ....sig",
+            "nested": {"refresh_token": "rt-x"},
+        },
+    )
+    (event,) = store.events("t1")
+    assert event.detail == {"model": "deepseek-chat", "total_tokens": 30, "nested": {}}  # 敏感键被剔除
+
+
 def test_artifact_sha256_matches_file(tmp_path) -> None:
     """产物 sha256 与产物文件一致率 100%。"""
     recorder, store = _recorder(tmp_path)

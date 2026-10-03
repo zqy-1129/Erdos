@@ -95,3 +95,8 @@ def test_redact_sensitive_covers_lists_and_scalars() -> None:
     assert redact_sensitive(payload) == {"a": 1, "list": [{"ok": 2}], "s": "keep"}
     assert redact_sensitive([1, {"key": "z"}]) == [1, {}]
     assert redact_sensitive("plain") == "plain"
+    # 密钥域红线扩展：authorization（含 Bearer 头值）同样被剔除
+    assert redact_sensitive({"authorization": "Bearer eyJ-sig", "ok": 1, "nested": [{"API_Key": "x"}]}) == {
+        "ok": 1,
+        "nested": [{}],
+    }
