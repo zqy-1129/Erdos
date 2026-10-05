@@ -38,12 +38,13 @@ class TaskState:
 
 @dataclass(slots=True)
 class EngineState:
-    """引擎运行时状态（单任务，通信骨架 + SP1-2 编排器引用）。"""
+    """引擎运行时状态（单任务，通信骨架 + SP1-2 编排器引用 + W14 协商标记）。"""
 
     status: str = EngineStatus.IDLE.value
     task: TaskState | None = None
     gate_answers: dict[str, str] = field(default_factory=dict)
     orchestrator: Any = None  # StageOrchestrator | None（SP1-2 注入，避免循环依赖）
+    protocol_ok: bool = True  # W14：initialize 版本协商通过；不匹配 → 拒发任务（SCHEMA_UNSUPPORTED）
 
     def start_stage(self, task_id: str, stage: str) -> TaskState:
         if stage not in VALID_STAGES:

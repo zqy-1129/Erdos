@@ -2,7 +2,8 @@
  * 客户端 IPC 通道类型定义（SP3-1）
  *
  * 对齐 contracts/engine-rpc.schema.json：
- * - 6 个 JSON-RPC 2.0 方法（start_stage/pause/resume/cancel/get_status/answer_gate）
+ * - 9 个 JSON-RPC 2.0 方法（v1：start_stage/pause/resume/cancel/get_status/answer_gate；
+ *   CT-V2 增量：initialize/provider_test/events_replay）
  * - 5 个 NDJSON 事件（v1：stage.progress/artifact.ready/gate.failed；CT-V2 增量：tool.call/tool.result）
  *
  * 通信走 stdio 管道，主进程经 stdin 发请求、读 stdout 响应与事件（按字段分流）。
@@ -54,6 +55,9 @@ export const RPC_METHODS = [
   "cancel",
   "get_status",
   "answer_gate",
+  "initialize",
+  "provider_test",
+  "events_replay",
 ] as const;
 
 export type RpcMethod = (typeof RPC_METHODS)[number];
@@ -183,6 +187,44 @@ export type EngineEvent =
   | ToolResultEvent;
 
 // ---------------------------------------------------------------------------
+// CT-V2 增量方法类型（W14：握手 / 探测 / 事件补发）
+// ---------------------------------------------------------------------------
+export interface InitializeParams {
+  client_protocol_version?: number;
+}
+export interface InitializeResult {
+  protocol_version: number;
+  engine_version: string;
+  compatible: boolean;
+  capabilities?: {
+    tool_mode: "tool_loop" | "stage_level";
+    isolation_mode: "docker" | "subprocess" | "unknown";
+  };
+}
+
+export interface ProviderTestParams {
+  base_url: string;
+  model: string;
+  provider?: string;
+}
+export interface ProviderTestResult {
+  ok: boolean;
+  models_endpoint: boolean;
+  tool_mode: "tool_loop" | "stage_level";
+  probe_source?: string;
+}
+
+export interface EventsReplayParams {
+  after_seq: number;
+  limit?: number;
+  task_id?: string;
+}
+export interface EventsReplayResult {
+  events: EngineEvent[];
+  last_seq: number;
+}
+
+// ---------------------------------------------------------------------------
 // 主进程 ↔ 引擎 通道白名单（preload 桥只暴露注册通道）
 // ---------------------------------------------------------------------------
 export const ENGINE_IPC_CHANNELS = [
@@ -192,6 +234,9 @@ export const ENGINE_IPC_CHANNELS = [
   "engine:cancel",
   "engine:get_status",
   "engine:answer_gate",
+  "engine:initialize",
+  "engine:provider_test",
+  "engine:events_replay",
   "engine:event", // 引擎 → 渲染层事件转发
 ] as const;
 

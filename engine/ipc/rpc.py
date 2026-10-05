@@ -11,6 +11,9 @@ METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
 
+# 服务端业务错误码（开发文档 §7.4 错误码清单）
+SCHEMA_UNSUPPORTED = -32000  # 协议版本协商失败（initialize 不匹配，拒发任务）
+
 
 @dataclass(frozen=True, slots=True)
 class RpcRequest:

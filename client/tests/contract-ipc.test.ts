@@ -28,9 +28,9 @@ interface RpcSchema {
 const schema = JSON.parse(readFileSync(schemaPath, "utf-8")) as RpcSchema;
 
 describe("引擎 IPC 契约三边一致（客户端侧）", () => {
-  it("RPC 方法名与 schema methods 完全一致（6 个）", () => {
+  it("RPC 方法名与 schema methods 完全一致（9 个，CT-V2 增量后）", () => {
     assert.deepEqual([...RPC_METHODS].sort(), Object.keys(schema.methods).sort());
-    assert.equal(RPC_METHODS.length, 6);
+    assert.equal(RPC_METHODS.length, 9);
   });
 
   it("事件名与 schema events 完全一致（5 个，CT-V2 增量后）", () => {

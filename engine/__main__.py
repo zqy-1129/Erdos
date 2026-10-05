@@ -45,6 +45,16 @@ from engine.trail.store import TrailStore
 GRACE_EXIT_SECONDS = 0.3  # SIGTERM 后硬上限（engine-protocol.md §4）
 
 
+def _engine_version() -> str:
+    """引擎版本（与 pyproject/打包版本一致；元数据不可得时回退占位）。"""
+    try:
+        from importlib.metadata import version
+
+        return version("erdos-engine")
+    except Exception:  # noqa: BLE001 - 元数据缺失（未安装场景）回退
+        return "0.1.0"
+
+
 def _fail(message: str) -> NoReturn:
     """诊断性拒启：stderr 输出可读原因，退出码 2（父进程据此转 crashed 语义）。"""
     sys.stderr.write(f"[engine] 拒启：{message}\n")
@@ -170,7 +180,14 @@ def main() -> None:
     server = JsonRpcServer(state, events)
 
     runtime = register_all(
-        server, state, checkpoint=checkpoint, runner=pipeline.process, events=events
+        server, state, checkpoint=checkpoint, runner=pipeline.process, events=events,
+        runtime_info={
+            "protocol_version": 2,
+            "engine_version": _engine_version(),
+            "tool_mode": tool_mode,
+            "isolation_mode": getattr(sandbox, "isolation_mode", "unknown"),
+        },
+        key_store=keys,
     )
 
     loop = asyncio.new_event_loop()

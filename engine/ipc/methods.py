@@ -13,7 +13,9 @@ W2 集成：
 
 import asyncio
 
+from engine.adapters.capabilities import probe_capabilities
 from engine.ipc.events import EventEmitter
+from engine.ipc.rpc import SCHEMA_UNSUPPORTED, RpcError
 from engine.ipc.server import JsonRpcServer
 from engine.ipc.state import EngineState, TaskState
 from engine.orchestrator.graph import StageOrchestrator, StageRunner
@@ -47,8 +49,11 @@ def register_all(
     checkpoint=None,  # noqa: ANN001 - CheckpointStore | None（避免循环依赖，运行时鸭子类型）
     runner: StageRunner | None = None,
     events: EventEmitter | None = None,
+    runtime_info: dict | None = None,  # W14：protocol_version/engine_version/tool_mode/isolation_mode
+    key_store=None,  # noqa: ANN001 - KeyStore | None（provider_test 用，Key 不经方法传递）
+    probe_transport=None,  # noqa: ANN001 - httpx.AsyncBaseTransport | None（测试注入）
 ) -> EngineRuntime:
-    """注册全部 6 个 RPC 方法；可注入 checkpoint / 真实 runner / 事件发射器。
+    """注册全部 9 个 RPC 方法；可注入 checkpoint / runner / 事件 / 运行时信息 / 探测依赖。
 
     返回 EngineRuntime：调用方在事件循环退出前 drain，避免后台阶段任务被静默丢弃。
     """
@@ -84,6 +89,9 @@ def register_all(
             state.task = TaskState(task_id=task_id, stage=stage, status="failed")
 
     async def start_stage(params: dict):
+        if not state.protocol_ok:
+            # W14：版本协商失败后拒发任务（保留历史，客户端升级后再试）
+            raise RpcError(SCHEMA_UNSUPPORTED, "协议版本协商失败（initialize 不匹配），请升级客户端或引擎后重试")
         task_id = params.get("task_id")
         stage = params.get("stage")
         if not task_id or not stage:
@@ -150,10 +158,61 @@ def register_all(
         state.answer_gate(task_id, gate, decision)
         return {"task_id": task_id, "gate": gate, "decision": decision}
 
+    async def initialize(params: dict):
+        """W14 握手：版本协商 + 能力/隔离模式上报；不匹配置 protocol_ok=False 拒发任务。"""
+        info = runtime_info or {}
+        protocol_version = int(info.get("protocol_version", 1))
+        client_version = params.get("client_protocol_version")
+        compatible = True
+        if client_version is not None and int(client_version) != protocol_version:
+            compatible = False
+            state.protocol_ok = False
+        else:
+            state.protocol_ok = True
+        return {
+            "protocol_version": protocol_version,
+            "engine_version": str(info.get("engine_version", "unknown")),
+            "compatible": compatible,
+            "capabilities": {
+                "tool_mode": info.get("tool_mode", "stage_level"),
+                "isolation_mode": info.get("isolation_mode", "unknown"),
+            },
+        }
+
+    async def provider_test(params: dict):
+        """W14：端点连通/能力探测（复用 EN-CAP；Key 用引擎已注入的，不经方法传递）。"""
+        base_url = params.get("base_url")
+        model = params.get("model")
+        if not base_url or not model:
+            raise ValueError("缺少 base_url 或 model")
+        caps = await probe_capabilities(
+            str(base_url), str(model),
+            provider=str(params.get("provider") or ""),
+            keys=key_store, transport=probe_transport, force=True,
+        )
+        return {
+            "ok": caps.models_endpoint,
+            "models_endpoint": caps.models_endpoint,
+            "tool_mode": caps.tool_mode,
+            "probe_source": caps.probe_source,
+        }
+
+    async def events_replay(params: dict):
+        """W14：seq > after_seq 的缓冲事件按序补发（断线重连后终态事件恢复）。"""
+        if events is None:
+            return {"events": [], "last_seq": 0}
+        after_seq = int(params.get("after_seq", 0))
+        limit = int(params.get("limit", 200))
+        found = events.replay(after_seq, limit=limit, task_id=params.get("task_id"))
+        return {"events": found, "last_seq": events.last_seq}
+
     server.register("start_stage", start_stage)
     server.register("pause", pause)
     server.register("resume", resume)
     server.register("cancel", cancel)
     server.register("get_status", get_status)
     server.register("answer_gate", answer_gate)
+    server.register("initialize", initialize)
+    server.register("provider_test", provider_test)
+    server.register("events_replay", events_replay)
     return runtime
