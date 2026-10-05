@@ -35,8 +35,10 @@ from engine.ipc.events import EventEmitter
 from engine.ipc.methods import register_all
 from engine.ipc.server import JsonRpcServer
 from engine.ipc.state import EngineState
+from engine.orchestrator.operations import OperationLog
 from engine.orchestrator.pipeline import FakeLLM, StagePipeline
 from engine.sandbox.subprocess_sandbox import make_sandbox
+from engine.tools import build_default_registry
 from engine.trail.recorder import TrailRecorder
 from engine.trail.store import TrailStore
 
@@ -73,10 +75,14 @@ def _classify_first_line(line: str) -> tuple[bool, str | None]:
     return False, stripped
 
 
-def _build_llm(keys: KeyStore, trail: TrailRecorder):  # noqa: ANN201 - 返回 pipeline _LLM 协程
-    """按密钥状态装配 LLM：Key 模式走真实 OpenAI 兼容适配器，无 Key 走 FakeLLM。"""
+def _build_llm(keys: KeyStore, trail: TrailRecorder):  # noqa: ANN201 - (text_llm, solve_llm_port)
+    """按密钥状态装配 LLM：Key 模式走真实 OpenAI 兼容适配器，无 Key 走 FakeLLM。
+
+    返回 (text_llm, solve_llm_port)：text_llm 供四阶段文本生成；solve_llm_port 为
+    W11 求解内循环端口（携带 tools），无 Key 模式为 None（tool_loop 不可用）。
+    """
     if not keys.has_key:
-        return FakeLLM().chat
+        return FakeLLM().chat, None
     base_url = os.environ.get("ERDOS_MODEL_BASE_URL")
     model = os.environ.get("ERDOS_MODEL_NAME")
     if not base_url or not model:
@@ -103,7 +109,11 @@ def _build_llm(keys: KeyStore, trail: TrailRecorder):  # noqa: ANN201 - 返回 p
             "stage": stage,
         }
 
-    return llm
+    async def solve_llm_port(messages: list[ChatMessage], tools: list[dict]) -> Any:
+        """W11 求解内循环端口：携带 tools 的适配器透传。"""
+        return await adapter.chat(messages, tools=tools)
+
+    return llm, solve_llm_port
 
 
 def _build_sink(trail: TrailRecorder):
@@ -140,16 +150,25 @@ def main() -> None:
     trail = TrailRecorder(trail_store)
     checkpoint = SQLiteCheckpointStore(str(home / "checkpoints.db"))
     sandbox = asyncio.run(make_sandbox())
+    state = EngineState()
+    events = EventEmitter()
+    registry = build_default_registry(sandbox, events=events, trail=trail)
+    operations = OperationLog(str(home / "operations.db"))
+    tool_mode = os.environ.get("ERDOS_TOOL_MODE", "stage_level")  # 能力探测就绪前保守默认
+    text_llm, solve_llm_port = _build_llm(keys, trail)
     pipeline = StagePipeline(
-        llm=_build_llm(keys, trail),
+        llm=text_llm,
         sandbox=sandbox,
         sink=_build_sink(trail),
         work_root=home / "tasks",
+        registry=registry,
+        operations=operations,
+        solve_llm=solve_llm_port,
+        tool_mode=tool_mode,
     )
 
-    state = EngineState()
-    events = EventEmitter()
     server = JsonRpcServer(state, events)
+
     runtime = register_all(
         server, state, checkpoint=checkpoint, runner=pipeline.process, events=events
     )

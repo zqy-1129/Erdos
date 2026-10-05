@@ -13,6 +13,8 @@ from pathlib import Path
 from tempfile import mkdtemp
 from typing import Any
 
+from engine.orchestrator.solve_loop import SolveLoop
+
 # ----------------------------------------------------------------------
 # 阶段完成回调端口（留痕接线，SP1-6）
 # ----------------------------------------------------------------------
@@ -81,6 +83,8 @@ class StagePipeline:
 
     作为 `StageOrchestrator(runner=pipeline.process)` 注入，接上 SP1-4 沙箱、
     SP1-5 适配层与 SP1-6 留痕（sink 回调）。
+    W11：registry/operations/solve_llm 注入且 tool_mode="tool_loop" 时，solving 走
+    模型驱动工具循环；否则保持既有阶段级路径（无工具能力端点降级，EN-CAP 路由）。
     """
 
     def __init__(
@@ -89,11 +93,19 @@ class StagePipeline:
         sandbox: Any | None = None,
         sink: StageSink | None = None,
         work_root: Path | None = None,
+        registry: Any | None = None,  # noqa: ANN401 - ToolRegistry | None
+        operations: Any | None = None,  # noqa: ANN401 - OperationLog | None
+        solve_llm: Any | None = None,  # noqa: ANN401 - SolveLLMPort | None
+        tool_mode: str = "stage_level",
     ) -> None:
         self._llm = llm or _default_llm()
         self._sandbox = sandbox
         self._sink = sink
         self._work_root = work_root or Path(mkdtemp(prefix="erdos-pipeline-"))
+        self._registry = registry
+        self._operations = operations
+        self._solve_llm = solve_llm
+        self._tool_mode = tool_mode
 
     async def process(self, task_id: str, stage: str) -> dict[str, Any]:
         data: dict[str, Any]
@@ -132,6 +144,13 @@ class StagePipeline:
         }
 
     async def _solving(self, task_id: str) -> dict[str, Any]:
+        registry = self._registry
+        solve_llm = self._solve_llm
+        operations = self._operations
+        if registry is not None and solve_llm is not None and operations is not None \
+                and self._tool_mode == "tool_loop":
+            return await self._solving_tool_loop(task_id, registry, solve_llm, operations)
+        # 阶段级路径（tool_mode=stage_level：无工具能力端点降级，行为与 SP1-7 一致）
         if self._sandbox is None:
             raise RuntimeError("solving 需要注入沙箱（SP1-4 SubprocessSandbox）")
         work_dir = self._work_root / task_id
@@ -144,6 +163,31 @@ class StagePipeline:
             "timed_out": result.timed_out,
             "artifacts": result.artifacts,
             "usage": reply["usage"],
+        }
+
+    async def _solving_tool_loop(self, task_id: str, registry: Any, solve_llm: Any, operations: Any) -> dict[str, Any]:
+        """W11：模型驱动工具循环（decide → dispatch → finalize，副作用幂等）。"""
+        loop = SolveLoop(
+            llm=solve_llm,
+            registry=registry,
+            operations=operations,
+            task_id=task_id,
+            work_root=self._work_root,
+        )
+        outcome = await loop.run(f"任务 {task_id}：完成求解并输出结构化结果")
+        usage = outcome.get("usage", {})
+        return {
+            "stage": "solving",
+            "mode": "tool_loop",
+            "status": outcome["status"],
+            "results": outcome["results"],
+            "repair_count": outcome["repair_count"],
+            "dispatch_count": outcome["dispatch_count"],
+            "limitations": outcome.get("limitations", []),
+            "usage": {
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+            },
         }
 
     async def _writing(self, task_id: str) -> dict[str, Any]:
