@@ -11,7 +11,14 @@ import asyncio
 import os
 from pathlib import Path
 
-from engine.sandbox.base import ExecutionResult, validate_artifact_path
+from engine.sandbox.base import (
+    SANDBOX_SCRIPT_NAME,
+    ExecutionResult,
+    Sandbox,
+    SandboxUnavailableError,
+    scan_artifacts,
+    validate_artifact_path,
+)
 
 # 允许透传给沙箱子进程的环境变量白名单（禁止 Key/敏感变量）
 _ENV_WHITELIST = ("PATH", "SYSTEMROOT", "TEMP", "TMP", "LANG", "PYTHONPATH")
@@ -19,6 +26,8 @@ _ENV_WHITELIST = ("PATH", "SYSTEMROOT", "TEMP", "TMP", "LANG", "PYTHONPATH")
 
 class SubprocessSandbox:
     """subprocess 降级沙箱：python 子进程 + 超时强杀 + 环境隔离 + 路径校验。"""
+
+    isolation_mode = "subprocess"  # 显式上报（DEC-006：降级不得宣称为安全隔离）
 
     def __init__(self, timeout: float = 120.0, memory_limit_mb: int = 2048) -> None:
         if timeout <= 0:
@@ -44,7 +53,7 @@ class SubprocessSandbox:
             target.write_text(content, encoding="utf-8")
 
         # 2. 写 code 到临时脚本（工作目录内）
-        script = work_dir / "_sandbox_script.py"
+        script = work_dir / SANDBOX_SCRIPT_NAME
         script.write_text(code, encoding="utf-8")
 
         # 3. 受限环境变量（不传 Key/敏感变量）
@@ -65,7 +74,7 @@ class SubprocessSandbox:
                 exit_code=exit_code,
                 stdout=stdout_b.decode("utf-8", errors="replace"),
                 stderr=stderr_b.decode("utf-8", errors="replace"),
-                artifacts=self._scan_artifacts(work_dir),
+                artifacts=scan_artifacts(work_dir),
             )
         except TimeoutError:
             proc.kill()
@@ -75,14 +84,6 @@ class SubprocessSandbox:
                 timed_out=True,
                 error=f"执行超时（>{self._timeout}s）被强杀",
             )
-
-    def _scan_artifacts(self, work_dir: Path) -> list[str]:
-        """扫描工作目录产物（排除沙箱脚本自身）。"""
-        artifacts = []
-        for p in work_dir.rglob("*"):
-            if p.is_file() and p.name != "_sandbox_script.py":
-                artifacts.append(str(p.relative_to(work_dir)))
-        return artifacts
 
 
 async def detect_docker_available() -> bool:
@@ -98,8 +99,20 @@ async def detect_docker_available() -> bool:
         return False
 
 
-async def make_sandbox(timeout: float = 120.0) -> SubprocessSandbox:
-    """沙箱工厂：Docker 优先，不可用降级 subprocess（当前实现返回 subprocess）。"""
-    # Docker 模式在环境具备时启用（--memory 2g / --network none / 挂载白名单）；
-    # 当前测试/开发环境无 Docker，降级 subprocess（接口一致）。
+async def make_sandbox(timeout: float = 120.0) -> Sandbox:
+    """沙箱工厂（EN-BOX W10）：Docker 优先，不可用降级 subprocess（EC-S3）。
+
+    降级红线（DEC-006）：`ERDOS_SANDBOX_REQUIRE_DOCKER=1` 时环境无 Docker 直接抛
+    SandboxUnavailableError（正式构建引导配置 Docker），不静默退化为不安全执行。
+    返回实例带 isolation_mode 属性（"docker" | "subprocess"），由 W14 initialize 上报。
+    """
+    from engine.sandbox.docker_sandbox import DockerSandbox  # 局部导入避免环
+
+    if await detect_docker_available():
+        return DockerSandbox(timeout=timeout)
+    if os.environ.get("ERDOS_SANDBOX_REQUIRE_DOCKER") == "1":
+        raise SandboxUnavailableError(
+            "要求 Docker 沙箱但环境不可用（ERDOS_SANDBOX_REQUIRE_DOCKER=1）；"
+            "请安装并启动 Docker Desktop 后重试"
+        )
     return SubprocessSandbox(timeout=timeout)
