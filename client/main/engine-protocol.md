@@ -25,6 +25,8 @@ spawn("python", ["-m", "engine"], {
 ## 3. Key 注入（SP1-5 红线）
 
 - **一次性注入**：引擎拉起后，主进程将解密后的 API Key 经 stdin 写入一行，引擎内存持有；
+- **首行分类约定**（EN-WIRE W2 落地）：引擎启动后先读 stdin 第一行——空行或 `ERDOS_NO_KEY` 进入无 Key 模式（FakeLLM，仅测试/演示）；首行为含 `method` 字段的合法 JSON-RPC 请求时按无 Key 模式运行并回放执行该行（兼容无密钥调用方）；其余首行视为 Key 注入（读后仅内存持有）；
+- **Key 模式环境要求**：主进程须同时提供 env `ERDOS_MODEL_BASE_URL` 与 `ERDOS_MODEL_NAME`（引擎不猜测默认厂商端点，缺失以退出码 2 拒启）；
 - **不落盘、不入日志**：Key 仅经 stdin 注入，引擎 `KeyStore.inject_from_stdin()` 读取；
 - **脱敏**：日志/遥测中 Key 均脱敏（`sk-...尾4位`）。
 
