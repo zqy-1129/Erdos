@@ -25,6 +25,7 @@ import json
 import os
 import signal
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -119,9 +120,12 @@ def _build_llm(keys: KeyStore, trail: TrailRecorder):  # noqa: ANN201 - (text_ll
             "stage": stage,
         }
 
-    async def solve_llm_port(messages: list[ChatMessage], tools: list[dict]) -> Any:
-        """W11 求解内循环端口：携带 tools 的适配器透传。"""
-        return await adapter.chat(messages, tools=tools)
+    async def solve_llm_port(
+        messages: list[ChatMessage], tools: list[dict],
+        on_delta: Callable[[str], None] | None = None,
+    ) -> Any:
+        """W11 求解内循环端口：携带 tools 的适配器透传（W15：有回调则走流式）。"""
+        return await adapter.chat(messages, tools=tools, stream=on_delta is not None, on_delta=on_delta)
 
     return llm, solve_llm_port
 
@@ -166,6 +170,11 @@ def main() -> None:
     operations = OperationLog(str(home / "operations.db"))
     tool_mode = os.environ.get("ERDOS_TOOL_MODE", "stage_level")  # 能力探测就绪前保守默认
     text_llm, solve_llm_port = _build_llm(keys, trail)
+
+    def delta_sink(task_id: str, delta: str) -> None:
+        """W15：求解循环 token 增量 → model.delta 事件（节流后；允许丢帧不补发）。"""
+        events.emit("model.delta", task_id=task_id, delta=delta[:512])
+
     pipeline = StagePipeline(
         llm=text_llm,
         sandbox=sandbox,
@@ -175,6 +184,7 @@ def main() -> None:
         operations=operations,
         solve_llm=solve_llm_port,
         tool_mode=tool_mode,
+        delta_sink=delta_sink,
     )
 
     server = JsonRpcServer(state, events)

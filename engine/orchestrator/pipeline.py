@@ -97,6 +97,7 @@ class StagePipeline:
         operations: Any | None = None,  # noqa: ANN401 - OperationLog | None
         solve_llm: Any | None = None,  # noqa: ANN401 - SolveLLMPort | None
         tool_mode: str = "stage_level",
+        delta_sink: Any | None = None,  # noqa: ANN401 - Callable[[str, str], None] | None（W15）
     ) -> None:
         self._llm = llm or _default_llm()
         self._sandbox = sandbox
@@ -106,6 +107,7 @@ class StagePipeline:
         self._operations = operations
         self._solve_llm = solve_llm
         self._tool_mode = tool_mode
+        self._delta_sink = delta_sink
 
     async def process(self, task_id: str, stage: str) -> dict[str, Any]:
         data: dict[str, Any]
@@ -173,6 +175,7 @@ class StagePipeline:
             operations=operations,
             task_id=task_id,
             work_root=self._work_root,
+            delta_sink=self._delta_sink,
         )
         outcome = await loop.run(f"任务 {task_id}：完成求解并输出结构化结果")
         usage = outcome.get("usage", {})

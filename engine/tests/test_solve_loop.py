@@ -11,6 +11,7 @@ FakeLLM/脚本化 LLM 为确定性假模型（测试专用），不产生真实�
 """
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -27,15 +28,22 @@ from engine.tools import build_default_registry
 class ScriptedLLM:
     """脚本化假 LLM：按队列返回 ChatResult（含 tool_calls），记录收到的 messages/tools。"""
 
-    def __init__(self, results: list[ChatResult]) -> None:
+    def __init__(self, results: list[ChatResult], emit_deltas: list[str] | None = None) -> None:
         self._queue = list(results)
+        self._emit_deltas = emit_deltas or []
         self.calls: list[dict] = []
 
-    async def __call__(self, messages: list[ChatMessage], tools: list[dict]) -> ChatResult:
+    async def __call__(
+        self, messages: list[ChatMessage], tools: list[dict],
+        on_delta: Callable[[str], None] | None = None,
+    ) -> ChatResult:
         self.calls.append({
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "tools": tools,
         })
+        if on_delta is not None:
+            for d in self._emit_deltas:
+                on_delta(d)  # 模拟适配器 token 增量回调
         return self._queue.pop(0)
 
 
@@ -269,3 +277,35 @@ async def test_pipeline_stage_level_fallback_unchanged(tmp_path: Path) -> None:
     data = await pipeline.process("t10", "solving")
     assert "exit_code" in data  # 既有阶段级产出字段
     assert "mode" not in data  # 未进入 tool_loop
+
+
+# ----------------------------------------------------------------------
+# W15 delta 流（model.delta）
+# ----------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_solve_loop_delta_sink_receives_throttled_text(tmp_path: Path) -> None:
+    """delta_sink 收到节流合并文本；model.delta 不进入 replay 缓冲（允许丢帧不补发）。"""
+    import io
+
+    from engine.ipc.events import EventEmitter
+
+    llm = ScriptedLLM(
+        [_final([{"name": "x", "value": 1}])],
+        emit_deltas=["模型", "输出中"],
+    )
+    deltas: list[tuple[str, str]] = []
+    loop = SolveLoop(
+        llm=llm, registry=build_default_registry(CountingSandbox()),
+        operations=OperationLog(str(tmp_path / "ops.db")),
+        task_id="t-delta", work_root=tmp_path / "tasks",
+        delta_sink=lambda task_id, delta: deltas.append((task_id, delta)),
+    )
+    outcome = await loop.run("流式求解")
+    assert outcome["status"] == "succeeded"
+    assert ("t-delta", "模型输出中") in deltas  # 50ms 内合并为一条
+
+    events = EventEmitter(sink=io.StringIO())
+    events.emit("model.delta", task_id="t1", delta="部分文本")
+    events.emit("stage.progress", task_id="t1", stage="analysis", progress=1.0)
+    replayed = events.replay(after_seq=0)
+    assert [e["event"] for e in replayed] == ["stage.progress"]  # delta 不补发

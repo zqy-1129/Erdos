@@ -19,12 +19,14 @@
 import json
 import math
 import re
+from collections.abc import Callable
 from typing import Protocol
 
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
 from engine.adapters.openai_compat import ChatMessage, ChatResult, ToolCall
+from engine.ipc.throttle import DeltaThrottler
 from engine.orchestrator.operations import OperationLog
 from engine.tools import ToolRegistry
 from engine.tools.base import ToolContext
@@ -113,9 +115,15 @@ class SolveState(TypedDict, total=False):
 
 
 class SolveLLMPort(Protocol):
-    """求解循环的 LLM 端口协议：携带 tools 的 chat（适配器经端口包装注入）。"""
+    """求解循环的 LLM 端口协议：携带 tools 的 chat（适配器经端口包装注入）。
 
-    async def __call__(self, messages: list[ChatMessage], tools: list[dict]) -> ChatResult: ...
+    on_delta：token 增量回调（W15 流式；端口可忽略——FakeLLM/脚本化替身无需实现）。
+    """
+
+    async def __call__(
+        self, messages: list[ChatMessage], tools: list[dict],
+        on_delta: Callable[[str], None] | None = None,
+    ) -> ChatResult: ...
 
 
 class SolveLoop:
@@ -132,6 +140,7 @@ class SolveLoop:
         attempt: int = 1,
         max_repairs: int = MAX_REPAIRS,
         max_dispatches: int = MAX_DISPATCHES,
+        delta_sink: Callable[[str, str], None] | None = None,  # (task_id, delta) → model.delta
     ) -> None:
         self._llm = llm
         self._registry = registry
@@ -141,11 +150,20 @@ class SolveLoop:
         self._work_root = work_root
         self._max_repairs = max_repairs
         self._max_dispatches = max_dispatches
+        self._delta_sink = delta_sink
         self._graph = self._build()
 
     # ------------------------------------------------------------------
     async def run(self, task_prompt: str) -> dict:
         """执行循环至收敛或转人工；返回结构化 outcome（供 pipeline/事件消费）。"""
+        # W15：每次 run 绑定独立节流器（50ms/256 字符合并 → model.delta 事件）
+        sink = self._delta_sink
+        throttle = (
+            DeltaThrottler(emit=lambda text: sink(self._task_id, text))
+            if sink is not None
+            else None
+        )
+        self._throttle = throttle
         initial: SolveState = {
             "task_id": self._task_id,
             "attempt": self._attempt,
@@ -213,9 +231,12 @@ class SolveLoop:
 
     # ------------------------------------------------------------------
     async def _decide(self, state: SolveState) -> dict:
-        """调用 LLM（带工具清单）；assistant 消息入栈。"""
+        """调用 LLM（带工具清单 + token 增量回调）；assistant 消息入栈。"""
         chat_messages = [_dict_to_message(m) for m in state["messages"]]
-        result = await self._llm(chat_messages, tools=self._registry.tool_payloads())
+        on_delta = self._throttle.push if self._throttle is not None else None
+        result = await self._llm(chat_messages, tools=self._registry.tool_payloads(), on_delta=on_delta)
+        if self._throttle is not None:
+            self._throttle.flush()  # 尾部增量不丢
         usage = dict(state.get("usage") or {})
         usage["prompt_tokens"] = usage.get("prompt_tokens", 0) + result.usage.prompt_tokens
         usage["completion_tokens"] = usage.get("completion_tokens", 0) + result.usage.completion_tokens

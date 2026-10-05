@@ -17,6 +17,7 @@ W8（EN-TOOL）扩展：
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
@@ -125,8 +126,13 @@ class OpenAIChatAdapter:
         stream: bool = False,
         tools: list[dict] | None = None,
         tool_choice: str | None = None,
+        on_delta: Callable[[str], None] | None = None,
     ) -> ChatResult:
-        """非流式/流式 chat 调用，带错误分类与断流重试；tools 非空时启用工具协议。"""
+        """非流式/流式 chat 调用，带错误分类与断流重试；tools 非空时启用工具协议。
+
+        W15：stream=True 且提供 on_delta 时，每个内容增量经回调实时上报（token 级
+        流式；允许丢帧，断流重试可能造成增量重复——UI 以最终聚合 content 为准）。
+        """
         payload: dict = {
             "model": self._config.model,
             "messages": [_encode_message(m) for m in messages],
@@ -137,7 +143,7 @@ class OpenAIChatAdapter:
         if tool_choice:
             payload["tool_choice"] = tool_choice
         if stream:
-            return await self._chat_stream(payload)
+            return await self._chat_stream(payload, on_delta=on_delta)
         return await self._chat_once(payload)
 
     async def _chat_once(self, payload: dict) -> ChatResult:
@@ -175,7 +181,7 @@ class OpenAIChatAdapter:
                 last_error = exc
         raise last_error or AdapterError(ErrorKind.UNKNOWN, readable_message(ErrorKind.UNKNOWN))
 
-    async def _chat_stream(self, payload: dict) -> ChatResult:
+    async def _chat_stream(self, payload: dict, on_delta: Callable[[str], None] | None = None) -> ChatResult:
         """SSE 流式调用（断流重试 2 次）；W8：delta.tool_calls 分桶聚合 + usage 收口。"""
         last_error: AdapterError | None = None
         for _ in range(MAX_RETRIES + 1):
@@ -215,6 +221,8 @@ class OpenAIChatAdapter:
                         delta = choice.get("delta", {})
                         if delta.get("content"):
                             parts.append(delta["content"])
+                            if on_delta is not None:
+                                on_delta(delta["content"])  # W15：token 级增量上报
                         for tc in delta.get("tool_calls") or []:
                             index = int(tc.get("index", 0))
                             bucket = buckets.setdefault(index, {"id": "", "name": "", "args": []})

@@ -4,7 +4,7 @@
  * 对齐 contracts/engine-rpc.schema.json：
  * - 9 个 JSON-RPC 2.0 方法（v1：start_stage/pause/resume/cancel/get_status/answer_gate；
  *   CT-V2 增量：initialize/provider_test/events_replay）
- * - 5 个 NDJSON 事件（v1：stage.progress/artifact.ready/gate.failed；CT-V2 增量：tool.call/tool.result）
+ * - 6 个 NDJSON 事件（v1：stage.progress/artifact.ready/gate.failed；CT-V2 增量：tool.call/tool.result/model.delta）
  *
  * 通信走 stdio 管道，主进程经 stdin 发请求、读 stdout 响应与事件（按字段分流）。
  */
@@ -121,6 +121,7 @@ export const ENGINE_EVENT_NAMES = [
   "gate.failed",
   "tool.call",
   "tool.result",
+  "model.delta",
 ] as const;
 
 export type EngineEventName = (typeof ENGINE_EVENT_NAMES)[number];
@@ -179,12 +180,22 @@ export interface ToolResultEvent {
   timestamp: string;
 }
 
+export interface ModelDeltaEvent {
+  trace_id: string;
+  event: "model.delta";
+  task_id: string;
+  /** 节流合并后的 token 增量（≤512 字符；允许丢帧，不进 replay） */
+  delta: string;
+  timestamp: string;
+}
+
 export type EngineEvent =
   | StageProgressEvent
   | ArtifactReadyEvent
   | GateFailedEvent
   | ToolCallEvent
-  | ToolResultEvent;
+  | ToolResultEvent
+  | ModelDeltaEvent;
 
 // ---------------------------------------------------------------------------
 // CT-V2 增量方法类型（W14：握手 / 探测 / 事件补发）
