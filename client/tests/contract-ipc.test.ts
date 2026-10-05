@@ -33,9 +33,9 @@ describe("引擎 IPC 契约三边一致（客户端侧）", () => {
     assert.equal(RPC_METHODS.length, 6);
   });
 
-  it("事件名与 schema events 完全一致（3 个）", () => {
+  it("事件名与 schema events 完全一致（5 个，CT-V2 增量后）", () => {
     assert.deepEqual([...ENGINE_EVENT_NAMES].sort(), Object.keys(schema.events).sort());
-    assert.equal(ENGINE_EVENT_NAMES.length, 3);
+    assert.equal(ENGINE_EVENT_NAMES.length, 5);
   });
 
   it("白名单通道覆盖全部 RPC（preload 桥只暴露注册通道）", async () => {

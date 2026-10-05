@@ -3,7 +3,7 @@
  *
  * 对齐 contracts/engine-rpc.schema.json：
  * - 6 个 JSON-RPC 2.0 方法（start_stage/pause/resume/cancel/get_status/answer_gate）
- * - 3 个 NDJSON 事件（stage.progress/artifact.ready/gate.failed）
+ * - 5 个 NDJSON 事件（v1：stage.progress/artifact.ready/gate.failed；CT-V2 增量：tool.call/tool.result）
  *
  * 通信走 stdio 管道，主进程经 stdin 发请求、读 stdout 响应与事件（按字段分流）。
  */
@@ -108,10 +108,16 @@ export interface GetStatusResult {
 }
 
 // ---------------------------------------------------------------------------
-// 3 个 NDJSON 事件
+// 5 个 NDJSON 事件（v1 三类 + CT-V2 增量 tool.call/tool.result）
 // ---------------------------------------------------------------------------
 /** 引擎事件名运行时常量（契约单一来源，CI 守护零漂移）。 */
-export const ENGINE_EVENT_NAMES = ["stage.progress", "artifact.ready", "gate.failed"] as const;
+export const ENGINE_EVENT_NAMES = [
+  "stage.progress",
+  "artifact.ready",
+  "gate.failed",
+  "tool.call",
+  "tool.result",
+] as const;
 
 export type EngineEventName = (typeof ENGINE_EVENT_NAMES)[number];
 
@@ -142,7 +148,39 @@ export interface GateFailedEvent {
   timestamp: string;
 }
 
-export type EngineEvent = StageProgressEvent | ArtifactReadyEvent | GateFailedEvent;
+export interface ToolCallEvent {
+  trace_id: string;
+  event: "tool.call";
+  task_id: string;
+  stage: StageName;
+  call_id: string;
+  tool: string;
+  /** 脱敏后参数摘要（≤512 字符，禁止题面正文/Key） */
+  args_summary: string;
+  timestamp: string;
+}
+
+export interface ToolResultEvent {
+  trace_id: string;
+  event: "tool.result";
+  task_id: string;
+  call_id: string;
+  tool: string;
+  ok: boolean;
+  duration_ms: number;
+  /** 产物引用（sha256 或 artifact 路径引用） */
+  result_ref?: string;
+  /** 模型可读结构化错误（ok=false 时） */
+  error?: string;
+  timestamp: string;
+}
+
+export type EngineEvent =
+  | StageProgressEvent
+  | ArtifactReadyEvent
+  | GateFailedEvent
+  | ToolCallEvent
+  | ToolResultEvent;
 
 // ---------------------------------------------------------------------------
 // 主进程 ↔ 引擎 通道白名单（preload 桥只暴露注册通道）

@@ -10,14 +10,17 @@ import uuid
 from datetime import datetime
 from typing import Any, TextIO
 
-# 允许的事件类型（与 contracts/engine-rpc.schema.json 对齐）
-VALID_EVENTS = ("stage.progress", "artifact.ready", "gate.failed")
+# 允许的事件类型（与 contracts/engine-rpc.schema.json 对齐；
+# tool.call/tool.result 为 CT-V2 v2 增量：args_summary/error 须经脱敏词表）
+VALID_EVENTS = ("stage.progress", "artifact.ready", "gate.failed", "tool.call", "tool.result")
 
 # 各事件必填字段（schema 校验用）
 REQUIRED_FIELDS = {
     "stage.progress": {"trace_id", "event", "task_id", "stage", "progress", "timestamp"},
     "artifact.ready": {"trace_id", "event", "task_id", "artifact", "sha256", "timestamp"},
     "gate.failed": {"trace_id", "event", "task_id", "gate", "reason", "timestamp"},
+    "tool.call": {"trace_id", "event", "task_id", "stage", "call_id", "tool", "args_summary", "timestamp"},
+    "tool.result": {"trace_id", "event", "task_id", "call_id", "tool", "ok", "duration_ms", "timestamp"},
 }
 
 

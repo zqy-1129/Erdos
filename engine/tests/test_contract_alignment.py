@@ -53,6 +53,10 @@ def test_required_fields_match_schema_per_event() -> None:
 
 
 def test_schema_methods_count_unchanged() -> None:
-    """6 个方法为契约红线（增删方法必须同步三边后走评审）。"""
+    """方法/事件数量为契约红线（增删必须同步三边后走评审）。
+
+    CT-V2（2026-10）：events 由 v1 的 3 个增至 5 个（tool.call/tool.result），
+    methods 保持 v1 的 6 个（initialize/provider.test 等后续增量另行登记）。
+    """
     assert len(_schema()["methods"]) == 6
-    assert len(_schema()["events"]) == 3
+    assert len(_schema()["events"]) == 5

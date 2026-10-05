@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://erdos.local/contracts/engine-rpc.schema.json",
   "title": "Erdos Agent 引擎 JSON-RPC 2.0 契约（SP1-1 引擎运行时与 IPC 骨架）",
-  "description": "定义引擎 6 个 RPC 方法与 3 个 NDJSON 事件。通信走 stdio 管道，每行一个 JSON（NDJSON）。",
+  "description": "定义引擎 6 个 RPC 方法与 5 个 NDJSON 事件（v1：stage.progress/artifact.ready/gate.failed；v2 增量 CT-V2：tool.call/tool.result）。通信走 stdio 管道，每行一个 JSON（NDJSON）。",
   "definitions": {
     "rpcId": { "type": ["string", "number", "null"] },
     "traceId": { "type": "string", "minLength": 1, "maxLength": 64 },
@@ -117,6 +117,36 @@
         "task_id": { "type": "string" },
         "gate": { "$ref": "#/definitions/gateName" },
         "reason": { "type": "string", "maxLength": 1024 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "tool.call": {
+      "summary": "工具调用开始事件（CT-V2 增量；args_summary 须经脱敏词表，禁止题面正文/Key）",
+      "required": ["trace_id", "event", "task_id", "stage", "call_id", "tool", "args_summary", "timestamp"],
+      "properties": {
+        "trace_id": { "$ref": "#/definitions/traceId" },
+        "event": { "const": "tool.call" },
+        "task_id": { "type": "string" },
+        "stage": { "$ref": "#/definitions/stageName" },
+        "call_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "tool": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "args_summary": { "type": "string", "maxLength": 512 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "tool.result": {
+      "summary": "工具调用结束事件（CT-V2 增量；result_ref 为产物引用，error 为模型可读结构化错误）",
+      "required": ["trace_id", "event", "task_id", "call_id", "tool", "ok", "duration_ms", "timestamp"],
+      "properties": {
+        "trace_id": { "$ref": "#/definitions/traceId" },
+        "event": { "const": "tool.result" },
+        "task_id": { "type": "string" },
+        "call_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "tool": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "ok": { "type": "boolean" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "result_ref": { "type": "string", "maxLength": 256 },
+        "error": { "type": "string", "maxLength": 1024 },
         "timestamp": { "type": "string", "format": "date-time" }
       }
     }
