@@ -54,8 +54,10 @@ async def test_full_pipeline_solves_and_writes_paper(tmp_path) -> None:
     assert "slope=" in solving.get("stdout", "")
     assert "intercept=" in solving.get("stdout", "")
 
-    # writing 产物：论文草稿 + sha256（合规支撑材料）
-    assert final["paper_md"].startswith("# t-e2e 论文草稿")
+    # writing 产物：结构化论文 + sha256（EN-PAPER 论文组装格式）
+    assert final["paper_md"].startswith("# t-e2e")
+    for section in ("摘要", "问题重述", "求解与结果", "结论"):
+        assert section in final["paper_md"]
     digest = hashlib.sha256(final["paper_md"].encode("utf-8")).hexdigest()
     assert final["paper_sha256"] == digest
 

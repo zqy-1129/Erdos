@@ -185,6 +185,7 @@ def main() -> None:
         solve_llm=solve_llm_port,
         tool_mode=tool_mode,
         delta_sink=delta_sink,
+        task_inputs=state.tasks,
     )
 
     server = JsonRpcServer(state, events)

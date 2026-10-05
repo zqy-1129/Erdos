@@ -45,6 +45,8 @@ class EngineState:
     gate_answers: dict[str, str] = field(default_factory=dict)
     orchestrator: Any = None  # StageOrchestrator | None（SP1-2 注入，避免循环依赖）
     protocol_ok: bool = True  # W14：initialize 版本协商通过；不匹配 → 拒发任务（SCHEMA_UNSUPPORTED）
+    # EN-PAPER：task_create 登记的题面（task_id → {title, problem_text}；仅内存持有，不外发）
+    tasks: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def start_stage(self, task_id: str, stage: str) -> TaskState:
         if stage not in VALID_STAGES:

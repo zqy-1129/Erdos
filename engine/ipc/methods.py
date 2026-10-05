@@ -88,6 +88,18 @@ def register_all(
             last_error[task_id] = f"{type(exc).__name__}: {exc}"
             state.task = TaskState(task_id=task_id, stage=stage, status="failed")
 
+    async def task_create(params: dict):
+        """EN-PAPER：登记任务题面（题面贯通入口；start_stage 前必须调用）。"""
+        task_id = params.get("task_id")
+        title = params.get("title")
+        problem_text = params.get("problem_text")
+        if not task_id or not title or not problem_text:
+            raise ValueError("缺少 task_id/title/problem_text")
+        if task_id in state.tasks:
+            raise ValueError(f"任务已登记：{task_id}（重跑请换 task_id）")
+        state.tasks[str(task_id)] = {"title": str(title), "problem_text": str(problem_text)}
+        return {"task_id": str(task_id), "status": "created"}
+
     async def start_stage(params: dict):
         if not state.protocol_ok:
             # W14：版本协商失败后拒发任务（保留历史，客户端升级后再试）
@@ -96,17 +108,34 @@ def register_all(
         stage = params.get("stage")
         if not task_id or not stage:
             raise ValueError("缺少 task_id 或 stage")
-        task = state.start_stage(task_id, stage)
-        # SP1-2/W2：创建四阶段编排器（从 stage 开始），注入 checkpoint 与真实 runner
-        state.orchestrator = StageOrchestrator(task_id, checkpoint=checkpoint, runner=runner)
-        if checkpoint is not None:
-            # 若有历史检查点，恢复（断点续跑，不重算已完成阶段）
-            restored = StageOrchestrator.restore(task_id, checkpoint)
-            if restored.state.stages:
-                state.orchestrator = restored
-                state.task = TaskState(
-                    task_id=task_id, stage=restored.current_stage, status="running"
-                )
+
+        existing = state.orchestrator
+        if existing is not None and existing.state.task_id == task_id:
+            # EN-PAPER：同任务续跑——四阶段顺序推进（禁跳级），不重建编排器
+            if existing.current_stage != stage:
+                raise ValueError(f"阶段顺序约束：当前应执行 {existing.current_stage}，收到 {stage}")
+            if task_id not in state.tasks:
+                state.tasks[task_id] = {"title": str(task_id), "problem_text": ""}  # 无题面模式兼容
+            task = state.start_stage(task_id, stage)
+        else:
+            if task_id not in state.tasks:
+                # 无题面模式兼容（骨架/压测路径）；题面贯通要求先 task_create
+                state.tasks[str(task_id)] = {"title": str(task_id), "problem_text": ""}
+            task = state.start_stage(task_id, stage)
+            # SP1-2/W2：创建四阶段编排器（从 stage 开始），注入 checkpoint 与真实 runner
+            state.orchestrator = StageOrchestrator(task_id, checkpoint=checkpoint, runner=runner)
+            if checkpoint is not None:
+                # 若有历史检查点，恢复（断点续跑，不重算已完成阶段）
+                restored = StageOrchestrator.restore(task_id, checkpoint)
+                if restored.state.stages:
+                    state.orchestrator = restored
+                    if restored.current_stage != stage:
+                        raise ValueError(
+                            f"阶段顺序约束：检查点当前应执行 {restored.current_stage}，收到 {stage}"
+                        )
+                    state.task = TaskState(
+                        task_id=task_id, stage=restored.current_stage, status="running"
+                    )
         # 仅在注入真实 runner 时自动驱动阶段（SP1-1 骨架/压测路径保持纯受理语义）；
         # 耗时结果走事件（stage.progress/artifact.ready），响应立即返回受理。
         if runner is not None:
@@ -151,6 +180,13 @@ def register_all(
             raise ValueError("缺少 task_id/gate 或 decision 非法")
         # SP1-2：驱动编排器门禁
         if state.orchestrator is not None:
+            # EC-U4 误操作防护：阶段在跑时先等待收尾（门禁评审发生在挂起之后）；
+            # 阶段执行失败则拒绝"空推"门禁（不静默放行失败阶段）
+            task = running.get(task_id)
+            if task is not None and not task.done():
+                await task
+            if state.task is not None and state.task.status == "failed":
+                raise ValueError(f"阶段执行失败，不能通过门禁：{last_error.get(task_id, '未知错误')}")
             feedback = params.get("feedback", "")
             action = await state.orchestrator.answer_gate(decision, feedback)
             return {"task_id": task_id, "gate": gate, "decision": decision, "action": action["action"]}
@@ -215,4 +251,5 @@ def register_all(
     server.register("initialize", initialize)
     server.register("provider_test", provider_test)
     server.register("events_replay", events_replay)
+    server.register("task_create", task_create)
     return runtime

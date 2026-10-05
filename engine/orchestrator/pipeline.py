@@ -7,6 +7,7 @@
 红线：FakeLLM 为确定性假模型，仅用于测试/演示，真实任务必须注入真实适配器。
 """
 
+import json
 from collections.abc import Awaitable, Callable
 from hashlib import sha256
 from pathlib import Path
@@ -58,6 +59,18 @@ class FakeLLM:
 _LLM = Callable[[list[dict[str, str]], str], Awaitable[dict[str, Any]]]
 
 
+def _extract_section(text: str, name: str) -> str:
+    """从 LLM 输出提取【name】标记的段落；缺失时回退原文（不伪造章节内容）。"""
+    marker = f"【{name}】"
+    if marker in text:
+        section = text.split(marker, 1)[1]
+        for other in ("【摘要】", "【结论】"):
+            if other in section and other != marker:
+                section = section.split(other, 1)[0]
+        return section.strip()
+    return text.strip()
+
+
 def _default_llm() -> _LLM:
     fake = FakeLLM()
     return fake.chat
@@ -98,6 +111,7 @@ class StagePipeline:
         solve_llm: Any | None = None,  # noqa: ANN401 - SolveLLMPort | None
         tool_mode: str = "stage_level",
         delta_sink: Any | None = None,  # noqa: ANN401 - Callable[[str, str], None] | None（W15）
+        task_inputs: dict[str, dict[str, str]] | None = None,  # EN-PAPER：state.tasks 引用
     ) -> None:
         self._llm = llm or _default_llm()
         self._sandbox = sandbox
@@ -108,6 +122,8 @@ class StagePipeline:
         self._solve_llm = solve_llm
         self._tool_mode = tool_mode
         self._delta_sink = delta_sink
+        self._task_inputs = task_inputs if task_inputs is not None else {}
+        self._history: dict[str, dict[str, Any]] = {}  # 跨阶段产物上下文（题面贯通）
 
     async def process(self, task_id: str, stage: str) -> dict[str, Any]:
         data: dict[str, Any]
@@ -121,13 +137,40 @@ class StagePipeline:
             data = await self._writing(task_id)
         else:
             raise RuntimeError(f"未知阶段：{stage}")
+        self._history.setdefault(task_id, {})[stage] = data
         if self._sink is not None:
             await self._sink(task_id, stage, data)
         return data
 
     # ------------------------------------------------------------------
+    # EN-PAPER：题面贯通
+    # ------------------------------------------------------------------
+    def _problem(self, task_id: str) -> str:
+        """题面全文（task_create 登记）；未登记为空（无题面模式）。"""
+        info = self._task_inputs.get(task_id) or {}
+        return str(info.get("problem_text", ""))
+
+    def _title(self, task_id: str) -> str:
+        info = self._task_inputs.get(task_id) or {}
+        return str(info.get("title", task_id))
+
+    @staticmethod
+    def _clip(text: str, limit: int = 12000) -> str:
+        return text if len(text) <= limit else text[:limit] + "\n…（题面过长已截断）"
+
+    def _problem_block(self, task_id: str) -> str:
+        """题面块（供 prompt 注入）：有题面给全文（截断），无题面给旧式占位。"""
+        problem = self._problem(task_id)
+        return f"【竞赛题目】\n{self._clip(problem)}" if problem else f"任务 {task_id}"
+
+    # ------------------------------------------------------------------
     async def _analysis(self, task_id: str) -> dict[str, Any]:
-        reply = await self._llm([{"role": "user", "content": f"任务 {task_id}：提取要点与约束"}], "analysis")
+        prompt = (
+            f"{self._problem_block(task_id)}\n\n"
+            "请完成题目分析：1) 提取决策变量、目标与约束；2) 拆分子问题；"
+            "3) 指出数据需求与缺失信息。用分号分隔要点。"
+        )
+        reply = await self._llm([{"role": "user", "content": prompt}], "analysis")
         return {
             "stage": "analysis",
             "insights": reply["content"].split("；"),
@@ -136,11 +179,19 @@ class StagePipeline:
         }
 
     async def _modeling(self, task_id: str) -> dict[str, Any]:
-        reply = await self._llm([{"role": "user", "content": f"任务 {task_id}：建立模型"}], "modeling")
+        analysis = (self._history.get(task_id, {}).get("analysis") or {}).get("insights")
+        analysis_text = "；".join(analysis) if analysis else "（无上游分析）"
+        prompt = (
+            f"{self._problem_block(task_id)}\n\n"
+            f"【上游分析】\n{analysis_text}\n\n"
+            "请建立数学模型：给出模型假设、目标函数/方程与变量说明，并说明求解思路。"
+        )
+        reply = await self._llm([{"role": "user", "content": prompt}], "modeling")
         return {
             "stage": "modeling",
             "assumptions": reply["content"].split("。")[0],
-            "objective": "最小二乘线性拟合（演示）",
+            "objective": reply["content"].split("。")[1] if "。" in reply["content"] else reply["content"],
+            "modeling_detail": reply["content"],
             "variables": ["slope", "intercept"],
             "usage": reply["usage"],
         }
@@ -157,7 +208,11 @@ class StagePipeline:
             raise RuntimeError("solving 需要注入沙箱（SP1-4 SubprocessSandbox）")
         work_dir = self._work_root / task_id
         result = await self._sandbox.execute(_SOLVE_SCRIPT, {}, work_dir)
-        reply = await self._llm([{"role": "user", "content": f"任务 {task_id}：复核求解结果"}], "solving")
+        prompt = (
+            f"{self._problem_block(task_id)}\n\n"
+            f"【阶段级求解输出】\n{result.stdout.strip()}\n\n请复核求解结果是否合理。"
+        )
+        reply = await self._llm([{"role": "user", "content": prompt}], "solving")
         return {
             "stage": "solving",
             "exit_code": result.exit_code,
@@ -169,6 +224,13 @@ class StagePipeline:
 
     async def _solving_tool_loop(self, task_id: str, registry: Any, solve_llm: Any, operations: Any) -> dict[str, Any]:
         """W11：模型驱动工具循环（decide → dispatch → finalize，副作用幂等）。"""
+        modeling = self._history.get(task_id, {}).get("modeling") or {}
+        task_prompt = (
+            f"{self._problem_block(task_id)}\n\n"
+            f"【建模方案】\n{modeling.get('modeling_detail', '（无上游建模）')}\n\n"
+            "请基于以上方案完成求解：用 execute_code 执行计算/绘图，"
+            "最终输出结构化 results（与建模方案对应）。"
+        )
         loop = SolveLoop(
             llm=solve_llm,
             registry=registry,
@@ -177,7 +239,7 @@ class StagePipeline:
             work_root=self._work_root,
             delta_sink=self._delta_sink,
         )
-        outcome = await loop.run(f"任务 {task_id}：完成求解并输出结构化结果")
+        outcome = await loop.run(task_prompt)
         usage = outcome.get("usage", {})
         return {
             "stage": "solving",
@@ -194,12 +256,47 @@ class StagePipeline:
         }
 
     async def _writing(self, task_id: str) -> dict[str, Any]:
-        reply = await self._llm([{"role": "user", "content": f"任务 {task_id}：撰写论文草稿"}], "writing")
+        """EN-PAPER：论文组装——题面 + 上游产物结构化成文，LLM 负责摘要与结论。
+
+        引用真实产物数值（不重新计算）；产物 paper.md 落盘 + sha256（SP1-6 留痕）。
+        LaTeX/Word 导出属后续增量（开发文档 §8.5），当前交付 Markdown 草稿。
+        """
+        history = self._history.get(task_id, {})
+        analysis = history.get("analysis") or {}
+        modeling = history.get("modeling") or {}
+        solving = history.get("solving") or {}
+        problem = self._problem(task_id) or "（未提供题面）"
+        title = self._title(task_id)
+
+        prompt = (
+            f"{self._problem_block(task_id)}\n\n"
+            f"【分析】\n{'；'.join(analysis.get('insights', []))}\n\n"
+            f"【建模】\n{modeling.get('modeling_detail', '')}\n\n"
+            f"【求解结果】\n{json.dumps(solving.get('results') or solving.get('stdout') or '', ensure_ascii=False)}\n\n"
+            "请为论文撰写以下两部分，用【摘要】与【结论】标记：\n"
+            "【摘要】300 字以内，概括问题、方法与主要结果；\n"
+            "【结论】总结结果意义、局限与改进方向，不得引用不存在的数值。"
+        )
+        reply = await self._llm([{"role": "user", "content": prompt}], "writing")
+        abstract = _extract_section(reply["content"], "摘要")
+        conclusion = _extract_section(reply["content"], "结论")
+
+        results_text = solving.get("stdout") or json.dumps(
+            solving.get("results") or [], ensure_ascii=False
+        )
         paper = (
-            f"# {task_id} 论文草稿\n\n"
-            f"- 摘要：基于数据拟合并验证线性模型（演示流程）。\n"
-            f"- 模型：y = ax + b，最小二乘求解。\n"
-            f"- 结论：{reply['content']}\n"
+            f"# {title}\n\n"
+            f"## 摘要\n\n{abstract}\n\n"
+            f"## 一、问题重述\n\n{self._clip(problem, 4000)}\n\n"
+            f"## 二、模型假设与建模\n\n"
+            f"分析要点：{'；'.join(analysis.get('insights', [])) or '（无）'}\n\n"
+            f"{modeling.get('modeling_detail', modeling.get('assumptions', '（无）'))}\n\n"
+            f"## 三、求解与结果\n\n"
+            f"求解方式：{'工具循环' if solving.get('mode') == 'tool_loop' else '阶段级执行'}\n\n"
+            f"```\n{results_text}\n```\n\n"
+            f"## 四、结论\n\n{conclusion}\n\n"
+            f"## 五、结果局限\n\n"
+            + "\n".join(f"- {x}" for x in solving.get("limitations", []) or ["无"])
         )
         # 产物落盘 + sha256（SP1-6 留痕 artifact 支撑材料）
         out_dir = self._work_root / task_id

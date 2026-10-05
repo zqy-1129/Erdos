@@ -2,8 +2,8 @@
  * 客户端 IPC 通道类型定义（SP3-1）
  *
  * 对齐 contracts/engine-rpc.schema.json：
- * - 9 个 JSON-RPC 2.0 方法（v1：start_stage/pause/resume/cancel/get_status/answer_gate；
- *   CT-V2 增量：initialize/provider_test/events_replay）
+ * - 10 个 JSON-RPC 2.0 方法（v1：start_stage/pause/resume/cancel/get_status/answer_gate；
+ *   CT-V2 增量：initialize/provider_test/events_replay/task_create）
  * - 6 个 NDJSON 事件（v1：stage.progress/artifact.ready/gate.failed；CT-V2 增量：tool.call/tool.result/model.delta）
  *
  * 通信走 stdio 管道，主进程经 stdin 发请求、读 stdout 响应与事件（按字段分流）。
@@ -58,6 +58,7 @@ export const RPC_METHODS = [
   "initialize",
   "provider_test",
   "events_replay",
+  "task_create",
 ] as const;
 
 export type RpcMethod = (typeof RPC_METHODS)[number];
@@ -235,6 +236,18 @@ export interface EventsReplayResult {
   last_seq: number;
 }
 
+// EN-PAPER：任务题面登记（start_stage 前必须调用；题面仅引擎内存持有）
+export interface TaskCreateParams {
+  task_id: string;
+  title: string;
+  problem_text: string;
+  notes?: string;
+}
+export interface TaskCreateResult {
+  task_id: string;
+  status: "created";
+}
+
 // ---------------------------------------------------------------------------
 // 主进程 ↔ 引擎 通道白名单（preload 桥只暴露注册通道）
 // ---------------------------------------------------------------------------
@@ -248,6 +261,7 @@ export const ENGINE_IPC_CHANNELS = [
   "engine:initialize",
   "engine:provider_test",
   "engine:events_replay",
+  "engine:task_create",
   "engine:event", // 引擎 → 渲染层事件转发
 ] as const;
 
