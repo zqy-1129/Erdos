@@ -100,7 +100,7 @@ async def test_unregistered_task_empty_problem_fallback(tmp_path: Path) -> None:
     events = EventEmitter(sink=io.StringIO())
     server = JsonRpcServer(state, events)
     pipeline = StagePipeline(llm=FakeLLM().chat, work_root=tmp_path, task_inputs=state.tasks)
-    register_all(server, state, runner=pipeline.process, events=events)
+    runtime = register_all(server, state, runner=pipeline.process, events=events)
 
     line = await server.handle_line(
         json.dumps({"jsonrpc": "2.0", "id": 1, "method": "start_stage",
@@ -108,3 +108,5 @@ async def test_unregistered_task_empty_problem_fallback(tmp_path: Path) -> None:
     )
     resp = json.loads(line)
     assert "error" not in resp  # 自动登记空题面，不拒绝
+    # 后台阶段任务收尾：分析阶段瞬时完成，drain 避免 loop 关闭时协程被 GC（unraisable 警告）
+    await runtime.drain()
