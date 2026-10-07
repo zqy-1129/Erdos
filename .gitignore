@@ -33,3 +33,9 @@ client/dist/
 *.tsbuildinfo
 # 便携版 PostgreSQL（SP2-8 PG 压测环境，用完即删）
 .pg/
+
+# 飞书文档本地同步缓存（飞书为准，缓存不入库）
+.feishu-docs/
+
+# 验收证据本地归档（docs/acceptance 逐题 JSON/报告，不入库，见 SP1-7 交付报告）
+docs/
