@@ -13,33 +13,8 @@ export interface ErdosBridge {
   subscribe(channel: string, handler: (payload: unknown) => void): () => void;
 }
 
-/** 业务通道白名单（对齐 SP3-1 引擎白名单 + SP3-4 页面所需业务通道）。 */
-export const BRIDGE_CHANNELS = {
-  // 认证
-  authLogin: "auth:login",
-  authRegister: "auth:register",
-  authLogout: "auth:logout",
-  // Key 管家
-  keysList: "keys:list",
-  keysSave: "keys:save",
-  keysTest: "keys:test",
-  keysUsage: "keys:usage",
-  // 账单
-  billingOverview: "billing:overview",
-  billingLedger: "billing:ledger",
-  billingExport: "billing:export",
-  // 内容库
-  contentList: "content:list",
-  // 历史任务
-  historyList: "history:list",
-  historyResume: "history:resume",
-  // 合规导出
-  complianceExport: "compliance:export",
-  // 权益（断网态 UI 数据源）
-  entitlementStatus: "entitlement:status",
-  // 引擎事件转发（对齐 shared/ipc.ts 白名单）
-  engineEvent: "engine:event",
-} as const;
+/** 业务通道白名单（跨端单一来源：shared/bridge-channels.ts，此处 re-export 兼容既有 import）。 */
+export { BRIDGE_CHANNELS, type BridgeChannel } from "../../../shared/bridge-channels.ts";
 
 // ---------------------------------------------------------------------------
 // 桥视图类型（主进程归一后的简化视图；渲染层不感知云端信封）

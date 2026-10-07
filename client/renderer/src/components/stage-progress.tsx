@@ -2,6 +2,7 @@
  * 四阶段进度渲染（SP3-4）：stage.progress 局部更新（进度条按字段更新）、
  * artifact.ready 追加产物、gate.failed 展示评审意见（US-004 rubric 可查）、
  * 长日志走虚拟列表。整块不整页刷新：只订阅 engine store。
+ * C1 扩展：工具时间线（EventTimeline）+ 门禁审批（GatePanel）+ 流式输出（model.delta）。
  */
 
 import { useState, type ReactNode } from "react";
@@ -9,6 +10,8 @@ import type { StageName } from "../../../shared/ipc.ts";
 import type { Store } from "../storage/store.ts";
 import { useStore } from "../storage/store.ts";
 import type { EngineViewState } from "../state/engine-slice.ts";
+import { EventTimeline } from "./event-timeline.tsx";
+import { GatePanel } from "./gate-panel.tsx";
 import { VirtualList } from "./virtual-list.tsx";
 
 export const STAGES: StageName[] = ["analysis", "modeling", "solving", "writing"];
@@ -27,9 +30,23 @@ const RUBRIC: Array<{ stage: StageName; rules: string[] }> = [
   { stage: "writing", rules: ["结构符合竞赛规范", "图表自明且编号齐全", "结论与数据互相印证"] },
 ];
 
-export function StageProgress(props: { engine: Store<EngineViewState> }): ReactNode {
+/** 门禁审批提交参数（answer_gate 接线由 workspace 侧完成）。 */
+export interface AnswerGateParams {
+  taskId: string;
+  gate: string;
+  decision: "pass" | "reject";
+  feedback: string;
+}
+
+export function StageProgress(props: {
+  engine: Store<EngineViewState>;
+  /** 提供时启用可交互审批（FE-APPROVE W13）；缺省退化为只读门禁列表。 */
+  onAnswerGate?: (params: AnswerGateParams) => Promise<void>;
+}): ReactNode {
   const state = useStore(props.engine);
   const [rubricOpen, setRubricOpen] = useState(false);
+  const currentStageTools = state.stage ? (state.toolTimeline[state.stage] ?? []) : [];
+  const pendingGate = state.gates.length > 0 ? state.gates[state.gates.length - 1] : null;
 
   return (
     <div className="stage-progress">
@@ -72,13 +89,38 @@ export function StageProgress(props: { engine: Store<EngineViewState> }): ReactN
       ) : null}
 
       {state.gates.length > 0 ? (
-        <div className="gate-list">
-          {state.gates.map((gate, i) => (
-            <div key={`${gate.ts}-${i}`} className="gate-item">
-              <b>门禁未通过（{STAGE_LABELS[gate.gate as StageName] ?? gate.gate}）</b>：{gate.reason}
-            </div>
-          ))}
-        </div>
+        props.onAnswerGate && pendingGate ? (
+          <GatePanel
+            gate={STAGE_LABELS[pendingGate.gate as StageName] ?? pendingGate.gate}
+            reason={pendingGate.reason}
+            retries={state.gateRetries[pendingGate.gate] ?? 1}
+            onSubmit={(decision, feedback) =>
+              props.onAnswerGate!({
+                taskId: state.taskId ?? "",
+                gate: pendingGate.gate,
+                decision,
+                feedback,
+              })
+            }
+          />
+        ) : (
+          <div className="gate-list">
+            {state.gates.map((gate, i) => (
+              <div key={`${gate.ts}-${i}`} className="gate-item">
+                <b>门禁未通过（{STAGE_LABELS[gate.gate as StageName] ?? gate.gate}）</b>：{gate.reason}
+              </div>
+            ))}
+          </div>
+        )
+      ) : null}
+
+      <EventTimeline items={currentStageTools} />
+
+      {state.modelOutput ? (
+        <section className="model-output">
+          <h3>模型输出（流式）</h3>
+          <pre className="model-output-text">{state.modelOutput}</pre>
+        </section>
       ) : null}
 
       <div className="stage-columns">

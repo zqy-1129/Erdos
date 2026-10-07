@@ -170,6 +170,12 @@ def _build_sink(trail: TrailRecorder):
 
 
 def main() -> None:
+    # W17 打包前置：`engine --version` 打印版本并退出（构建时校验引擎版本与 lockfile 绑定，
+    # 不依赖 ERDOS_ENGINE_HOME / stdin / 网络，禁运行时动态升级）。
+    if "--version" in sys.argv or "-V" in sys.argv:
+        print(_engine_version())
+        return
+
     home_raw = os.environ.get("ERDOS_ENGINE_HOME")
     if not home_raw:
         _fail("缺少环境变量 ERDOS_ENGINE_HOME（任务/库数据根目录）")

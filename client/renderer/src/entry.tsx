@@ -1,12 +1,12 @@
 /**
  * 应用入口与路由表（SP3-4）：hash 路由 → 页面映射 → AppShell。
- * 未登录一律回登录页；Web 开发模式挂载 WebDemoBridge（真实 preload 留 SP3-7）。
+ * 未登录一律回登录页；桥经 createBridge 工厂选择（preload 真实桥优先，dev 回退演示桥）。
  */
 
 import { createRoot } from "react-dom/client";
 import type { ReactNode } from "react";
 import type { ErdosBridge } from "./bridges/bridge.ts";
-import { WebDemoBridge } from "./bridges/web-bridge.ts";
+import { createBridge } from "./bridges/bridge-factory.ts";
 import { BootTimer } from "./engine/boot-mark.ts";
 import { CrashGuard } from "./engine/crash-guard.ts";
 import { AppShell } from "./components/layout.tsx";
@@ -73,7 +73,7 @@ if (typeof document !== "undefined") {
     bootTimer.mark("boot"); // 冷启动计时起点（SP3-7 非功能基线）
     const crashGuard = new CrashGuard(); // 崩溃率基线统计（PRD：崩溃率 <0.5%）
     crashGuard.attach();
-    const stores = createStores(new WebDemoBridge());
+    const stores = createStores(createBridge());
     createRoot(rootElement).render(<App stores={stores} />);
     bootTimer.mark("first-render"); // 首屏挂载完成
     // 冷启动/崩溃基线（演示环境控制台可见；设置页展示）

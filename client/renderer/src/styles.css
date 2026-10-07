@@ -62,6 +62,8 @@ body { font-family: var(--font); color: var(--text); background: var(--bg); font
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn-primary:hover { background: #2a62e0; }
+.btn-danger { color: #d93026; border-color: #e8b4b0; }
+.btn-danger:hover { background: #fdecea; border-color: #d93026; }
 input, select, textarea {
   width: 100%; max-width: 420px; padding: 8px 10px; border: 1px solid var(--border);
   border-radius: 6px; font-size: 13px; font-family: var(--font);
@@ -147,3 +149,31 @@ label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; fo
 /* ---------- 合规导出 ---------- */
 .export-result { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-top: 16px; }
 .export-preview { background: #fafbfc; border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-size: 12px; max-height: 280px; overflow: auto; white-space: pre-wrap; }
+
+/* ---------- 工具时间线（FE-TOOLUI W12） ---------- */
+.tool-timeline { margin: 10px 0; }
+.tool-list { list-style: none; margin: 0; padding: 0; }
+.tool-item { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; background: var(--panel); }
+.tool-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 12px; background: none; border: none; cursor: pointer; font-size: 13px; text-align: left; }
+.tool-name { font-family: var(--mono); font-size: 13px; }
+.tool-status { font-weight: 600; }
+.tool-item.ok .tool-status { color: #1e8e3e; }
+.tool-item.fail .tool-status { color: #d93026; }
+.tool-item.pending .tool-status { color: var(--muted); }
+.tool-item.fail { border-color: #ffb4ab; background: #fff5f4; }
+.tool-dur { color: var(--muted); font-size: 12px; margin-left: auto; }
+.tool-detail { padding: 8px 12px; border-top: 1px dashed var(--border); font-size: 12px; }
+.tool-args { color: var(--text); }
+.tool-ref { color: #1f4fd8; margin-top: 4px; font-family: var(--mono); }
+.tool-err { color: #b3261e; margin-top: 4px; }
+
+/* ---------- 模型输出（流式） ---------- */
+.model-output { margin: 10px 0; }
+.model-output-text { background: #fafbfc; border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-size: 13px; max-height: 260px; overflow: auto; white-space: pre-wrap; font-family: var(--font); }
+
+/* ---------- 门禁审批面板（FE-APPROVE W13） ---------- */
+.gate-panel { border: 1px solid #ffb4ab; background: #fff5f4; border-radius: 6px; padding: 12px; margin: 10px 0; }
+.gate-panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.gate-retry { color: #b3261e; font-size: 12px; font-weight: 600; }
+.gate-reason { color: #b3261e; font-size: 13px; margin-bottom: 10px; line-height: 1.5; }
+.gate-actions { display: flex; gap: 8px; margin-top: 10px; }

@@ -13,6 +13,7 @@ FakeLLM 为确定性假模型（测试/演示专用）；本文件不产生真�
 import json
 import os
 import queue
+import re
 import signal
 import subprocess
 import sys
@@ -180,6 +181,22 @@ def test_missing_home_rejected() -> None:
     _close_pipes(proc)
     assert proc.returncode == 2
     assert "ERDOS_ENGINE_HOME" in stderr
+
+
+def test_version_flag_prints_and_exits() -> None:
+    """W17 打包前置：`engine --version` 打印版本退出码 0，无需 ERDOS_ENGINE_HOME/stdin。"""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ERDOS_")}
+    for flag in ("--version", "-V"):
+        proc = subprocess.run(  # noqa: S603 - 固定解释器/模块/受控参数
+            [sys.executable, "-m", "engine", flag],
+            cwd=str(REPO_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert proc.returncode == 0, f"{flag} 应退出码 0，stderr={proc.stderr}"
+        assert re.match(r"^\d+\.\d+\.\d+$", proc.stdout.strip()), f"{flag} 应输出语义化版本，got={proc.stdout!r}"
 
 
 def test_sigterm_graceful_exit(tmp_path: Path) -> None:

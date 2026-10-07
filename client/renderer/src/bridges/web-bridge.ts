@@ -117,6 +117,72 @@ export class DemoTaskSimulator {
         });
         return;
       }
+      // 工具调用（solving）：成功/失败各一对，演示时间线（FE-TOOLUI W12）
+      if (stage === "solving" && step % 52 === 20) {
+        this.emit({
+          trace_id: `demo-${step}`,
+          event: "tool.call",
+          task_id: taskId,
+          stage: "solving",
+          call_id: `call-${step}`,
+          tool: "execute_code",
+          args_summary: "python 求解脚本（已脱敏摘要）",
+          timestamp: ts,
+        });
+        return;
+      }
+      if (stage === "solving" && step % 52 === 25) {
+        this.emit({
+          trace_id: `demo-${step}`,
+          event: "tool.result",
+          task_id: taskId,
+          call_id: `call-${step - 5}`,
+          tool: "execute_code",
+          ok: true,
+          duration_ms: 240,
+          result_ref: "out/result.json",
+          timestamp: ts,
+        });
+        return;
+      }
+      if (stage === "solving" && step % 52 === 33) {
+        this.emit({
+          trace_id: `demo-${step}`,
+          event: "tool.call",
+          task_id: taskId,
+          stage: "solving",
+          call_id: `call-${step}`,
+          tool: "plot_figure",
+          args_summary: "结果可视化（已脱敏摘要）",
+          timestamp: ts,
+        });
+        return;
+      }
+      if (stage === "solving" && step % 52 === 38) {
+        this.emit({
+          trace_id: `demo-${step}`,
+          event: "tool.result",
+          task_id: taskId,
+          call_id: `call-${step - 5}`,
+          tool: "plot_figure",
+          ok: false,
+          duration_ms: 120,
+          error: "沙箱执行失败：依赖缺失",
+          timestamp: ts,
+        });
+        return;
+      }
+      // 模型 token 流（writing）：允许丢帧，仅展示
+      if (stage === "writing" && step % 3 === 0) {
+        this.emit({
+          trace_id: `demo-${step}`,
+          event: "model.delta",
+          task_id: taskId,
+          delta: `（流式输出片段 ${step}）`,
+          timestamp: ts,
+        });
+        return;
+      }
       this.emit({
         trace_id: `demo-${step}`,
         event: "stage.progress",
@@ -175,6 +241,8 @@ export class WebDemoBridge implements ErdosBridge {
         ]) as T);
       case BRIDGE_CHANNELS.keysSave:
         return Promise.resolve({} as T);
+      case BRIDGE_CHANNELS.keysDelete:
+        return Promise.resolve({ ok: true, requeue: false } as T);
       case BRIDGE_CHANNELS.keysTest: {
         const key = String(body["key"] ?? "");
         const result: KeyTestResult = !key

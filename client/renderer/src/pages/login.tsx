@@ -2,6 +2,7 @@
  * 登录页（SP3-4 / US-001 注册体验）：登录与注册（注册即登录）双动作，
  * 全部经桥（auth:login / auth:register）；错误态展示可读原因。
  */
+/// <reference types="vite/client" />
 
 import { useState, type FormEvent, type ReactNode } from "react";
 import { BRIDGE_CHANNELS } from "../bridges/bridge.ts";
@@ -71,9 +72,11 @@ export function LoginPage(props: { stores: AppStores }): ReactNode {
             注册并登录
           </button>
         </div>
-        <p className="login-hint">
-          联调提示：账号 demo-empty 演示空态、demo-error 演示异常态（开发模式）。
-        </p>
+        {import.meta.env.DEV ? (
+          <p className="login-hint">
+            联调提示：账号 demo-empty 演示空态、demo-error 演示异常态（开发模式）。
+          </p>
+        ) : null}
       </form>
     </div>
   );
