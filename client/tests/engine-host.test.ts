@@ -42,7 +42,7 @@ async function waitFor(fn: () => boolean, timeoutMs: number, label: string): Pro
   }
 }
 
-function makeHost(): { host: EngineHost; stateLog: EngineHostState[]; events: unknown[]; logs: string[] } {
+function makeHost(keyFn: () => string | null = () => null): { host: EngineHost; stateLog: EngineHostState[]; events: unknown[]; logs: string[] } {
   const stateLog: EngineHostState[] = [];
   const events: unknown[] = [];
   const logs: string[] = [];
@@ -51,7 +51,7 @@ function makeHost(): { host: EngineHost; stateLog: EngineHostState[]; events: un
     args: ["-m", "engine"],
     cwd: repoRoot,
     home: mkdtempSync(join(tmpdir(), "erdos-host-")),
-    key: () => null, // 无 Key 模式（FakeLLM）
+    key: keyFn, // 默认无 Key 模式（FakeLLM）
     onEvent: (event) => events.push(event),
     onStateChange: (state) => stateLog.push(state),
     onLog: (line) => logs.push(line), // 引擎 stderr + 看门狗日志
@@ -128,6 +128,45 @@ describe("EngineHost 状态机（真实引擎 + FakeLLM）", { skip: enginePytho
       await waitFor(() => host.currentState === "ready" && host.childPid !== null && host.childPid !== pid, 25_000, "看门狗重启后就绪（新 pid）");
       assert.ok(stateLog.includes("crashed"), `应经历 crashed：${JSON.stringify(stateLog)}`);
       assert.ok(logs.some((l) => l.includes("看门狗")), `应记录看门狗重启日志：${JSON.stringify(logs)}`);
+    } finally {
+      host.stop();
+    }
+  });
+
+  it("reloadKey（ready）：重启引擎注入最新 Key（pid 变更、key() 重新调用、RPC 仍可用）", async () => {
+    let keyCalls = 0;
+    const { host } = makeHost(() => {
+      keyCalls += 1;
+      return null; // FakeLLM：内容无关，仅验证注入时机
+    });
+    try {
+      host.ensureStarted();
+      await waitFor(() => host.currentState === "ready", 20_000, "初次就绪");
+      const firstPid = host.childPid;
+      assert.equal(keyCalls, 1, "首次 spawn 应注入一次");
+
+      await host.reloadKey();
+      assert.equal(host.currentState, "ready", "重载后应回到 ready");
+      assert.notEqual(host.childPid, firstPid, "重载应换新进程");
+      assert.equal(keyCalls, 2, "重载应重新注入 Key");
+
+      const status = await host.invoke<Record<string, unknown>>("get_status", {});
+      assert.ok("engine" in status, "重载后 RPC 仍可用");
+    } finally {
+      host.stop();
+    }
+  });
+
+  it("reloadKey（idle）：直接以最新 Key 懒启动", async () => {
+    let keyCalls = 0;
+    const { host } = makeHost(() => {
+      keyCalls += 1;
+      return null;
+    });
+    try {
+      await host.reloadKey();
+      assert.equal(host.currentState, "ready");
+      assert.equal(keyCalls, 1, "idle 重载只启动一次");
     } finally {
       host.stop();
     }

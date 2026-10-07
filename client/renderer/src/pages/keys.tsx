@@ -57,6 +57,7 @@ export function KeysPage(props: { stores: AppStores }): ReactNode {
       const result = await props.stores.bridge.invoke<KeyTestResult>(BRIDGE_CHANNELS.keysTest, {
         baseUrl: wizard.baseUrl,
         key: wizard.key,
+        model: wizard.model,
       });
       dispatch({ type: "test-result", result });
     } catch (error) {
@@ -182,6 +183,14 @@ export function KeysPage(props: { stores: AppStores }): ReactNode {
                 value={wizard.key}
                 placeholder="sk-..."
                 onChange={(e) => dispatch({ type: "field", field: "key", value: e.target.value })}
+              />
+            </label>
+            <label>
+              模型名（探测用，可选）
+              <input
+                value={wizard.model}
+                placeholder="如 deepseek-chat"
+                onChange={(e) => dispatch({ type: "field", field: "model", value: e.target.value })}
               />
             </label>
             <div>

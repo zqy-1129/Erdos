@@ -244,6 +244,8 @@ export class WebDemoBridge implements ErdosBridge {
       case BRIDGE_CHANNELS.keysDelete:
         return Promise.resolve({ ok: true, requeue: false } as T);
       case BRIDGE_CHANNELS.keysTest: {
+        // dev 演示替身（仅浏览器直跑/UI 验收；preview/production 由 bridge-factory 强制真实桥）：
+        // 按关键字模拟分类结果，**不代表真实连通**——真实探测走主进程 provider_test（key-probe.ts）。
         const key = String(body["key"] ?? "");
         const result: KeyTestResult = !key
           ? { ok: false, reason: "invalid", detail: "Key 不能为空" }

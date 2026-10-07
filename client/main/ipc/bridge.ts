@@ -3,12 +3,16 @@
  *
  * 开发期演示数据（云端集成 SP3-5 落地前）；keys → KeyVault（safeStorage 加密），
  * telemetry → TelemetrySdk（白名单 + 隐私过滤）。明文 Key 永不出主进程。
+ *
+ * keysTest 真实化（FE-TOOLUI W12）：经注入的引擎探测函数走 provider_test
+ * （见 main/ipc/key-probe.ts）；引擎未接线/Web 环境返回 unverified，不冒充连通。
  */
 import { safeStorage } from "electron";
 import { BRIDGE_CHANNELS } from "../../shared/bridge-channels.ts";
 import { KeyVault, InMemorySecretStore, XorEncryptor, type KeyEncryptor } from "../key-vault.ts";
 import { maskSecret } from "../secret-masker.ts";
 import { TelemetrySdk, type TelemetryUploader, type UploadResult } from "../telemetry/sdk.ts";
+import { keysTestOutcome, type KeyTestOutcome, type ProbeFn } from "./key-probe.ts";
 
 const STAGES = ["analysis", "modeling", "solving", "writing"];
 
@@ -40,6 +44,8 @@ export class BridgeBackend {
   private readonly telemetry: TelemetrySdk;
   private sessionUsername: string | null = null;
   private activeKeyId: string | null = null;
+  /** 引擎探测函数（FE-KEYIN/W12 接线：EngineHost.reloadKey → provider_test）。 */
+  private probe: ProbeFn | null = null;
 
   constructor() {
     const encryptor = safeStorage.isEncryptionAvailable() ? new SafeStorageEncryptor() : new XorEncryptor();
@@ -50,6 +56,11 @@ export class BridgeBackend {
       },
     };
     this.telemetry = new TelemetrySdk({ uploader: noopUploader });
+  }
+
+  /** 注入引擎探测实现（主进程接线；Web/未接线环境保持 null → keysTest 返回 unverified）。 */
+  setProbe(probe: ProbeFn | null): void {
+    this.probe = probe;
   }
 
   /** 引擎首行注入用：返回当前激活 Key 的明文（仅内存，写毕即弃）。 */
@@ -135,15 +146,31 @@ export class BridgeBackend {
     const id = `k-${this.keyMetas.size + 1}`;
     this.keyVault.save(id, key);
     this.keyMetas.set(id, { alias, baseUrl, masked: maskSecret(key), status: "unknown" });
-    if (this.activeKeyId === null) this.activeKeyId = id;
+    // 最近保存者为激活 Key：向导「保存并测试连通」即测刚保存的 Key（FE-KEYIN 语义）
+    this.activeKeyId = id;
     return { ok: true };
   }
 
-  private keysTest(body: Record<string, unknown>): { ok: boolean; reason: string; detail: string } {
-    const key = String(body["key"] ?? "");
-    if (!key) return { ok: false, reason: "invalid", detail: "Key 不能为空" };
-    // dev 演示：无真实厂商探测，仅校验保存；provider.test 落地后接真实探测（客户端方案 §4.2）
-    return { ok: true, reason: "none", detail: "已保存（演示模式未发起真实探测）" };
+  /**
+   * Key 连通测试（keysTest 真实化）：
+   * - 有引擎探测 → 先 reloadKey（以最新激活 Key 重启注入）再 provider_test；
+   * - 无引擎（Web/未接线）→ unverified（已保存未检测，防误判连通）；
+   * - 结果回写列表状态（ok/fail/unknown），供 keys 页展示。
+   */
+  private async keysTest(body: Record<string, unknown>): Promise<KeyTestOutcome> {
+    const outcome = await keysTestOutcome({
+      key: String(body["key"] ?? ""),
+      baseUrl: String(body["baseUrl"] ?? ""),
+      model: body["model"] === undefined ? undefined : String(body["model"]),
+      probe: this.probe ?? undefined,
+    });
+    if (this.activeKeyId !== null) {
+      const meta = this.keyMetas.get(this.activeKeyId);
+      if (meta && outcome.reason !== "invalid") {
+        meta.status = outcome.reason === "none" ? "ok" : outcome.reason === "unverified" ? "unknown" : "fail";
+      }
+    }
+    return outcome;
   }
 
   /**

@@ -43,8 +43,11 @@ export interface KeyItemView {
 
 export interface KeyTestResult {
   ok: boolean;
-  /** 可读失败分类（US-002：401/网络/余额）。 */
-  reason: "none" | "unauthorized" | "network" | "balance" | "invalid";
+  /**
+   * 可读失败分类（US-002：401/网络/余额）；
+   * unverified = 已保存但未检测（Web/未接线环境，不冒充连通成功）。
+   */
+  reason: "none" | "unauthorized" | "network" | "balance" | "invalid" | "unverified";
   detail: string;
 }
 

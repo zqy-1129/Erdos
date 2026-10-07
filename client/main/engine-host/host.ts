@@ -30,6 +30,7 @@ const MAX_RESTARTS = 3;
 const RESTART_BACKOFF_MS = [1000, 2000, 4000];
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 空闲回收（客户端架构 §5.1）
 const SIGTERM_GRACE_MS = 300; // 优雅退出宽限（engine-protocol.md §4）
+const RELOAD_EXIT_TIMEOUT_MS = 2000; // 密钥重载：等待旧进程退出的上限
 
 export interface EngineHostOptions {
   /** 引擎可执行（开发期指向 engine/.venv 的 python；打包后指向 PyInstaller 产物）。 */
@@ -90,6 +91,52 @@ export class EngineHost {
     return rpc.invoke<T>(method, params);
   }
 
+  /**
+   * 重载密钥（FE-KEYIN W5 运行期语义）：Key 新增/切换后重启引擎，
+   * 使下一次 spawn 经 key() 重新注入最新明文（首行注入只在 spawn 时发生）。
+   *
+   * 语义：
+   * - idle（从未启动）→ 直接懒启动（新 Key 自然注入）；
+   * - stopped/crashed/failed → 复位用户停止标记后重启；
+   * - ready/running → 优雅退出 → 等待旧进程退出（≤2s）→ 重启；
+   * - 返回时保证引擎已就绪（失败抛错，由调用方按 probe 失败呈现）。
+   */
+  async reloadKey(): Promise<void> {
+    if (this.state === "idle") {
+      this.ensureStarted();
+      await this.awaitReady();
+      return;
+    }
+    if (this.state === "stopped" || this.state === "crashed" || this.state === "failed") {
+      this.userStopping = false;
+      this.transition("spawning");
+      this.spawn();
+      await this.awaitReady();
+      return;
+    }
+    this.stop();
+    await this.waitExit(RELOAD_EXIT_TIMEOUT_MS);
+    this.userStopping = false; // 复位：旧进程退出已按用户停止处理，新进程参与看门狗
+    this.transition("spawning");
+    this.spawn();
+    await this.awaitReady();
+  }
+
+  /** 等待当前子进程退出（轮询；超时返回，交由 SIGTERM/taskkill 兜底回收）。 */
+  private waitExit(timeoutMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const poll = (): void => {
+        if (this.child === null || this.childPid === null || Date.now() - start > timeoutMs) {
+          resolve();
+          return;
+        }
+        setTimeout(poll, 25);
+      };
+      poll();
+    });
+  }
+
   /** 优雅退出：协作取消 → SIGTERM → 300ms → taskkill 兜底 → 校验无遗留。 */
   stop(): void {
     if (this.state === "stopped" || this.state === "idle") return;
@@ -128,21 +175,31 @@ export class EngineHost {
     this.child = child;
 
     const rpc = new EngineRpcClient(child, {
-      onEvent: (event) => this.onEngineEvent(event),
+      onEvent: (event) => {
+        if (isCurrent()) this.onEngineEvent(event);
+      },
       onStderr: (line) => this.options.onLog(line),
       onProtocolError: (err) => this.options.onProtocolError(err),
     });
     this.rpc = rpc;
+    /**
+     * 迟到事件防护：reloadKey/看门狗重启后，旧进程的 exit/error/就绪回调不得
+     * 干扰新进程（否则会误置 crashed 或清空新 rpc 引用）。
+     */
+    const isCurrent = (): boolean => this.rpc === rpc;
 
     // 首行注入（Key 或空行），写毕即弃引用
     const injected = key();
     injectFirstLine(child, injected);
 
     // 就绪判定：initialize（CT-V2）成功 → ready；失败回退 get_status；超时 crashed
-    const readyTimer = setTimeout(() => this.onSpawnTimeout(), INJECT_READY_TIMEOUT_MS);
+    const readyTimer = setTimeout(() => {
+      if (isCurrent()) this.onSpawnTimeout();
+    }, INJECT_READY_TIMEOUT_MS);
     void rpc
       .invoke<InitializeResult>("initialize", { client_protocol_version: 2 }, INJECT_READY_TIMEOUT_MS - 500)
       .then((res) => {
+        if (!isCurrent()) return;
         clearTimeout(readyTimer);
         if (res && res.compatible === false) {
           this.onSpawnFailed(new Error(`协议版本不兼容（引擎 ${res.engine_version}）`));
@@ -153,20 +210,28 @@ export class EngineHost {
         this.resetIdleTimer();
       })
       .catch(() => {
+        if (!isCurrent()) return;
         // initialize 不可用（旧引擎）：回退 get_status 判活
         rpc
           .invoke("get_status", {}, INJECT_READY_TIMEOUT_MS - 500)
           .then(() => {
+            if (!isCurrent()) return;
             clearTimeout(readyTimer);
             this.restartCount = 0;
             this.transition("ready");
             this.resetIdleTimer();
           })
-          .catch(() => this.onSpawnTimeout());
+          .catch(() => {
+            if (isCurrent()) this.onSpawnTimeout();
+          });
       });
 
-    child.on("error", (err) => this.onSpawnFailed(err));
-    child.on("exit", (code, signal) => this.onExit(code, signal));
+    child.on("error", (err) => {
+      if (isCurrent()) this.onSpawnFailed(err);
+    });
+    child.on("exit", (code, signal) => {
+      if (isCurrent()) this.onExit(code, signal);
+    });
   }
 
   private onEngineEvent(event: EngineEvent): void {
