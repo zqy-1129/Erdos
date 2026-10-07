@@ -240,8 +240,9 @@ class AcceptanceRunner:
                     paper_sha = data.get("paper_sha256")
 
                 if kill_after_stage == stage and index < len(STAGES) - 1:
-                    # 模拟进程 kill：丢弃任务流，从检查点重建续跑（副作用不重放）
+                    # 模拟进程 kill：硬杀任务流（RPC 驱动即杀引擎进程），从检查点重建续跑
                     executed_pre = flow.executed_stages()
+                    flow.close(force=True)
                     flow = self._flow_factory(problem)
                     restored = flow.current_stage()
                     if restored != STAGES[index + 1]:
@@ -271,6 +272,8 @@ class AcceptanceRunner:
                 passed=False, failure_module=_classify_exception(exc),
                 failure_detail=f"{type(exc).__name__}: {exc}", stages_passed=index,
             )
+        finally:
+            flow.close()
 
 
 def _classify_exception(exc: Exception) -> str:

@@ -182,6 +182,7 @@ class StagePipeline:
             "stage": "analysis",
             "insights": reply["content"].split("；"),
             "question_focused": True,
+            "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
         }
 
@@ -200,6 +201,7 @@ class StagePipeline:
             "objective": reply["content"].split("。")[1] if "。" in reply["content"] else reply["content"],
             "modeling_detail": reply["content"],
             "variables": ["slope", "intercept"],
+            "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
         }
 
@@ -226,6 +228,7 @@ class StagePipeline:
             "stdout": result.stdout.strip(),
             "timed_out": result.timed_out,
             "artifacts": result.artifacts,
+            "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
         }
 
@@ -256,6 +259,8 @@ class StagePipeline:
             "repair_count": outcome["repair_count"],
             "dispatch_count": outcome["dispatch_count"],
             "limitations": outcome.get("limitations", []),
+            # 模型名在适配器层（内循环多调用），管线层不可得；留痕以 unknown 登记
+            "model": "unknown",
             "usage": {
                 "prompt_tokens": usage.get("prompt_tokens", 0),
                 "completion_tokens": usage.get("completion_tokens", 0),
@@ -316,5 +321,6 @@ class StagePipeline:
             "paper_md": paper,
             "paper_sha256": digest,
             "paper_path": str(paper_path),
+            "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
         }

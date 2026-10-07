@@ -44,6 +44,10 @@ class TaskFlow(Protocol):
         """实际执行过的阶段序列（副作用观测；断点恢复断言「不重放」用）。"""
         ...
 
+    def close(self, force: bool = False) -> None:
+        """释放任务流资源（进程/连接）；force=True 模拟崩溃硬杀（恢复演练用）。"""
+        ...
+
 
 FlowFactory = Callable[[RegressionProblem], TaskFlow]
 
@@ -108,3 +112,9 @@ class FakeLLMFlow:
 
     def executed_stages(self) -> tuple[str, ...]:
         return tuple(self._exec_log.stages)
+
+    def close(self, force: bool = False) -> None:
+        """进程内实现无外部资源；检查点连接随对象回收，此处置为显式关闭。"""
+        if self._store is not None:
+            self._store.close()
+            self._store = None
