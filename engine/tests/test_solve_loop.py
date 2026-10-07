@@ -10,7 +10,9 @@
 FakeLLM/脚本化 LLM 为确定性假模型（测试专用），不产生真实模型调用。
 """
 
+import hashlib
 import json
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
@@ -19,7 +21,7 @@ import pytest
 from engine.adapters.openai_compat import ChatMessage, ChatResult, ToolCall, Usage
 from engine.orchestrator.operations import OperationLog
 from engine.orchestrator.pipeline import FakeLLM, StagePipeline
-from engine.orchestrator.solve_loop import SolveLoop
+from engine.orchestrator.solve_loop import SolveLoop, artifact_sha256
 from engine.sandbox.base import ExecutionResult
 from engine.sandbox.subprocess_sandbox import SubprocessSandbox
 from engine.tools import build_default_registry
@@ -107,7 +109,8 @@ def test_operations_running_record_ignored(tmp_path: Path) -> None:
     """running 半写记录（崩溃点：执行后未记终态）→ find 返回 None（按需重执行）。"""
     ops = OperationLog(str(tmp_path / "ops.db"))
     ops._conn.execute(
-        "INSERT INTO operations VALUES ('t1','solving',1,1,'running',NULL,'2026-01-01')"
+        "INSERT INTO operations (task_id, stage, attempt, exec_seq, status, result_ref, created_at) "
+        "VALUES ('t1','solving',1,1,'running',NULL,'2026-01-01')"
     )
     ops._conn.commit()
     assert ops.find("t1", "solving", 1, 1) is None
@@ -309,3 +312,118 @@ async def test_solve_loop_delta_sink_receives_throttled_text(tmp_path: Path) -> 
     events.emit("stage.progress", task_id="t1", stage="analysis", progress=1.0)
     replayed = events.replay(after_seq=0)
     assert [e["event"] for e in replayed] == ["stage.progress"]  # delta 不补发
+
+
+# ----------------------------------------------------------------------
+# EC-T4 哈希校验链：引用产物完整性（记录哈希 → 复用前校验 → 损坏重执行）
+# ----------------------------------------------------------------------
+class ArtifactSandbox:
+    """写产物文件的沙箱替身：每次执行覆盖 out.txt（内容随次数变化）。
+
+    与真实执行器一致：写文件前自行创建工作目录。
+    """
+
+    def __init__(self) -> None:
+        self.execute_count = 0
+
+    async def execute(self, code: str, files: dict, work_dir: Path) -> ExecutionResult:
+        self.execute_count += 1
+        work_dir.mkdir(parents=True, exist_ok=True)
+        (work_dir / "out.txt").write_text(f"v{self.execute_count}", encoding="utf-8")
+        return ExecutionResult(exit_code=0, stdout="ok", stderr="", artifacts=["out.txt"])
+
+
+def test_operations_migration_adds_hash_column(tmp_path: Path) -> None:
+    """旧库（无 result_sha256 列）打开即迁移，record/find 携带哈希。"""
+    db = tmp_path / "ops.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "CREATE TABLE operations (task_id TEXT NOT NULL, stage TEXT NOT NULL, "
+        "attempt INTEGER NOT NULL, exec_seq INTEGER NOT NULL, status TEXT NOT NULL, "
+        "result_ref TEXT, created_at TEXT NOT NULL, "
+        "PRIMARY KEY (task_id, stage, attempt, exec_seq))"
+    )
+    conn.commit()
+    conn.close()
+
+    ops = OperationLog(str(db))
+    ops.record_done("t1", "solving", 1, 1, "out.txt", result_sha256="abc")
+    record = ops.find("t1", "solving", 1, 1)
+    assert record is not None
+    assert record.result_sha256 == "abc"
+
+
+def test_operations_force_updates_hash_on_repair(tmp_path: Path) -> None:
+    """first-wins 默认不覆盖（重放不改写）；force=True 刷新引用与哈希（修复路径）。"""
+    ops = OperationLog(str(tmp_path / "ops.db"))
+    ops.record_done("t1", "solving", 1, 1, "out.txt", result_sha256="h1")
+    ops.record_done("t1", "solving", 1, 1, "out.txt", result_sha256="h2")
+    first = ops.find("t1", "solving", 1, 1)
+    assert first is not None and first.result_sha256 == "h1"  # first-wins
+    ops.record_done("t1", "solving", 1, 1, "out.txt", result_sha256="h2", force=True)
+    repaired = ops.find("t1", "solving", 1, 1)
+    assert repaired is not None and repaired.result_sha256 == "h2"  # 修复刷新
+
+
+def test_artifact_sha256_helpers(tmp_path: Path) -> None:
+    """哈希助手：存在文件返回摘要，缺失/空引用返回 None。"""
+    (tmp_path / "out.txt").write_bytes(b"payload")
+    assert artifact_sha256(tmp_path, "out.txt") == hashlib.sha256(b"payload").hexdigest()
+    assert artifact_sha256(tmp_path, "missing.txt") is None
+    assert artifact_sha256(tmp_path, None) is None
+
+
+async def test_restore_reuses_intact_artifact_without_replay(tmp_path: Path) -> None:
+    """EC-T4：记录带哈希且产物完好 → 复用引用，沙箱零重放（DEC-005）。"""
+    sandbox = ArtifactSandbox()
+    ops = OperationLog(str(tmp_path / "ops.db"))
+    llm = ScriptedLLM([
+        _tool_call("c1", "execute_code", "print('a')"),
+        _final([{"name": "x", "value": 1}]),
+        _tool_call("c2", "execute_code", "print('b')"),
+        _final([{"name": "x", "value": 1}]),
+    ])
+    loop = SolveLoop(llm=llm, registry=build_default_registry(sandbox),
+                     operations=ops, task_id="t1", work_root=tmp_path / "tasks")
+    await loop.run("第一次求解")
+    first = ops.find("t1", "solving", 1, 1)
+    assert first is not None and first.result_sha256
+    first_sha = first.result_sha256
+    assert sandbox.execute_count == 1
+
+    resumed = SolveLoop(llm=llm, registry=build_default_registry(sandbox),
+                        operations=ops, task_id="t1", work_root=tmp_path / "tasks")
+    outcome = await resumed.run("恢复续跑")
+    assert outcome["status"] == "succeeded"
+    assert sandbox.execute_count == 1  # 产物完好：不重放
+    reused = ops.find("t1", "solving", 1, 1)
+    assert reused is not None and reused.result_sha256 == first_sha
+
+
+async def test_restore_hash_mismatch_reexecutes_and_refreshes(tmp_path: Path) -> None:
+    """EC-T4：产物被篡改 → 按损坏重执行，成功后刷新记录哈希（force）。"""
+    sandbox = ArtifactSandbox()
+    ops = OperationLog(str(tmp_path / "ops.db"))
+    llm = ScriptedLLM([
+        _tool_call("c1", "execute_code", "print('a')"),
+        _final([{"name": "x", "value": 1}]),
+        _tool_call("c2", "execute_code", "print('b')"),
+        _final([{"name": "x", "value": 1}]),
+    ])
+    loop = SolveLoop(llm=llm, registry=build_default_registry(sandbox),
+                     operations=ops, task_id="t1", work_root=tmp_path / "tasks")
+    await loop.run("第一次求解")
+    original = ops.find("t1", "solving", 1, 1)
+    assert original is not None and original.result_sha256
+    old_sha = original.result_sha256
+
+    (tmp_path / "tasks" / "t1" / "out.txt").write_text("tampered", encoding="utf-8")
+
+    resumed = SolveLoop(llm=llm, registry=build_default_registry(sandbox),
+                        operations=ops, task_id="t1", work_root=tmp_path / "tasks")
+    outcome = await resumed.run("恢复续跑")
+    assert outcome["status"] == "succeeded"
+    assert sandbox.execute_count == 2  # 损坏 → 重执行
+    record = ops.find("t1", "solving", 1, 1)
+    assert record is not None
+    assert record.result_sha256 not in (None, old_sha)  # 修复成功后刷新哈希

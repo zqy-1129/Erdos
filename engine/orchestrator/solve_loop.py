@@ -16,10 +16,12 @@
 - 无工具能力端点不构建本循环（路由在 StagePipeline：tool_mode=stage_level 降级路径）。
 """
 
+import hashlib
 import json
 import math
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Protocol
 
 from langgraph.graph import END, START, StateGraph
@@ -27,7 +29,7 @@ from typing_extensions import TypedDict
 
 from engine.adapters.openai_compat import ChatMessage, ChatResult, ToolCall
 from engine.ipc.throttle import DeltaThrottler
-from engine.orchestrator.operations import OperationLog
+from engine.orchestrator.operations import OperationLog, OperationRecord
 from engine.tools import ToolRegistry
 from engine.tools.base import ToolContext
 
@@ -44,6 +46,16 @@ SYSTEM_PROMPT = (
 )
 
 _FINAL_JSON_PATTERN = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def artifact_sha256(work_dir: Path, result_ref: str | None) -> str | None:
+    """引用产物的内容哈希（EC-T4）；result_ref 非文件或不存在 → None（按状态复用）。"""
+    if not result_ref:
+        return None
+    path = work_dir / result_ref
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _reject_constant(token: str) -> float:
@@ -248,6 +260,18 @@ class SolveLoop:
             "usage": usage,
         }
 
+    def _artifact_intact(self, record: OperationRecord) -> bool:
+        """EC-T4：引用产物完整性——带哈希的记录校验文件哈希，缺失/不一致视为损坏。
+
+        无哈希记录（纯文本结果或回退引用）按状态复用（与既有语义一致）。
+        """
+        if record.result_sha256 is None:
+            return True
+        path = self._work_root / self._task_id / (record.result_ref or "")
+        if not path.is_file():
+            return False
+        return hashlib.sha256(path.read_bytes()).hexdigest() == record.result_sha256
+
     async def _dispatch(self, state: SolveState) -> dict:
         """分发 assistant 请求的全部工具调用（幂等：已完成执行复用引用不重放）。"""
         last = state["messages"][-1]
@@ -263,18 +287,23 @@ class SolveLoop:
             exec_seq += 1
             dispatch_count += 1
             done = self._operations.find(self._task_id, "solving", self._attempt, exec_seq)
+            repair_reexec = False
+            if done is not None and not self._artifact_intact(done):
+                # EC-T4：引用产物缺失/哈希不一致 → 按损坏重执行（成功后刷新记录哈希）
+                done = None
+                repair_reexec = True
             if done is not None:
                 # DEC-005：恢复路径——已完成执行不重放，复用引用
                 observation = f"[系统] 复用已完成执行 #{exec_seq}（引用：{done.result_ref}）"
             else:
-                ctx = ToolContext(
-                    task_id=self._task_id, stage="solving",
-                    work_dir=self._work_root / self._task_id,
-                )
+                work_dir = self._work_root / self._task_id
+                ctx = ToolContext(task_id=self._task_id, stage="solving", work_dir=work_dir)
                 result = await self._registry.dispatch(call, ctx)
                 self._operations.record_done(
                     self._task_id, "solving", self._attempt, exec_seq,
                     result.result_ref or f"tool:{call.name}:{call.id}",
+                    result_sha256=artifact_sha256(work_dir, result.result_ref),
+                    force=repair_reexec and result.ok,
                 )
                 if result.ok:
                     observation = result.summary or f"[ok] {result.result_ref or '执行完成'}"
