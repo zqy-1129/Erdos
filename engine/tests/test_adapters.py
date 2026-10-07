@@ -10,6 +10,7 @@
 import httpx
 import pytest
 
+import engine.adapters.openai_compat as openai_compat
 from engine.adapters.errors import (
     AdapterError,
     ErrorKind,
@@ -106,8 +107,8 @@ async def test_chat_error_401_raises_auth() -> None:
     assert "Key" in ei.value.message
 
 
-async def test_chat_error_network_timeout() -> None:
-    """网络错误：超时分类为 NETWORK。"""
+async def test_chat_error_network_timeout(retry_sleep_recorder) -> None:
+    """网络错误：超时分类为 NETWORK；EC-N1 初次+2 次指数退避重试全败。"""
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("timeout")
 
@@ -115,6 +116,7 @@ async def test_chat_error_network_timeout() -> None:
     with pytest.raises(AdapterError) as ei:
         await adapter.chat([ChatMessage("user", "hi")])
     assert ei.value.kind == ErrorKind.NETWORK
+    assert retry_sleep_recorder == [0.5, 1.0]  # 指数退避（记录器替代真实等待）
 
 
 async def test_chat_stream_success() -> None:
@@ -145,3 +147,116 @@ def test_usage_accumulator() -> None:
     assert acc.total_completion_tokens == 30
     assert acc.calls == 2
     assert abs(acc.total_cost_cents - 0.15) < 1e-6
+
+
+# ----------------------------------------------------------------------
+# EC-N1/N2/N3 重试策略：分类过滤 + 指数退避 + Retry-After
+# ----------------------------------------------------------------------
+
+
+@pytest.fixture
+def retry_sleep_recorder(monkeypatch):
+    """替换退避等待为记录器（不真睡，捕获退避序列）。"""
+    delays: list[float] = []
+
+    async def _sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(openai_compat, "RETRY_SLEEP", _sleep)
+    return delays
+
+
+async def test_auth_error_no_retry(retry_sleep_recorder) -> None:
+    """EC-N3：401 不盲重试——仅 1 次调用，零退避等待。"""
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(401, json={"error": "invalid key"})
+
+    adapter = _adapter(handler)
+    with pytest.raises(AdapterError) as ei:
+        await adapter.chat([ChatMessage("user", "hi")])
+    assert ei.value.kind == ErrorKind.AUTH
+    assert len(calls) == 1
+    assert retry_sleep_recorder == []
+
+
+async def test_network_error_retries_with_exponential_backoff(retry_sleep_recorder) -> None:
+    """EC-N1：网络错误按指数退避重试（0.5s→1s），恢复后成功。"""
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ConnectError("connection reset")
+        return _chat_response("ok")
+
+    adapter = _adapter(handler)
+    result = await adapter.chat([ChatMessage("user", "hi")])
+    assert result.content == "ok"
+    assert len(calls) == 2
+    assert retry_sleep_recorder == [0.5]
+
+
+async def test_rate_limit_honors_retry_after(retry_sleep_recorder) -> None:
+    """EC-N2：429 遵守 Retry-After 头（替代指数退避）。"""
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(429, json={"error": "slow down"}, headers={"Retry-After": "2"})
+        return _chat_response("ok")
+
+    adapter = _adapter(handler)
+    result = await adapter.chat([ChatMessage("user", "hi")])
+    assert result.content == "ok"
+    assert len(calls) == 2
+    assert retry_sleep_recorder == [2.0]
+
+
+async def test_rate_limit_retry_after_over_cap_fails_fast(retry_sleep_recorder) -> None:
+    """EC-N2：Retry-After 超阶段预算上限（30s）→ 不硬刷，立即失败转用户。"""
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(429, json={"error": "slow down"}, headers={"Retry-After": "120"})
+
+    adapter = _adapter(handler)
+    with pytest.raises(AdapterError) as ei:
+        await adapter.chat([ChatMessage("user", "hi")])
+    assert ei.value.kind == ErrorKind.RATE_LIMIT
+    assert len(calls) == 1
+    assert retry_sleep_recorder == []
+
+
+async def test_server_error_retries_exhausted(retry_sleep_recorder) -> None:
+    """EC-N1：5xx 可重试，初次+2 次全败后抛 SERVER（退避 0.5s→1s）。"""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": "internal"})
+
+    adapter = _adapter(handler)
+    with pytest.raises(AdapterError) as ei:
+        await adapter.chat([ChatMessage("user", "hi")])
+    assert ei.value.kind == ErrorKind.SERVER
+    assert retry_sleep_recorder == [0.5, 1.0]
+
+
+async def test_stream_transport_error_retries(retry_sleep_recorder) -> None:
+    """流式断流同样走指数退避重试，恢复后聚合成功。"""
+    calls: list[int] = []
+    sse_body = 'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n' + "data: [DONE]\n\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ReadError("stream broken")
+        return httpx.Response(200, content=sse_body, headers={"content-type": "text/event-stream"})
+
+    adapter = _adapter(handler)
+    result = await adapter.chat([ChatMessage("user", "hi")], stream=True)
+    assert result.content == "ok"
+    assert len(calls) == 2
+    assert retry_sleep_recorder == [0.5]

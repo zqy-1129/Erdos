@@ -20,6 +20,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENGINE_HOME_KEY = "ERDOS_ENGINE_HOME"
 # 事件负载禁止出现的敏感字段名（trail/事件红线，DEC-011）
@@ -196,3 +198,40 @@ def test_sigterm_graceful_exit(tmp_path: Path) -> None:
     proc.wait(timeout=5)
     _close_pipes(proc)
     assert proc.returncode == 0
+
+
+# ----------------------------------------------------------------------
+# EC-D5 启动自检：本地库损坏 → 诊断式拒启（保留现场，不静默重建）
+# ----------------------------------------------------------------------
+def test_verify_stores_healthy_and_corrupt(tmp_path: Path, capsys) -> None:
+    """单元级：空目录/健康库通过；损坏库 SystemExit(2) + 可读诊断。"""
+    import sqlite3
+
+    from engine.__main__ import _verify_stores
+
+    _verify_stores(tmp_path)  # 首次启动：无库文件，放行（由各存储构造器初始化）
+    conn = sqlite3.connect(str(tmp_path / "audit.db"))
+    conn.execute("CREATE TABLE t (x INTEGER)")
+    conn.commit()
+    conn.close()
+    _verify_stores(tmp_path)  # 健康库 quick_check=ok
+
+    (tmp_path / "checkpoints.db").write_bytes(b"garbage not a sqlite database file")
+    with pytest.raises(SystemExit) as ei:
+        _verify_stores(tmp_path)
+    assert ei.value.code == 2
+    assert "损坏" in capsys.readouterr().err
+    assert (tmp_path / "checkpoints.db").exists()  # 保留现场：不删除/不重建
+
+
+def test_startup_corrupt_store_fails_closed(tmp_path: Path) -> None:
+    """进程级：损坏库上拉起引擎 → 退出码 2 + stderr 诊断（不进入服务循环）。"""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "audit.db").write_bytes(b"corrupted payload, definitely not sqlite")
+    proc = _spawn([], home=home)
+    proc.wait(timeout=15)
+    stderr = proc.stderr.read() if proc.stderr is not None else ""
+    _close_pipes(proc)
+    assert proc.returncode == 2
+    assert "损坏" in stderr

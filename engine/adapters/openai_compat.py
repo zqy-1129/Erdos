@@ -7,6 +7,13 @@
 - 出站仅厂商域名（base_url 由配置固定，不向非厂商域名请求）；
 - Key 不出现在日志/事件中（仅 auth 头，脱敏）。
 
+重试策略（EC-N1/N2/N3，边界情况与异常处理规范）：
+- 仅可重试类别重试（NETWORK/SERVER/RATE_LIMIT）；AUTH/余额/工具不支持/未知
+  不盲重试（N3：分类提示修正配置）；
+- 重试间指数退避 0.5s→1s（N1：初次+2 次指数退避）；
+- 429 遵守 Retry-After（秒）；超过阶段预算上限（RETRY_AFTER_CAP）→ 不硬刷，
+  立即失败转用户（N2）。
+
 W8（EN-TOOL）扩展：
 - ChatMessage 携带 tool_calls（assistant 发起）与 tool_call_id（tool 角色回注）；
 - chat() 可传 tools/tool_choice，payload 按 OpenAI function calling 规范编码；
@@ -16,8 +23,9 @@ W8（EN-TOOL）扩展：
   估算并置 estimated=True（禁止报 0）。
 """
 
+import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import httpx
@@ -32,7 +40,12 @@ from engine.adapters.key_store import KeyStore
 
 CONNECT_TIMEOUT = 10.0
 READ_TIMEOUT = 60.0
-MAX_RETRIES = 2  # 断流重试次数
+MAX_RETRIES = 2  # 断流重试次数（初次 + 2 次）
+RETRYABLE_KINDS = frozenset({ErrorKind.NETWORK, ErrorKind.SERVER, ErrorKind.RATE_LIMIT})
+RETRY_BACKOFF_BASE = 0.5  # 指数退避基值（秒）：0.5 → 1.0
+RETRY_AFTER_CAP = 30.0  # Retry-After 阶段预算上限（秒），超过即失败转用户
+# 可注入的退避等待（测试替换为记录器；产品路径为 asyncio.sleep）
+RETRY_SLEEP: Callable[[float], Awaitable[None]] = asyncio.sleep
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,9 +160,9 @@ class OpenAIChatAdapter:
         return await self._chat_once(payload)
 
     async def _chat_once(self, payload: dict) -> ChatResult:
-        """非流式单次调用（带重试）。"""
+        """非流式单次调用（EC-N1/N2/N3：分类重试 + 指数退避 + Retry-After）。"""
         last_error: AdapterError | None = None
-        for _ in range(MAX_RETRIES + 1):
+        for attempt in range(MAX_RETRIES + 1):
             try:
                 async with self._client() as client:
                     resp = await client.post(
@@ -159,7 +172,10 @@ class OpenAIChatAdapter:
                     )
                 if resp.status_code != 200:
                     kind = classify_error_body(resp.status_code, resp.text)
-                    raise AdapterError(kind, readable_message(kind))
+                    retry_after = (
+                        self._retry_after_seconds(resp.headers) if resp.status_code == 429 else None
+                    )
+                    raise AdapterError(kind, readable_message(kind), retry_after=retry_after)
                 data = resp.json()
                 choice = data["choices"][0]
                 message = choice.get("message", {})
@@ -173,18 +189,20 @@ class OpenAIChatAdapter:
                     tool_calls=[_parse_tool_call(tc) for tc in message.get("tool_calls") or []],
                     finish_reason=choice.get("finish_reason"),
                 )
-            except httpx.TimeoutException:
-                last_error = AdapterError(ErrorKind.NETWORK, readable_message(ErrorKind.NETWORK))
-            except httpx.TransportError:
+            except (httpx.TimeoutException, httpx.TransportError):
                 last_error = AdapterError(ErrorKind.NETWORK, readable_message(ErrorKind.NETWORK))
             except AdapterError as exc:
                 last_error = exc
+                if not self._should_retry(exc):
+                    break
+            if attempt < MAX_RETRIES:
+                await RETRY_SLEEP(self._backoff_delay(attempt, last_error))
         raise last_error or AdapterError(ErrorKind.UNKNOWN, readable_message(ErrorKind.UNKNOWN))
 
     async def _chat_stream(self, payload: dict, on_delta: Callable[[str], None] | None = None) -> ChatResult:
-        """SSE 流式调用（断流重试 2 次）；W8：delta.tool_calls 分桶聚合 + usage 收口。"""
+        """SSE 流式调用（EC-N1/N2/N3 重试策略同非流式）；W8：delta.tool_calls 分桶聚合 + usage 收口。"""
         last_error: AdapterError | None = None
-        for _ in range(MAX_RETRIES + 1):
+        for attempt in range(MAX_RETRIES + 1):
             try:
                 parts: list[str] = []
                 buckets: dict[int, dict] = {}  # index → {id, name, args: [分片]}
@@ -199,7 +217,10 @@ class OpenAIChatAdapter:
                     if resp.status_code != 200:
                         await resp.aread()
                         kind = classify_error_body(resp.status_code, resp.text)
-                        raise AdapterError(kind, readable_message(kind))
+                        retry_after = (
+                            self._retry_after_seconds(resp.headers) if resp.status_code == 429 else None
+                        )
+                        raise AdapterError(kind, readable_message(kind), retry_after=retry_after)
                     async for line in resp.aiter_lines():
                         if not line or not line.startswith("data:"):
                             continue
@@ -256,13 +277,46 @@ class OpenAIChatAdapter:
                     tool_calls=tool_calls,
                     finish_reason=finish_reason,
                 )
-            except httpx.TimeoutException:
-                last_error = AdapterError(ErrorKind.NETWORK, readable_message(ErrorKind.NETWORK))
-            except httpx.TransportError:
+            except (httpx.TimeoutException, httpx.TransportError):
                 last_error = AdapterError(ErrorKind.NETWORK, readable_message(ErrorKind.NETWORK))
             except AdapterError as exc:
                 last_error = exc
+                if not self._should_retry(exc):
+                    break
+            if attempt < MAX_RETRIES:
+                await RETRY_SLEEP(self._backoff_delay(attempt, last_error))
         raise last_error or AdapterError(ErrorKind.UNKNOWN, readable_message(ErrorKind.UNKNOWN))
+
+    # ------------------------------------------------------------------
+    # EC-N1/N2/N3：重试决策与退避
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _should_retry(error: AdapterError) -> bool:
+        """仅可重试类别重试（N3 不盲重试）；429 Retry-After 超预算上限 → 失败转用户（N2）。"""
+        if error.kind not in RETRYABLE_KINDS:
+            return False
+        if error.kind is ErrorKind.RATE_LIMIT \
+                and error.retry_after is not None and error.retry_after > RETRY_AFTER_CAP:
+            return False
+        return True
+
+    @staticmethod
+    def _backoff_delay(attempt: int, error: AdapterError | None) -> float:
+        """指数退避（N1：0.5s→1s）；429 带 Retry-After 时遵守之（≤上限，N2）。"""
+        if error is not None and error.kind is ErrorKind.RATE_LIMIT and error.retry_after is not None:
+            return error.retry_after
+        return RETRY_BACKOFF_BASE * (2 ** attempt)
+
+    @staticmethod
+    def _retry_after_seconds(headers: httpx.Headers) -> float | None:
+        """解析 Retry-After（秒）；缺失/非法（含 HTTP-date 形式）→ None，按指数退避走。"""
+        raw = headers.get("Retry-After")
+        if raw is None:
+            return None
+        try:
+            return max(0.0, float(raw.strip()))
+        except ValueError:
+            return None
 
 
 def _encode_message(m: ChatMessage) -> dict:

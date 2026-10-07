@@ -14,12 +14,13 @@ class ErrorKind(StrEnum):
 
 
 class AdapterError(Exception):
-    """适配层业务异常：带分类与可读文案。"""
+    """适配层业务异常：带分类、可读文案与可选 Retry-After（EC-N2）。"""
 
-    def __init__(self, kind: ErrorKind, message: str) -> None:
+    def __init__(self, kind: ErrorKind, message: str, retry_after: float | None = None) -> None:
         super().__init__(message)
         self.kind = kind
         self.message = message
+        self.retry_after = retry_after  # 429 时厂商建议的等待秒数；None=未提供
 
 
 # HTTP 状态码 → 错误分类

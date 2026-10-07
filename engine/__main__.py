@@ -24,6 +24,7 @@ import asyncio
 import json
 import os
 import signal
+import sqlite3
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -61,6 +62,28 @@ def _fail(message: str) -> NoReturn:
     sys.stderr.write(f"[engine] 拒启：{message}\n")
     sys.stderr.flush()
     raise SystemExit(2)
+
+
+def _verify_stores(home: Path) -> None:
+    """本地库启动自检（EC-D5）：损坏即诊断式拒启，保留现场（不静默重建/清空）。
+
+    F-007 留痕与检查点是恢复与审计的硬依据——带病库上继续写会放大损坏；
+    恢复走备份/对账流程（开发文档 §9.2），不在此处自动修复。
+    """
+    for name in ("audit.db", "checkpoints.db", "operations.db"):
+        path = home / name
+        if not path.exists():
+            continue  # 首次启动：由各存储构造器初始化
+        try:
+            conn = sqlite3.connect(str(path))
+            try:
+                row = conn.execute("PRAGMA quick_check").fetchone()
+            finally:
+                conn.close()
+        except sqlite3.DatabaseError as exc:
+            _fail(f"本地库损坏：{path.name}（{exc}）；已保留现场，请从备份恢复后重试")
+        if row is None or row[0] != "ok":
+            _fail(f"本地库损坏：{path.name}（quick_check={row[0] if row else '空'}）；已保留现场，请从备份恢复后重试")
 
 
 def _read_first_line() -> str:
@@ -152,6 +175,7 @@ def main() -> None:
         _fail("缺少环境变量 ERDOS_ENGINE_HOME（任务/库数据根目录）")
     home = Path(home_raw)
     home.mkdir(parents=True, exist_ok=True)
+    _verify_stores(home)
 
     first_line = _read_first_line()
     is_request, key = _classify_first_line(first_line)
