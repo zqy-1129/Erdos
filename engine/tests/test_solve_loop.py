@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from engine.adapters.openai_compat import ChatMessage, ChatResult, ToolCall, Usage
-from engine.orchestrator.operations import OperationLog
+from engine.orchestrator.operations import OperationLog, OperationRecord
 from engine.orchestrator.pipeline import FakeLLM, StagePipeline
 from engine.orchestrator.solve_loop import SolveLoop, artifact_sha256
 from engine.sandbox.base import ExecutionResult
@@ -320,15 +320,19 @@ async def test_solve_loop_delta_sink_receives_throttled_text(tmp_path: Path) -> 
 class ArtifactSandbox:
     """写产物文件的沙箱替身：每次执行覆盖 out.txt（内容随次数变化）。
 
-    与真实执行器一致：写文件前自行创建工作目录。
+    与真实执行器一致：写文件前自行创建工作目录；fail_on_exec 指定第 N 次
+    执行返回失败（exit_code 1，不产文件），用于损坏重执行失败分支。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, fail_on_exec: set[int] | None = None) -> None:
         self.execute_count = 0
+        self._fail_on_exec = fail_on_exec or set()
 
     async def execute(self, code: str, files: dict, work_dir: Path) -> ExecutionResult:
         self.execute_count += 1
         work_dir.mkdir(parents=True, exist_ok=True)
+        if self.execute_count in self._fail_on_exec:
+            return ExecutionResult(exit_code=1, stdout="", stderr="boom", artifacts=[])
         (work_dir / "out.txt").write_text(f"v{self.execute_count}", encoding="utf-8")
         return ExecutionResult(exit_code=0, stdout="ok", stderr="", artifacts=["out.txt"])
 
@@ -427,3 +431,50 @@ async def test_restore_hash_mismatch_reexecutes_and_refreshes(tmp_path: Path) ->
     record = ops.find("t1", "solving", 1, 1)
     assert record is not None
     assert record.result_sha256 not in (None, old_sha)  # 修复成功后刷新哈希
+
+
+async def test_restore_hash_mismatch_repair_failure_keeps_record(tmp_path: Path) -> None:
+    """EC-T4：损坏重执行失败 → 记录保持原终态（first-wins 保底），修复预算路径接管。
+
+    记录不被失败的重执行污染：下次恢复再次校验再次重执行，幂等收敛。
+    """
+    sandbox = ArtifactSandbox(fail_on_exec={2})  # 恢复后的重执行失败
+    ops = OperationLog(str(tmp_path / "ops.db"))
+    llm = ScriptedLLM([
+        _tool_call("c1", "execute_code", "print('a')"),
+        _final([{"name": "x", "value": 1}]),
+        _tool_call("c2", "execute_code", "print('b')"),
+        _final([{"name": "x", "value": 1}]),
+    ])
+    loop = SolveLoop(llm=llm, registry=build_default_registry(sandbox),
+                     operations=ops, task_id="t1", work_root=tmp_path / "tasks")
+    await loop.run("第一次求解")
+    original = ops.find("t1", "solving", 1, 1)
+    assert original is not None and original.result_sha256
+    old_sha = original.result_sha256
+
+    (tmp_path / "tasks" / "t1" / "out.txt").write_text("tampered", encoding="utf-8")
+
+    resumed = SolveLoop(llm=llm, registry=build_default_registry(sandbox),
+                        operations=ops, task_id="t1", work_root=tmp_path / "tasks")
+    outcome = await resumed.run("恢复续跑")
+    assert outcome["status"] == "succeeded"
+    assert sandbox.execute_count == 2  # 损坏触发了重执行
+    record = ops.find("t1", "solving", 1, 1)
+    assert record is not None
+    assert record.result_sha256 == old_sha  # 失败的重执行不污染记录（first-wins）
+    assert outcome["repair_count"] == 1  # 失败走修复预算路径
+
+
+def test_artifact_intact_rejects_escape_ref(tmp_path: Path) -> None:
+    """引用越出工作目录（记录被篡改情形）→ 视为损坏，不读取工作目录外文件（AT-13）。"""
+    loop = SolveLoop(
+        llm=ScriptedLLM([]), registry=build_default_registry(ArtifactSandbox()),
+        operations=OperationLog(str(tmp_path / "ops.db")),
+        task_id="t1", work_root=tmp_path / "tasks",
+    )
+    outside = tmp_path / "escape.txt"
+    outside.write_text("secret", encoding="utf-8")
+    record = OperationRecord("t1", "solving", 1, 1, "done", "../escape.txt", "deadbeef")
+    assert loop._artifact_intact(record) is False
+    assert outside.read_text(encoding="utf-8") == "secret"  # 越界文件未被触碰（防越权读取）

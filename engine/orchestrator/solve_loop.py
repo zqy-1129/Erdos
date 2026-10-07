@@ -30,6 +30,7 @@ from typing_extensions import TypedDict
 from engine.adapters.openai_compat import ChatMessage, ChatResult, ToolCall
 from engine.ipc.throttle import DeltaThrottler
 from engine.orchestrator.operations import OperationLog, OperationRecord
+from engine.sandbox.base import validate_artifact_path
 from engine.tools import ToolRegistry
 from engine.tools.base import ToolContext
 
@@ -263,11 +264,16 @@ class SolveLoop:
     def _artifact_intact(self, record: OperationRecord) -> bool:
         """EC-T4：引用产物完整性——带哈希的记录校验文件哈希，缺失/不一致视为损坏。
 
-        无哈希记录（纯文本结果或回退引用）按状态复用（与既有语义一致）。
+        无哈希记录（纯文本结果或回退引用）按状态复用（与既有语义一致）；
+        引用越出工作目录（记录被篡改情形）同样视为损坏，不读工作目录外文件（AT-13）。
         """
         if record.result_sha256 is None:
             return True
-        path = self._work_root / self._task_id / (record.result_ref or "")
+        ref = record.result_ref or ""
+        work_dir = self._work_root / self._task_id
+        if not ref or not validate_artifact_path(work_dir, ref):
+            return False
+        path = work_dir / ref
         if not path.is_file():
             return False
         return hashlib.sha256(path.read_bytes()).hexdigest() == record.result_sha256
