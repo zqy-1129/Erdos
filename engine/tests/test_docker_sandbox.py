@@ -183,3 +183,15 @@ async def test_real_docker_integration_gated() -> None:
     sandbox = DockerSandbox(timeout=60)
     result = await sandbox.execute("print('erdos-ok')", {}, Path("build/docker-it"))
     assert result.exit_code == 0 and "erdos-ok" in result.stdout
+
+
+def test_floating_image_tag_warns_digest_pinned_silent(capsys) -> None:
+    """§10 镜像摘要纪律：浮动 tag 构造时 stderr 诊断；摘要引用安静通过。"""
+    DockerSandbox(image="python:3.12-slim", runner=FakeRunner([(0, b"", b"")]))
+    captured = capsys.readouterr()
+    assert "sha256 摘要" in captured.err
+
+    DockerSandbox(
+        image="python:3.12-slim@sha256:" + "a" * 64, runner=FakeRunner([(0, b"", b"")])
+    )
+    assert "sha256 摘要" not in capsys.readouterr().err

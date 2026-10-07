@@ -11,6 +11,7 @@ Windows 容器语义差异（如路径挂载、用户映射）在 docs/ 清单�
 
 import asyncio
 import os
+import sys
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -47,6 +48,13 @@ class DockerSandbox:
         self._cpus = cpus
         self._pids_limit = pids_limit
         self._image = image or os.environ.get("ERDOS_SANDBOX_IMAGE", DEFAULT_IMAGE)
+        if "@" not in self._image:
+            # §10：生产镜像必须是 sha256 摘要引用（禁浮 tag）。开发环境允许浮 tag
+            # 便利，但诊断面必须可见；打包产物（SP5-3/W17）构建期固化摘要。
+            sys.stderr.write(
+                f"[engine] 警告：沙箱镜像未含 sha256 摘要（{self._image}）；"
+                "开发可接受，生产须经 ERDOS_SANDBOX_IMAGE 固定摘要\n"
+            )
         self._docker_bin = docker_bin
         # 运行器注入点：测试替身 / 真实 asyncio subprocess
         self._run = runner or self._run_process

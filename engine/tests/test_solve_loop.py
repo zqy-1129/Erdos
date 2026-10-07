@@ -13,6 +13,7 @@ FakeLLM/脚本化 LLM 为确定性假模型（测试专用），不产生真实�
 import hashlib
 import json
 import sqlite3
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -478,3 +479,47 @@ def test_artifact_intact_rejects_escape_ref(tmp_path: Path) -> None:
     record = OperationRecord("t1", "solving", 1, 1, "done", "../escape.txt", "deadbeef")
     assert loop._artifact_intact(record) is False
     assert outside.read_text(encoding="utf-8") == "secret"  # 越界文件未被触碰（防越权读取）
+
+
+# ----------------------------------------------------------------------
+# §8 首 token 延迟预算（引擎侧切片）：适配器回调 → 节流 → delta_sink
+# ----------------------------------------------------------------------
+class TimingLLM(ScriptedLLM):
+    """在适配器回调边界记录首个 token 时刻（延迟测量锚点）。"""
+
+    def __init__(self, results: list[ChatResult], emit_deltas: list[str] | None = None) -> None:
+        super().__init__(results, emit_deltas)
+        self.first_token_at: float | None = None
+
+    async def __call__(
+        self, messages: list[ChatMessage], tools: list[dict],
+        on_delta: Callable[[str], None] | None = None,
+    ) -> ChatResult:
+        timed = on_delta
+        if on_delta is not None:
+            def timed(delta: str) -> None:
+                if self.first_token_at is None:
+                    self.first_token_at = time.perf_counter()
+                on_delta(delta)
+        return await super().__call__(messages, tools, on_delta=timed)
+
+
+async def test_first_token_latency_engine_side_budget(tmp_path: Path) -> None:
+    """§8 首 token <500ms 口径的引擎侧切片：模型回调 → 节流 → delta_sink。
+
+    500ms 全口径含厂商网络与真实模型出 token 时间（E2 固定机型+固定模型实测，
+    属 11-05+ 窗口）；本测试钉住引擎自身开销上限——节流窗口 50ms + 下发开销，
+    证明引擎侧不构成预算主体。
+    """
+    received: list[float] = []
+    llm = TimingLLM([_final([{"name": "x", "value": 1}])], emit_deltas=["首", "token"])
+    loop = SolveLoop(
+        llm=llm, registry=build_default_registry(CountingSandbox()),
+        operations=OperationLog(str(tmp_path / "ops.db")),
+        task_id="t-latency", work_root=tmp_path / "tasks",
+        delta_sink=lambda task_id, delta: received.append(time.perf_counter()),
+    )
+    outcome = await loop.run("延迟预算")
+    assert outcome["status"] == "succeeded"
+    assert llm.first_token_at is not None and received  # 首 token 与下沉均发生
+    assert received[0] - llm.first_token_at < 0.5  # 引擎侧开销远低于 500ms 预算
