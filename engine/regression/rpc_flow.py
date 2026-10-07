@@ -24,6 +24,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,7 @@ class _EngineTransport:
         self._lines: list[str] = []
         self._cond = threading.Condition()
         self._eof = False
+        self._event_cursor = 0  # take_events 增量游标
         self._stderr_tail: list[str] = []
         self._next_id = 0
         self._reader = threading.Thread(target=self._read_stdout, daemon=True)
@@ -91,6 +93,16 @@ class _EngineTransport:
                 msg for msg in (self._parse(line) for line in self._lines)
                 if isinstance(msg, dict) and "event" in msg
             ]
+
+    def take_events(self) -> list[dict[str, Any]]:
+        """取走自上次调用以来新增的事件（增量消费；响应行不返回）。"""
+        with self._cond:
+            fresh = self._lines[self._event_cursor:]
+            self._event_cursor = len(self._lines)
+        return [
+            msg for msg in (self._parse(line) for line in fresh)
+            if isinstance(msg, dict) and "event" in msg
+        ]
 
     @staticmethod
     def _parse(line: str) -> Any:
@@ -173,6 +185,7 @@ class RpcTaskFlow:
         stage_timeout: float = 900.0,
         engine_cmd: list[str] | None = None,
         work_cwd: Path | str | None = None,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._task_id = task_id
         self._stage_timeout = stage_timeout
@@ -180,6 +193,7 @@ class RpcTaskFlow:
         self._home.mkdir(parents=True, exist_ok=True)
         self._executed: list[str] = []
         self._cursor: str | None = None
+        self._on_event = on_event  # 事件回调（展示/证据用；异常不外抛，见 _pump_events）
 
         env = {**os.environ, "ERDOS_ENGINE_HOME": str(self._home)}
         if extra_env:
@@ -236,6 +250,16 @@ class RpcTaskFlow:
             self._executed.append(stage)
         return data
 
+    def _pump_events(self) -> None:
+        """把缓冲中的新事件交给回调（展示用途；回调异常不中断回归驱动）。"""
+        if self._on_event is None:
+            return
+        for event in self._transport.take_events():
+            try:
+                self._on_event(event)
+            except Exception:  # noqa: BLE001 - 展示回调失败不kill驱动
+                pass
+
     async def answer_gate(self, decision: str) -> dict[str, Any]:
         gate = f"gate_{self.current_stage()}"
         loop = asyncio.get_running_loop()
@@ -287,10 +311,12 @@ class RpcTaskFlow:
         """轮询 get_status 至阶段终态；failed 按异常类型重映射（归因）。"""
         deadline = time.monotonic() + self._stage_timeout
         while time.monotonic() < deadline:
+            self._pump_events()
             snapshot = self._transport.rpc("get_status", {}, timeout=15.0)
             task = snapshot.get("task") or {}
             status = task.get("status")
             if status == "done":
+                self._pump_events()
                 return
             if status == "failed":
                 raise self._map_failure(str(snapshot.get("last_error") or "未知错误"))

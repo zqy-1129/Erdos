@@ -6,6 +6,7 @@ start_stage → 检查点 restore）与留痕地面真值（audit.db 无重放�
 无 Key 模式走 ERDOS_NO_KEY（FakeLLM 确定性，链路与真实 Key 通道一致）。
 """
 
+import sys
 from pathlib import Path
 
 from engine.checkpoint.store import SQLiteCheckpointStore
@@ -89,3 +90,28 @@ async def test_rpc_flow_process_kill_resume_no_replay(tmp_path) -> None:
         assert len(store.completed_stages(task_id)) == 4
     finally:
         store.close()
+
+
+def test_run_paper_e2e_script_no_key_smoke(tmp_path: Path) -> None:
+    """重构后 run_paper_e2e.py（共享 RpcTaskFlow 驱动）无 Key 冒烟：四阶段出论文。
+
+    同一协议实现跑通「脚本 → 引擎进程 → 论文落盘」全链，保证 SP1-7 验收方案
+    引用的驱动脚本与回归验收工具不漂移。
+    """
+    import subprocess
+
+    repo_root = Path(__file__).resolve().parents[2]
+    out_dir = tmp_path / "run_out"
+    proc = subprocess.run(  # noqa: S603 - 固定解释器与脚本，测试受控输入
+        [
+            sys.executable, str(repo_root / "scripts" / "run_paper_e2e.py"),
+            "--no-key", "--title", "演示题", "--problem-text", "最小二乘拟合演示题面",
+            "--out", str(out_dir),
+        ],
+        cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8", timeout=180,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout[-2000:]} stderr={proc.stderr[-2000:]}"
+    assert "完成：论文已生成" in proc.stdout
+    assert (out_dir / "paper.md").exists()
+    # 事件展示链路工作（stage.progress 经 on_event 打印）
+    assert "[事件]" in proc.stdout

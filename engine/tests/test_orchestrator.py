@@ -86,3 +86,27 @@ async def test_checkpoint_restore_from_recent(tmp_path) -> None:
     assert restored.current_stage == "solving"  # 门禁通过后推进
 
     store.close()
+
+
+async def test_duplicate_gate_answer_rejected_in_real_mode(tmp_path) -> None:
+    """EC-U4 防御（真实模式）：重复 pass 不得把未执行阶段标记通过并越级推进。"""
+    db = str(tmp_path / "ckpt.db")
+    store = SQLiteCheckpointStore(db)
+
+    async def runner(task_id: str, stage: str) -> dict:
+        return {"stage": stage}
+
+    orch = StageOrchestrator("t1", checkpoint=store, runner=runner)
+    await orch.run_current_stage()
+    await orch.answer_gate("pass")  # → modeling（尚未执行）
+
+    with pytest.raises(ValueError, match="门禁冲突"):
+        await orch.answer_gate("pass")  # 重复应答：阶段未执行，禁止越门禁推进
+
+    records = store.completed_stages("t1")
+    assert [r.stage for r in records] == ["analysis"]  # modeling 未被污染为门禁通过
+    assert records[0].status == "done"
+
+    action = await orch.answer_gate("reject")  # 对未执行阶段的重复 reject：幂等 retry 语义
+    assert action["action"] == "retry_stage"
+    store.close()

@@ -2,7 +2,7 @@
 契约三边一致性守护（引擎侧）：contracts/engine-rpc.schema.json ↔ engine 实现。
 
 覆盖（自动化集成测试，防漂移）：
-- register_all 注册的 6 个 RPC 方法名与 schema methods 一致；
+- register_all 注册的 RPC 方法名与 schema methods 一致（当前 10 个，含 CT-V2 增量）；
 - EventEmitter 的 VALID_EVENTS 与 schema events 一致；
 - REQUIRED_FIELDS 与 schema 各事件 required 一致。
 契约文件为唯一权威；任何一边变更不同步即红。

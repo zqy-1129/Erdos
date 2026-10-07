@@ -258,7 +258,16 @@ class StageOrchestrator:
         if decision not in ("pass", "reject"):
             raise ValueError("decision 必须为 pass 或 reject")
         if not self._gate_waiting:
-            # 无挂起门禁（如未 run 先答）：直接驱动状态（SP1-1 骨架兼容路径）
+            # 无挂起门禁：
+            # - 骨架模式（默认 runner）保持 SP1-1 兼容直接驱动；
+            # - 真实模式（注入 runner）下重复/过期应答按 EC-U4 防御：当前阶段
+            #   未执行时 pass 不得越门禁推进（防重复 pass 把未执行阶段标记通过）。
+            current = self._state.stages.get(self._state.current_stage)
+            if self._runner is not _default_stage_runner and decision == "pass" and current is None:
+                raise ValueError(
+                    f"门禁冲突：{self._state.current_stage} 无挂起门禁且未执行"
+                    "（重复/过期应答？请先经 start_stage 执行并等待门禁挂起）"
+                )
             self._state.gate_decision = decision
             if decision == "reject":
                 self._state.stages.pop(self._state.current_stage, None)
