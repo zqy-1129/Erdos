@@ -255,7 +255,6 @@ class SolveLoop:
         exec_seq = state.get("exec_seq", 0)
         repair_count = state.get("repair_count", 0)
         dispatch_count = state.get("dispatch_count", 0)
-        work_root = self._work_root
         for call_dict in last.get("tool_calls") or []:
             call = ToolCall(
                 id=call_dict["id"], name=call_dict["name"],

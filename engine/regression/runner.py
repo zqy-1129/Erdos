@@ -1,106 +1,275 @@
-"""验收运行器（SP1-7）：逐题跑四阶段 + 门禁判定 + 成功率统计 + 失败归因。
+"""验收运行器（SP1-7）：通道分离统计 + 门禁策略 + 失败归因 + 断点恢复演练。
 
-判定标准（对齐 SP1-7 提示词）：
-- 论文草稿产出即成功（四阶段跑完）；
-- 门禁通过为硬条件（任一阶段门禁失败即该题失败）。
+对齐《SP1-7 MVP 集成验收方案》（2026-10-06）：
+- 通道分离（DEC-024）：FakeLLM 通道仅作回归护栏，不计入 ≥85% 判定分母；
+  decision() 默认只对真实 Key 通道出 Go/No-Go，无真实通道结果时 BASELINE_ONLY；
+- 硬条件：端到端成功率 ≥ 阈值、每类题型至少 1 题成功、失败样本 100% 归因；
+- 断点恢复（DEC-005）：kill_after_stage 指定阶段完成后模拟进程 kill，从检查点
+  重建任务流续跑，已成功副作用不重放（executed_stages 可断言）；
+- 失败归因：FailureModule 四分类（编排/门禁/沙箱/适配器），归因明细入结果。
 """
 
+import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Protocol
 
 from engine.gates.evaluator import Evaluator, GateRunner
 from engine.gates.schema import Rubric
-from engine.orchestrator.graph import STAGES, StageOrchestrator
+from engine.orchestrator.graph import STAGES
+from engine.regression.flow import FlowFactory
+from engine.regression.problems import RegressionProblem
+
+if TYPE_CHECKING:
+    from engine.regression.evidence import EvidenceWriter
+
+CHANNEL_BASELINE = "fakellm"  # 离线回归护栏通道（不计判定分母）
+CHANNEL_REAL = "real_key"  # 真实 Key 通道（判定通道）
 
 
-# 失败归因模块（分层定位）
 class FailureModule:
+    """失败归因模块（分层定位）。"""
+
     ORCHESTRATOR = "orchestrator"  # 编排器（阶段推进/顺序）
     GATE = "gate"  # 门禁（评审不通过）
-    SANDBOX = "sandbox"  # 沙箱（执行失败）
+    SANDBOX = "sandbox"  # 沙箱（执行失败/超时）
     ADAPTER = "adapter"  # 适配器（模型调用失败）
 
 
 @dataclass(frozen=True, slots=True)
+class StageRecord:
+    """单阶段执行记录（耗时 + 用量）。"""
+
+    stage: str
+    duration_ms: float
+    prompt_tokens: int
+    completion_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
 class ProblemResult:
-    """单题验收结果。"""
+    """单题验收结果（含逐阶段记录与恢复标记）。"""
 
     business_id: str
     category: str
+    channel: str
     passed: bool
     failure_module: str | None
+    failure_detail: str
     stages_passed: int
+    stage_records: tuple[StageRecord, ...]
+    prompt_tokens: int
+    completion_tokens: int
+    paper_sha256: str | None
+    resumed: bool
+    kill_after_stage: str | None
+    executed_stages: tuple[str, ...]
+
+    @property
+    def duration_ms(self) -> float:
+        return round(sum(r.duration_ms for r in self.stage_records), 1)
 
 
 @dataclass(slots=True)
-class AcceptanceReport:
-    """验收报告。"""
+class GateDecision:
+    """决策门结论：GO / NO-GO / BASELINE_ONLY（无判定通道结果）。"""
 
-    total: int = 0
-    passed: int = 0
-    results: list[ProblemResult] = field(default_factory=list)
-    failure_by_module: dict[str, int] = field(default_factory=dict)
-    failure_by_stage: dict[str, int] = field(default_factory=dict)
+    verdict: str
+    reasons: list[str] = field(default_factory=list)
 
-    @property
-    def success_rate(self) -> float:
-        return round(self.passed / self.total, 4) if self.total else 0.0
-
-    def decision(self, threshold: float = 0.85) -> str:
-        """决策门结论：成功率 ≥ 阈值锁 MVP，否则触发风险响应。"""
-        return "锁 MVP" if self.success_rate >= threshold else "触发风险 R1 响应"
+    def __str__(self) -> str:
+        detail = "；".join(self.reasons) if self.reasons else "全部硬条件满足"
+        return f"{self.verdict}（{detail}）"
 
 
-class AcceptanceRunner:
-    """逐题跑四阶段的验收运行器。"""
+class GatePolicy(Protocol):
+    """门禁决策策略端口：运行器经此决定 pass/reject（策略可注入）。"""
+
+    async def decide(self, problem: RegressionProblem, stage: str, data: dict[str, Any]) -> str: ...
+
+
+class AutoPassGatePolicy:
+    """自动通过策略（FakeLLM 基线语义，对齐 run_paper_e2e 的门禁自动通过）。"""
+
+    async def decide(self, problem: RegressionProblem, stage: str, data: dict[str, Any]) -> str:
+        return "pass"
+
+
+class RubricGatePolicy:
+    """SP1-3 门禁评审器驱动：Evaluator + 版本化 Rubric 打分，低于阈值 reject。"""
 
     def __init__(self, evaluator: Evaluator, rubrics: dict[str, Rubric]) -> None:
         self._evaluator = evaluator
         self._rubrics = rubrics
 
-    async def run_all(self, problems) -> AcceptanceReport:
-        """逐题跑四阶段，统计成功率与失败归因。"""
-        report = AcceptanceReport(total=len(problems))
+    async def decide(self, problem: RegressionProblem, stage: str, data: dict[str, Any]) -> str:
+        gate = GateRunner(self._evaluator)
+        result = await gate.run(stage, dict(data), self._rubrics[stage])
+        return "pass" if result.passed else "reject"
+
+
+@dataclass(slots=True)
+class AcceptanceReport:
+    """验收报告：逐题结果 + 通道/题型/归因统计。"""
+
+    results: list[ProblemResult] = field(default_factory=list)
+
+    def scoped(self, channel: str | None = None) -> list[ProblemResult]:
+        if channel is None:
+            return list(self.results)
+        return [r for r in self.results if r.channel == channel]
+
+    def success_rate(self, channel: str | None = None) -> float:
+        results = self.scoped(channel)
+        if not results:
+            return 0.0
+        return round(sum(1 for r in results if r.passed) / len(results), 4)
+
+    def by_category(self, channel: str | None = None) -> dict[str, dict[str, int]]:
+        stats: dict[str, dict[str, int]] = {}
+        for r in self.scoped(channel):
+            stat = stats.setdefault(r.category, {"total": 0, "passed": 0})
+            stat["total"] += 1
+            stat["passed"] += 1 if r.passed else 0
+        return stats
+
+    def failure_by_module(self, channel: str | None = None) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for r in self.scoped(channel):
+            if not r.passed:
+                mod = r.failure_module or FailureModule.ORCHESTRATOR
+                counts[mod] = counts.get(mod, 0) + 1
+        return counts
+
+    def decision(self, threshold: float = 0.85, channel: str = CHANNEL_REAL) -> GateDecision:
+        """决策门（SP1-7 §4 Go 条件；默认只对真实 Key 通道判定，DEC-024）。"""
+        scoped = self.scoped(channel)
+        if not scoped:
+            return GateDecision("BASELINE_ONLY", [
+                "无真实 Key 通道结果；FakeLLM 基线仅作回归护栏，不计入判定分母（DEC-024）",
+            ])
+        reasons: list[str] = []
+        total = len(scoped)
+        passed = sum(1 for r in scoped if r.passed)
+        rate = passed / total
+        if rate < threshold:
+            reasons.append(f"端到端成功率 {rate:.2%} < {threshold:.0%}")
+        for category, stat in self.by_category(channel).items():
+            if stat["passed"] == 0:
+                reasons.append(f"题型 {category} 无成功样本（防单题型偏科）")
+        unattributed = [r.business_id for r in scoped if not r.passed and not r.failure_module]
+        if unattributed:
+            reasons.append(f"存在未归因失败样本：{', '.join(unattributed)}")
+        return GateDecision("GO" if not reasons else "NO-GO", reasons)
+
+
+class AcceptanceRunner:
+    """逐题驱动任务流的验收运行器（通道标签 + 门禁策略 + 恢复演练可注入）。"""
+
+    def __init__(
+        self,
+        flow_factory: FlowFactory,
+        gate_policy: GatePolicy | None = None,
+        channel: str = CHANNEL_BASELINE,
+    ) -> None:
+        self._flow_factory = flow_factory
+        self._policy: GatePolicy = gate_policy or AutoPassGatePolicy()
+        self._channel = channel
+
+    async def run_all(
+        self,
+        problems: tuple[RegressionProblem, ...] | list[RegressionProblem],
+        *,
+        kill_plan: dict[str, str] | None = None,
+        evidence: "EvidenceWriter | None" = None,
+    ) -> AcceptanceReport:
+        """逐题跑四阶段；kill_plan 指定 business_id → kill 发生阶段（断点恢复演练）。"""
+        plan = kill_plan or {}
+        report = AcceptanceReport()
         for problem in problems:
-            result = await self._run_one(problem)
+            result = await self.run_one(problem, kill_after_stage=plan.get(problem.business_id))
             report.results.append(result)
-            if result.passed:
-                report.passed += 1
-            else:
-                mod = result.failure_module or FailureModule.ORCHESTRATOR
-                report.failure_by_module[mod] = report.failure_by_module.get(mod, 0) + 1
+            if evidence is not None:
+                evidence.write_result(problem, result)
         return report
 
-    async def _run_one(self, problem) -> ProblemResult:
-        """跑单题四阶段；失败归因到模块。"""
-        orchestrator = StageOrchestrator(problem.business_id)
+    async def run_one(
+        self, problem: RegressionProblem, *, kill_after_stage: str | None = None
+    ) -> ProblemResult:
+        """跑单题四阶段；kill_after_stage 阶段完成后模拟进程 kill 并从检查点续跑。"""
+        flow = self._flow_factory(problem)
+        records: list[StageRecord] = []
+        prompt_tokens = completion_tokens = 0
+        paper_sha: str | None = None
+        resumed = False
+        executed_pre: tuple[str, ...] = ()  # kill 前旧任务流的执行记录（恢复后拼接去重）
+
+        def _result(**overrides: Any) -> ProblemResult:  # noqa: ANN401 - 结果装配收敛
+            defaults: dict[str, Any] = {
+                "business_id": problem.business_id,
+                "category": problem.category,
+                "channel": self._channel,
+                "passed": True,
+                "failure_module": None,
+                "failure_detail": "",
+                "stages_passed": len(STAGES),
+                "stage_records": tuple(records),
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "paper_sha256": paper_sha,
+                "resumed": resumed,
+                "kill_after_stage": kill_after_stage,
+                "executed_stages": executed_pre + flow.executed_stages(),
+            }
+            defaults.update(overrides)
+            return ProblemResult(**defaults)
+
+        index = STAGES.index(flow.current_stage())
         try:
-            for stage in STAGES:
-                # 1. 执行阶段（骨架：产出空 data）
-                await orchestrator.run_current_stage()
-                # 2. 门禁评审（硬条件）
-                rubric = self._rubrics[stage]
-                gate = GateRunner(self._evaluator)
-                gate_result = await gate.run(stage, {}, rubric)
-                if not gate_result.passed:
-                    # 门禁失败：记录失败阶段
-                    return ProblemResult(
-                        business_id=problem.business_id, category=problem.category,
+            while index < len(STAGES):
+                stage = STAGES[index]
+                started = time.perf_counter()
+                data = await flow.run_stage(stage)
+                elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+                usage = data.get("usage") or {}
+                stage_prompt = int(usage.get("prompt_tokens", 0) or 0)
+                stage_completion = int(usage.get("completion_tokens", 0) or 0)
+                records.append(StageRecord(stage, elapsed_ms, stage_prompt, stage_completion))
+                prompt_tokens += stage_prompt
+                completion_tokens += stage_completion
+                if stage == "writing":
+                    paper_sha = data.get("paper_sha256")
+
+                if kill_after_stage == stage and index < len(STAGES) - 1:
+                    # 模拟进程 kill：丢弃任务流，从检查点重建续跑（副作用不重放）
+                    executed_pre = flow.executed_stages()
+                    flow = self._flow_factory(problem)
+                    restored = flow.current_stage()
+                    if restored != STAGES[index + 1]:
+                        return _result(
+                            passed=False, failure_module=FailureModule.ORCHESTRATOR,
+                            failure_detail=(
+                                f"恢复定位失败：期望 {STAGES[index + 1]}，实际 {restored}"
+                            ),
+                            stages_passed=index, resumed=True,
+                        )
+                    resumed = True
+                    index += 1
+                    continue
+
+                decision = await self._policy.decide(problem, stage, data)
+                if decision != "pass":
+                    return _result(
                         passed=False, failure_module=FailureModule.GATE,
-                        stages_passed=STAGES.index(stage),
+                        failure_detail=f"{stage} 门禁评审未通过（策略裁决 reject）",
+                        stages_passed=index,
                     )
-                # 3. 门禁通过，进入下一阶段
-                await orchestrator.answer_gate("pass")
-            # 四阶段全通过：论文草稿产出
-            return ProblemResult(
-                business_id=problem.business_id, category=problem.category,
-                passed=True, failure_module=None, stages_passed=4,
-            )
-        except Exception as exc:  # noqa: BLE001 - 分层归因
-            # 失败归因：编排/沙箱/适配器异常
-            return ProblemResult(
-                business_id=problem.business_id, category=problem.category,
+                await flow.answer_gate(decision)
+                index += 1
+            return _result()
+        except Exception as exc:  # noqa: BLE001 - 失败样本不删除，分层归因
+            return _result(
                 passed=False, failure_module=_classify_exception(exc),
-                stages_passed=0,
+                failure_detail=f"{type(exc).__name__}: {exc}", stages_passed=index,
             )
 
 

@@ -4,6 +4,8 @@ import pytest
 
 from engine.checkpoint.store import SQLiteCheckpointStore
 from engine.orchestrator.graph import StageOrchestrator
+from engine.orchestrator.pipeline import StagePipeline
+from engine.sandbox.subprocess_sandbox import SubprocessSandbox
 
 
 async def _run_through(orch: StageOrchestrator, n_stages: int) -> None:
@@ -65,4 +67,60 @@ async def test_crash_after_final_stage(tmp_path) -> None:
     restored = StageOrchestrator.restore("t1", store)
     assert restored.current_stage == "writing"
     assert len(restored.state.stages) == 4  # 四阶段全部恢复
+    store.close()
+
+
+async def test_restore_forwards_runner_to_remaining_stages(tmp_path) -> None:
+    """恢复必须保留 runner：否则剩余阶段静默退化为骨架空产出（SP1-7 恢复演练语义）。"""
+    db = str(tmp_path / "ckpt.db")
+    store = SQLiteCheckpointStore(db)
+    calls: list[str] = []
+
+    async def runner(task_id: str, stage: str) -> dict:
+        calls.append(stage)
+        return {"stage": stage}
+
+    orch = StageOrchestrator("t1", checkpoint=store, runner=runner)
+    await _run_through(orch, 2)  # analysis + modeling 完成
+
+    restored = StageOrchestrator.restore("t1", store, runner=runner)
+    assert restored.current_stage == "solving"
+    await _run_through(restored, 2)  # solving + writing 续跑
+    assert calls == ["analysis", "modeling", "solving", "writing"]  # 剩余阶段真实执行
+    store.close()
+
+
+async def test_pipeline_resume_hydrates_history_from_checkpoint(tmp_path) -> None:
+    """恢复后管线经 state_loader 水合跨阶段上下文（DEC-005）。
+
+    水合失败时 writing 会输出「分析要点：（无）」；水合成功则论文引用前序
+    analysis 的真实产出（FakeLLM 确定性文本含「决策变量」）。
+    """
+    db = str(tmp_path / "ckpt.db")
+    store = SQLiteCheckpointStore(db)
+    task_inputs = {"t1": {"title": "恢复演练", "problem_text": "题面文本"}}
+
+    first = StagePipeline(
+        sandbox=SubprocessSandbox(timeout=30), work_root=tmp_path / "work",
+        task_inputs=task_inputs,
+    )
+    orch = StageOrchestrator("t1", checkpoint=store, runner=first.process)
+    await orch.run_current_stage()  # analysis 完成（落检查点）
+    await orch.answer_gate("pass")
+
+    def loader(task_id: str) -> dict:
+        return {r.stage: r.data for r in store.completed_stages(task_id)}
+
+    resumed = StagePipeline(
+        sandbox=SubprocessSandbox(timeout=30), work_root=tmp_path / "work",
+        task_inputs=task_inputs, state_loader=loader,
+    )
+    restored = StageOrchestrator.restore("t1", store, runner=resumed.process)
+    final: dict = {}
+    for _ in range(3):  # modeling / solving / writing 续跑
+        final = await restored.run_current_stage()
+        await restored.answer_gate("pass")
+
+    assert "决策变量" in final["paper_md"]  # 前序分析真实进入论文
+    assert "分析要点：（无）" not in final["paper_md"]
     store.close()

@@ -175,6 +175,10 @@ def main() -> None:
         """W15：求解循环 token 增量 → model.delta 事件（节流后；允许丢帧不补发）。"""
         events.emit("model.delta", task_id=task_id, delta=delta[:512])
 
+    def checkpoint_history(task_id: str) -> dict[str, dict[str, Any]]:
+        """断点恢复上下文：检查点已完成阶段 → 管线 _history 水合（DEC-005）。"""
+        return {record.stage: record.data for record in checkpoint.completed_stages(task_id)}
+
     pipeline = StagePipeline(
         llm=text_llm,
         sandbox=sandbox,
@@ -186,6 +190,7 @@ def main() -> None:
         tool_mode=tool_mode,
         delta_sink=delta_sink,
         task_inputs=state.tasks,
+        state_loader=checkpoint_history,
     )
 
     server = JsonRpcServer(state, events)

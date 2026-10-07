@@ -70,7 +70,6 @@ async def test_run_argv_isolation_flags(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_execute_result_and_artifacts_scan(tmp_path: Path) -> None:
     """stdout/stderr 解码 + 产物扫描（排除脚本自身）。"""
-    runner = FakeRunner([(0, b"slope=2.5\n", b"")])
 
     def side_effect_write(argv: list[str]) -> None:
         (tmp_path / "work" / "figure.png").write_bytes(b"png")  # 模拟容器内产物

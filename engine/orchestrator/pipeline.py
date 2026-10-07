@@ -112,6 +112,7 @@ class StagePipeline:
         tool_mode: str = "stage_level",
         delta_sink: Any | None = None,  # noqa: ANN401 - Callable[[str, str], None] | None（W15）
         task_inputs: dict[str, dict[str, str]] | None = None,  # EN-PAPER：state.tasks 引用
+        state_loader: Callable[[str], dict[str, dict[str, Any]]] | None = None,  # 断点恢复上下文
     ) -> None:
         self._llm = llm or _default_llm()
         self._sandbox = sandbox
@@ -123,10 +124,16 @@ class StagePipeline:
         self._tool_mode = tool_mode
         self._delta_sink = delta_sink
         self._task_inputs = task_inputs if task_inputs is not None else {}
+        # 断点恢复：进程重启后 _history 为空，经 state_loader 从检查点水合
+        # （task_id → {stage: data}）；内存已有数据优先（reject 重跑不被旧值污染）。
+        self._state_loader = state_loader
         self._history: dict[str, dict[str, Any]] = {}  # 跨阶段产物上下文（题面贯通）
 
     async def process(self, task_id: str, stage: str) -> dict[str, Any]:
         data: dict[str, Any]
+        if self._state_loader is not None:
+            for done_stage, record in self._state_loader(task_id).items():
+                self._history.setdefault(task_id, {}).setdefault(done_stage, record)
         if stage == "analysis":
             data = await self._analysis(task_id)
         elif stage == "modeling":

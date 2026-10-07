@@ -279,9 +279,18 @@ class StageOrchestrator:
     # 恢复（从 SQLite 检查点，不重算已完成阶段）
     # ------------------------------------------------------------------
     @classmethod
-    def restore(cls, task_id: str, checkpoint: CheckpointStore) -> "StageOrchestrator":
-        """从检查点恢复编排器：已完成阶段全部还原，当前阶段 = 最后完成阶段的下一个。"""
-        orchestrator = cls(task_id, checkpoint)
+    def restore(
+        cls,
+        task_id: str,
+        checkpoint: CheckpointStore,
+        runner: StageRunner | None = None,
+    ) -> "StageOrchestrator":
+        """从检查点恢复编排器：已完成阶段全部还原，当前阶段 = 最后完成阶段的下一个。
+
+        runner 必须随恢复注入（生产路径与 SP1-7 断点恢复演练共用）：
+        恢复的编排器还要执行剩余阶段，丢 runner 会静默退化为骨架空产出。
+        """
+        orchestrator = cls(task_id, checkpoint, runner=runner)
         completed = checkpoint.completed_stages(task_id)
         seed_results: dict[str, dict[str, Any]] = {}
         for record in completed:
@@ -302,7 +311,9 @@ class StageOrchestrator:
             "stage_index": orchestrator._state.current_index,
             "results": seed_results,
         }
-        orchestrator._seeded = True
+        # _seeded 保持 False：首次 run_current_stage 经 _ensure_seeded 注入种子，
+        # 图从恢复定位的阶段继续（新实例的 InMemorySaver 为空，不能靠 checkpointer 续状态）。
+        orchestrator._seeded = False
         return orchestrator
 
     # ------------------------------------------------------------------

@@ -125,8 +125,9 @@ def register_all(
             # SP1-2/W2：创建四阶段编排器（从 stage 开始），注入 checkpoint 与真实 runner
             state.orchestrator = StageOrchestrator(task_id, checkpoint=checkpoint, runner=runner)
             if checkpoint is not None:
-                # 若有历史检查点，恢复（断点续跑，不重算已完成阶段）
-                restored = StageOrchestrator.restore(task_id, checkpoint)
+                # 若有历史检查点，恢复（断点续跑，不重算已完成阶段；runner 必须随恢复注入，
+                # 否则剩余阶段静默退化为骨架空产出——SP1-7 断点恢复演练语义）
+                restored = StageOrchestrator.restore(task_id, checkpoint, runner=runner)
                 if restored.state.stages:
                     state.orchestrator = restored
                     if restored.current_stage != stage:
