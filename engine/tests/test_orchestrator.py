@@ -60,21 +60,29 @@ async def test_invalid_gate_decision_rejected() -> None:
 
 
 async def test_checkpoint_restore_from_recent(tmp_path) -> None:
-    """断点续跑：从最近检查点恢复，不重算已完成阶段。"""
+    """断点续跑：从最近检查点恢复，不重算已完成阶段。
+
+    门禁语义（SP1-7）：modeling 仅执行完成、门禁未应答——恢复定位到 modeling
+    本身（重挂门禁，未经门禁不推进），而非跳到 solving。
+    """
     db = str(tmp_path / "ckpt.db")
     store = SQLiteCheckpointStore(db)
 
-    # 第一轮：跑完 analysis 和 modeling（存检查点），solving 崩溃前
+    # 第一轮：analysis 过门禁，modeling 执行完成（检查点已存）但门禁未应答
     orch = StageOrchestrator("t1", checkpoint=store)
     await orch.run_current_stage()
     await orch.answer_gate("pass")  # → modeling
-    await orch.run_current_stage()  # modeling done（检查点已存）
+    await orch.run_current_stage()  # modeling done（检查点已存，门禁未决）
 
     # 模拟崩溃：重启后从检查点恢复
     restored = StageOrchestrator.restore("t1", store)
-    # 恢复后应位于 modeling 之后（即下一个门禁等待），前序 analysis 完成
     assert "analysis" in restored.state.stages
     assert "modeling" in restored.state.stages
-    assert restored.current_stage == "solving"  # modeling 完成后的下一阶段
+    assert restored.current_stage == "modeling"  # 门禁未决：定位到该阶段重挂门禁
+
+    await restored.run_current_stage()  # 重挂门禁（阶段不重放）
+    action = await restored.answer_gate("pass")
+    assert action["action"] == "next_stage"
+    assert restored.current_stage == "solving"  # 门禁通过后推进
 
     store.close()

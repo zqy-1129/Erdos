@@ -55,7 +55,7 @@ def main() -> None:
     env = {**os.environ, "ERDOS_ENGINE_HOME": str(home)}
     if args.tool_loop:
         env["ERDOS_TOOL_MODE"] = "tool_loop"
-    proc = subprocess.Popen(  # noqa: S603 - 受控固定参数
+    proc = subprocess.Popen(
         [sys.executable, "-m", "engine"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding="utf-8", cwd=str(REPO_ROOT), env=env,
@@ -63,7 +63,6 @@ def main() -> None:
     assert proc.stdin is not None and proc.stdout is not None
 
     lines: list[str] = []
-    done = threading.Event()
 
     def reader() -> None:
         for raw in proc.stdout:

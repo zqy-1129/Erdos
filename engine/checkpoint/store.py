@@ -84,7 +84,11 @@ class SQLiteCheckpointStore:
         self._conn.commit()
 
     def completed_stages(self, task_id: str) -> list[CheckpointRecord]:
-        """按完成顺序返回该任务已完成阶段的检查点（恢复用）。"""
+        """按落库顺序返回该任务全部阶段检查点记录（恢复用）。
+
+        status 含两态（SP1-7 门禁语义）：stage_done=执行完成门禁未决、
+        done=门禁通过；消费方（orchestrator.restore / rpc_flow）按状态定位。
+        """
         rows = self._conn.execute(
             "SELECT stage, status, step, data FROM checkpoints WHERE task_id = ? ORDER BY updated_at",
             (task_id,),

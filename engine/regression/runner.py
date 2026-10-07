@@ -245,15 +245,31 @@ class AcceptanceRunner:
                     flow.close(force=True)
                     flow = self._flow_factory(problem)
                     restored = flow.current_stage()
-                    if restored != STAGES[index + 1]:
+                    resumed = True
+                    if restored == STAGES[index + 1]:
+                        # kill 落在门禁应答之后：门禁已过，直接续跑下一阶段
+                        index += 1
+                        continue
+                    if restored != stage:
                         return _result(
                             passed=False, failure_module=FailureModule.ORCHESTRATOR,
                             failure_detail=(
-                                f"恢复定位失败：期望 {STAGES[index + 1]}，实际 {restored}"
+                                f"恢复定位失败：期望 {stage} 或 {STAGES[index + 1]}，实际 {restored}"
                             ),
-                            stages_passed=index, resumed=True,
+                            stages_passed=index,
                         )
-                    resumed = True
+                    # kill 落在门禁未决窗口（本运行器 kill 时序的预期形态）：
+                    # 恢复后门禁重挂（阶段不重放，DEC-005），补门禁应答后续跑。
+                    # 阶段记录/usage 已在 kill 前计入，此处不重复记账。
+                    replay = await flow.run_stage(stage)
+                    decision = await self._policy.decide(problem, stage, replay)
+                    if decision != "pass":
+                        return _result(
+                            passed=False, failure_module=FailureModule.GATE,
+                            failure_detail=f"{stage} 恢复后门禁评审未通过（策略裁决 reject）",
+                            stages_passed=index,
+                        )
+                    await flow.answer_gate(decision)
                     index += 1
                     continue
 

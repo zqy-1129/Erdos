@@ -70,6 +70,40 @@ async def test_crash_after_final_stage(tmp_path) -> None:
     store.close()
 
 
+async def test_crash_in_gate_pending_window_rehangs_gate(tmp_path) -> None:
+    """门禁未决窗口崩溃：恢复定位到该阶段，重挂门禁且不重放阶段副作用（DEC-005）。
+
+    检查点两态语义（SP1-7）：stage_done=执行完成门禁未决，done=门禁通过；
+    未经门禁的阶段恢复后必须重新过门禁，不得静默推进。
+    """
+    db = str(tmp_path / "ckpt.db")
+    store = SQLiteCheckpointStore(db)
+    calls: list[str] = []
+
+    async def runner(task_id: str, stage: str) -> dict:
+        calls.append(stage)
+        return {"stage": stage, "usage": {"prompt_tokens": 5}}
+
+    orch = StageOrchestrator("t1", checkpoint=store, runner=runner)
+    await orch.run_current_stage()  # analysis 执行完成，门禁未决（未 answer_gate）
+
+    restored = StageOrchestrator.restore("t1", store, runner=runner)
+    assert restored.current_stage == "analysis"  # 定位到门禁未决阶段（而非跳到 modeling）
+
+    data = await restored.run_current_stage()  # 重挂门禁：阶段不重放
+    assert calls == ["analysis"]  # 副作用未重放
+    assert data.get("stage") == "analysis"  # 返回检查点数据（usage 经严格脱敏剥离）
+
+    action = await restored.answer_gate("pass")
+    assert action["action"] == "next_stage"
+    await _run_through(restored, 3)  # modeling/solving/writing 正常续跑
+    assert calls == ["analysis", "modeling", "solving", "writing"]
+
+    records = store.completed_stages("t1")
+    assert all(r.status == "done" for r in records)  # 门禁通过状态全部升级落库
+    store.close()
+
+
 async def test_restore_forwards_runner_to_remaining_stages(tmp_path) -> None:
     """恢复必须保留 runner：否则剩余阶段静默退化为骨架空产出（SP1-7 恢复演练语义）。"""
     db = str(tmp_path / "ckpt.db")

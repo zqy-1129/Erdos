@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from engine.checkpoint.store import SQLiteCheckpointStore
-from engine.orchestrator.graph import STAGES
+from engine.orchestrator.graph import CHECKPOINT_EXECUTED, STAGES
 from engine.trail.store import EventType, TrailStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -216,6 +216,9 @@ class RpcTaskFlow:
         if stage != self.current_stage():
             raise ValueError(f"阶段顺序约束：当前应执行 {self.current_stage()}，收到 {stage}")
         loop = asyncio.get_running_loop()
+        # 重放检测：门禁未决恢复路径 start_stage 会重挂门禁而不重执行阶段，
+        # 以留痕 model_call 计数是否增长为准判定「本流是否真实执行」（副作用观测）
+        calls_before = await loop.run_in_executor(None, self._stage_call_count, stage)
         await loop.run_in_executor(
             None,
             lambda: self._transport.rpc(
@@ -228,7 +231,9 @@ class RpcTaskFlow:
             sha = await loop.run_in_executor(None, self._paper_sha256)
             if sha:
                 data["paper_sha256"] = sha
-        self._executed.append(stage)
+        calls_after = await loop.run_in_executor(None, self._stage_call_count, stage)
+        if calls_after > calls_before:
+            self._executed.append(stage)
         return data
 
     async def answer_gate(self, decision: str) -> dict[str, Any]:
@@ -257,7 +262,11 @@ class RpcTaskFlow:
     # 内部：检查点定位 / 阶段等待 / 留痕回读
     # ------------------------------------------------------------------
     def _resolve_stage(self) -> str:
-        """检查点 → 当前阶段（与 StageOrchestrator.restore 定位口径一致）。"""
+        """检查点 → 当前阶段（与 StageOrchestrator.restore 定位口径一致）。
+
+        最后落库记录为「执行完成（门禁未决）」时定位到该阶段本身（恢复后重挂
+        门禁）；为「门禁通过」时定位到下一阶段。
+        """
         db = self._home / "checkpoints.db"
         if not db.exists():
             return STAGES[0]
@@ -268,7 +277,10 @@ class RpcTaskFlow:
             store.close()
         if not completed:
             return STAGES[0]
-        last_index = STAGES.index(completed[-1].stage)
+        last = completed[-1]
+        if last.status == CHECKPOINT_EXECUTED:
+            return last.stage
+        last_index = STAGES.index(last.stage)
         return STAGES[min(last_index + 1, len(STAGES) - 1)]
 
     def _await_stage(self) -> None:
@@ -294,6 +306,17 @@ class RpcTaskFlow:
         if "Timeout" in type_name or "Sandbox" in type_name:
             return TimeoutError(last_error)
         return RuntimeError(last_error)
+
+    def _stage_call_count(self, stage: str) -> int:
+        """该阶段 model_call 留痕条数（重放检测基准）。"""
+        store = TrailStore(str(self._home / "audit.db"))
+        try:
+            return len([
+                event for event in store.events(self._task_id)
+                if event.event_type == EventType.MODEL_CALL and event.stage == stage
+            ])
+        finally:
+            store.close()
 
     def _stage_usage(self, stage: str) -> dict[str, int]:
         """留痕库回读该阶段全部 model_call 的 usage 合计（含求解内循环多调用）。"""
