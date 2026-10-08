@@ -2,6 +2,7 @@
 
 import sys
 import time
+from pathlib import Path
 
 from engine.sandbox.base import validate_artifact_path
 from engine.sandbox.subprocess_sandbox import (
@@ -120,3 +121,13 @@ async def test_unavailable_interpreter_fails_fast(tmp_path) -> None:
     assert result.error and "未找到可用的 Python 执行体" in result.error
     assert result.timed_out is False
     assert elapsed < 10, f"应快速失败，实际耗时 {elapsed:.1f}s"
+
+
+async def test_execute_with_relative_work_dir(tmp_path, monkeypatch) -> None:
+    """相对 work_dir 必须可用：曾把脚本路径二次拼接，代码没跑却返回"成功"形状。"""
+    monkeypatch.chdir(tmp_path)
+    sandbox = SubprocessSandbox(timeout=30)
+    result = await sandbox.execute("print('rel-ok')", {}, Path("rel/work"))
+    assert result.exit_code == 0, f"exit={result.exit_code} stderr={result.stderr[:200]}"
+    assert "rel-ok" in result.stdout
+    assert result.error is None

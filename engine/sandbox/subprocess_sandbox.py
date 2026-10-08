@@ -92,6 +92,9 @@ class SubprocessSandbox:
 
     async def execute(self, code: str, files: dict[str, str], work_dir: Path) -> ExecutionResult:
         """执行代码：落 files → 写脚本 → subprocess 执行 → 捕获结果 → 扫产物。"""
+        # 绝对化：子进程 cwd=work_dir 后，相对脚本路径会被二次拼接（"can't open file"，
+        # 退出码 2 但代码从未执行），求解阶段会拿着空输出继续走。
+        work_dir = work_dir.resolve()
         work_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. 落 files 到工作目录（路径校验，防逃逸）
