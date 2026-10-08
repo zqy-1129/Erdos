@@ -16,6 +16,8 @@ import { runSmoke } from "./smoke.ts";
 import { BridgeBackend } from "./ipc/bridge.ts";
 import { isAllowedSenderUrl } from "./ipc/guard.ts";
 import { createSqliteSecretStore } from "./sqlite-secret-store.ts";
+import { ensureDeviceFingerprint } from "./device-identity.ts";
+import { resolveAuthRuntime } from "./ipc/cloud-auth.ts";
 import { verifyEngineDir } from "./tamper-check.ts";
 import { resolveChannel } from "./update/policy.ts";
 import { setupAutoUpdate } from "./update/updater.ts";
@@ -63,7 +65,17 @@ function registerBridgeIpc(): void {
   const secretStore = createSqliteSecretStore(path.join(app.getPath("userData"), "erdos.db"), (message) =>
     console.warn(`[client] ${message}`),
   );
-  bridgeBackend = new BridgeBackend({ secretStore });
+  // SP3-5 鉴权接线：ERDOS_API_BASE_URL 决定运行模式（dev 未配置 → 演示回退；生产未配置 → fail-closed）；
+  // 设备指纹持久化于 userData（注册赠分防刷，见 device-identity.ts）
+  const runtime = resolveAuthRuntime({ apiBaseUrl: process.env.ERDOS_API_BASE_URL, dev: isDev });
+  const fingerprint = ensureDeviceFingerprint(path.join(app.getPath("userData"), "device-fingerprint"));
+  console.log(
+    `[client] 鉴权模式：${runtime.mode === "cloud" ? `cloud（${runtime.baseUrl}）` : runtime.mode}`,
+  );
+  bridgeBackend = new BridgeBackend({
+    secretStore,
+    auth: { runtime, fingerprint, platform: process.platform },
+  });
   for (const channel of Object.values(BRIDGE_CHANNELS)) {
     if (channel === BRIDGE_CHANNELS.engineEvent) continue;
     ipcMain.handle(channel, (event, payload) => {

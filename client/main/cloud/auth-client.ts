@@ -1,14 +1,14 @@
 /**
- * 鉴权客户端与登录态（SP3-5）：对接服务端 /v1/auth/login|refresh|logout。
+ * 鉴权客户端与登录态（SP3-5）：对接服务端 /v1/auth/login|register|refresh|logout。
  *
- * - AuthClient：登录/刷新/注销（信封解包 + 载荷形状校验），匿名通道；
+ * - AuthClient：登录/注册/刷新/注销（信封解包 + 载荷形状校验），匿名通道；
  * - SessionTokenProvider：内存令牌 + 过期自动轮换（skew 提前量）+
  *   并发轮换去重，经 getToken（适配为 TokenProvider 函数）接入 CloudHttpClient。
  * 令牌落盘（本地安全存储）在 SP3-4 接入；本模块默认内存存储。
  */
 
 import { CloudApiError } from "./envelope.ts";
-import { CloudHttpClient } from "./http.ts";
+import { CloudHttpClient, type FetchLike } from "./http.ts";
 
 /** 服务端双令牌视图（TokenPairView）。 */
 export interface TokenPair {
@@ -67,6 +67,15 @@ function parseTokenPair(value: unknown): TokenPair {
   };
 }
 
+/** 注册请求体（契约 RegisterCreate：邮箱/手机至少其一，指纹必填、赠分防刷）。 */
+export interface RegisterRequest {
+  email?: string;
+  phone?: string;
+  password: string;
+  fingerprint: string;
+  platform?: string;
+}
+
 /** 鉴权客户端（匿名通道；业务请求经 SessionTokenProvider 注入令牌的独立通道）。 */
 export class AuthClient {
   private readonly http: CloudHttpClient;
@@ -80,6 +89,11 @@ export class AuthClient {
     const body: Record<string, unknown> = { username, password };
     if (deviceId) body["device_id"] = deviceId;
     return parseTokenPair(await this.http.post("/v1/auth/login", body));
+  }
+
+  /** 注册即登录（同邮箱/手机冲突 409；同指纹重复注册不再赠分，由服务端判定）。 */
+  async register(request: RegisterRequest): Promise<TokenPair> {
+    return parseTokenPair(await this.http.post("/v1/auth/register", request));
   }
 
   /** 刷新轮换（服务端换代防护：旧刷新令牌立即失效）。 */
@@ -137,6 +151,11 @@ export class SessionTokenProvider {
     const pair = await this.auth.login(username, password, deviceId ?? this.deviceId);
     this.apply(pair);
     return pair;
+  }
+
+  /** 载入外部签发的令牌集（注册即登录等场景：服务端已返回令牌，不再重复走登录接口）。 */
+  adopt(pair: TokenPair): void {
+    this.apply(pair);
   }
 
   /** 是否已登录（当前内存会话存在）。 */
@@ -224,6 +243,8 @@ export interface SessionAuthOptions {
   deviceId?: string;
   timeoutMs?: number;
   maxRetries?: number;
+  /** 传输注入（测试/联调；透传 CloudHttpClient）。 */
+  fetchImpl?: FetchLike;
   /** 业务通道 401/403 清会话回调（默认挂 tokens.clearSession，回退匿名）。 */
   onUnauthorized?: (status: number) => void;
 }
@@ -238,6 +259,7 @@ export function createSessionAuth(options: SessionAuthOptions): {
     baseUrl: options.baseUrl,
     timeoutMs: options.timeoutMs,
     maxRetries: options.maxRetries,
+    fetchImpl: options.fetchImpl,
   });
   const client = new AuthClient(anonymous);
   const tokens = new SessionTokenProvider({

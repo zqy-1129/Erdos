@@ -1,8 +1,12 @@
 /**
  * 主进程桥后端（FE-PRELOAD W4）：业务通道的 ipcMain.handle 分发实现。
  *
- * 开发期演示数据（云端集成 SP3-5 落地前）；keys → KeyVault（safeStorage 加密），
- * telemetry → TelemetrySdk（白名单 + 隐私过滤）。明文 Key 永不出主进程。
+ * 鉴权通道（登录/注册/注销）真实对接服务端（SP3-5 接线，见 main/ipc/cloud-auth.ts）：
+ * cloud 模式走契约接口；demo 模式为开发期演示回退；unconfigured（生产未配置）
+ * fail-closed 报错，不冒充登录成功。其余业务通道暂为演示数据（后续批次逐步接入）。
+ *
+ * keys → KeyVault（safeStorage 加密），telemetry → TelemetrySdk（白名单 + 隐私过滤）。
+ * 明文 Key / 令牌永不出主进程。
  *
  * keysTest 真实化（FE-TOOLUI W12）：经注入的引擎探测函数走 provider_test
  * （见 main/ipc/key-probe.ts）；引擎未接线/Web 环境返回 unverified，不冒充连通。
@@ -13,6 +17,8 @@ import { KeyVault, InMemorySecretStore, XorEncryptor, type KeyEncryptor, type Se
 import { maskSecret } from "../secret-masker.ts";
 import { TelemetrySdk, type TelemetryUploader, type UploadResult } from "../telemetry/sdk.ts";
 import { keysTestOutcome, type KeyTestOutcome, type ProbeFn } from "./key-probe.ts";
+import { CloudAuthBridge, type AuthRuntime, type SessionView } from "./cloud-auth.ts";
+import type { FetchLike } from "../cloud/http.ts";
 
 const STAGES = ["analysis", "modeling", "solving", "writing"];
 
@@ -38,6 +44,18 @@ class SafeStorageEncryptor implements KeyEncryptor {
   }
 }
 
+/** 鉴权接线配置（index.ts 装配；未提供时按 demo 演示回退，保持既有演示语义）。 */
+export interface BridgeAuthOptions {
+  /** 运行模式（resolveAuthRuntime：ERDOS_API_BASE_URL + dev 标志）。 */
+  runtime: AuthRuntime;
+  /** cloud 模式必填：设备指纹（注册赠分防刷，device-identity.ts 生成）。 */
+  fingerprint?: string;
+  /** 平台标识（win32/darwin/linux）。 */
+  platform?: string;
+  /** 传输注入（测试/联调）。 */
+  fetchImpl?: FetchLike;
+}
+
 /** 桥后端构造选项（FE-KEYIN 落库：密钥密文存储注入）。 */
 export interface BridgeBackendOptions {
   /**
@@ -45,12 +63,18 @@ export interface BridgeBackendOptions {
    * 未提供或为 null（驱动不可用降级路径）→ 回退 InMemorySecretStore（重启后需重录 Key）。
    */
   secretStore?: SecretStore | null;
+  /** 鉴权运行接线（缺省 demo：开发期演示回退）。 */
+  auth?: BridgeAuthOptions | null;
 }
 
 export class BridgeBackend {
   private readonly keyVault: KeyVault;
   private readonly keyMetas = new Map<string, { alias: string; baseUrl: string; masked: string; status: string }>();
   private readonly telemetry: TelemetrySdk;
+  /** 云端正版鉴权（cloud 模式非空；demo/unconfigured 为 null）。 */
+  private readonly cloudAuth: CloudAuthBridge | null = null;
+  /** 鉴权运行模式（cloud 缺设备指纹时降级为 unconfigured，fail-closed）。 */
+  private readonly authMode: AuthRuntime["mode"];
   private sessionUsername: string | null = null;
   private activeKeyId: string | null = null;
   /** 引擎探测函数（FE-KEYIN/W12 接线：EngineHost.reloadKey → provider_test）。 */
@@ -65,6 +89,23 @@ export class BridgeBackend {
       },
     };
     this.telemetry = new TelemetrySdk({ uploader: noopUploader });
+
+    const auth = options.auth ?? { runtime: { mode: "demo" } as AuthRuntime };
+    if (auth.runtime.mode === "cloud" && (auth.fingerprint ?? "").trim()) {
+      this.cloudAuth = new CloudAuthBridge({
+        baseUrl: auth.runtime.baseUrl,
+        fingerprint: auth.fingerprint ?? "",
+        platform: auth.platform,
+        fetchImpl: auth.fetchImpl,
+      });
+      this.authMode = "cloud";
+    } else {
+      // 契约要求注册必带指纹：cloud 模式缺指纹视为未配置（不发起半可用请求）
+      this.authMode = auth.runtime.mode === "cloud" ? "unconfigured" : auth.runtime.mode;
+      if (auth.runtime.mode === "cloud") {
+        console.warn("[client] 云端鉴权缺少设备指纹，登录不可用（fail-closed）");
+      }
+    }
   }
 
   /** 注入引擎探测实现（主进程接线；Web/未接线环境保持 null → keysTest 返回 unverified）。 */
@@ -86,8 +127,7 @@ export class BridgeBackend {
       case BRIDGE_CHANNELS.authRegister:
         return this.register(body);
       case BRIDGE_CHANNELS.authLogout:
-        this.sessionUsername = null;
-        return {};
+        return this.logout();
       case BRIDGE_CHANNELS.keysList:
         return this.keysList();
       case BRIDGE_CHANNELS.keysSave:
@@ -124,17 +164,64 @@ export class BridgeBackend {
     this.telemetry.capture({ event_name: eventName, distinct_id: this.sessionUsername ?? "anonymous", props });
   }
 
-  private login(body: Record<string, unknown>): { username: string; expiresInMs: number } {
-    const username = String(body["username"] ?? "demo");
+  /**
+   * 登录（cloud：真实对接服务端；demo：开发期演示回退；unconfigured：fail-closed）。
+   * 云端失败经 classifyAuthError 归一为可读中文（见 cloud-auth.ts）。
+   */
+  private async login(body: Record<string, unknown>): Promise<SessionView> {
+    const username = String(body["username"] ?? "");
+    const password = String(body["password"] ?? "");
+    if (this.cloudAuth) {
+      const view = await this.cloudAuth.login({ username, password });
+      this.sessionUsername = view.username;
+      return view;
+    }
+    if (this.authMode === "unconfigured") {
+      throw new Error("未配置云端服务地址（ERDOS_API_BASE_URL），登录不可用");
+    }
+    return this.demoLogin(username);
+  }
+
+  /** 注册即登录（cloud：契约 RegisterCreate；demo/unconfigured 语义同 login）。 */
+  private async register(body: Record<string, unknown>): Promise<SessionView> {
+    const username = String(body["username"] ?? "");
+    const password = String(body["password"] ?? "");
+    if (this.cloudAuth) {
+      const view = await this.cloudAuth.register({ username, password });
+      this.sessionUsername = view.username;
+      return view;
+    }
+    if (this.authMode === "unconfigured") {
+      throw new Error("未配置云端服务地址（ERDOS_API_BASE_URL），注册不可用");
+    }
+    return this.demoLogin(username);
+  }
+
+  /**
+   * 注销：cloud 模式先请求服务端吊销（失败仅告警：本地会话已清，令牌到期自失效），
+   * demo/unconfigured 仅清本地会话；始终返回空对象（渲染层不依赖结果）。
+   */
+  private async logout(): Promise<Record<string, never>> {
+    if (this.cloudAuth) {
+      try {
+        await this.cloudAuth.logout();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[client] 云端注销失败（本地会话已清）：${message}`);
+      }
+    }
+    this.sessionUsername = null;
+    return {};
+  }
+
+  /** 开发期演示回退（无云端配置）：demo-error 演示异常态；其余账号直接进入登录态。 */
+  private demoLogin(username: string): SessionView {
     if (username === "demo-error") {
       throw new Error("演示异常态：云端暂时不可用（HTTP 503）");
     }
-    this.sessionUsername = username;
-    return { username, expiresInMs: 900_000 };
-  }
-
-  private register(body: Record<string, unknown>): { username: string; expiresInMs: number } {
-    return this.login(body);
+    const name = username || "demo";
+    this.sessionUsername = name;
+    return { username: name, expiresInMs: 900_000 };
   }
 
   private keysList(): Array<{ id: string; alias: string; baseUrl: string; masked: string; status: string }> {
