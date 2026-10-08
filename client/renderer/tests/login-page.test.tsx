@@ -57,8 +57,8 @@ describe("登录页注册门禁", () => {
     await act(async () => {
       register.click();
     });
-    // 注册为首次桥调用（其后 AppShell 登录态会触发 entitlement:status，非本用例关注点）
-    expect(calls[0]).toEqual({
+    // 注册调用携带表单值（入口的 auth:session 恢复查询与登录后的 entitlement:status 非本用例关注点）
+    expect(calls.find((call) => call.channel === BRIDGE_CHANNELS.authRegister)).toEqual({
       channel: BRIDGE_CHANNELS.authRegister,
       payload: { username: "a@b.com", password: "Test1234" },
     });

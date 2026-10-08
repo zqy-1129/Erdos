@@ -16,6 +16,8 @@ import { runSmoke } from "./smoke.ts";
 import { BridgeBackend } from "./ipc/bridge.ts";
 import { isAllowedSenderUrl } from "./ipc/guard.ts";
 import { createSqliteSecretStore } from "./sqlite-secret-store.ts";
+import { createPlatformEncryptor } from "./safe-storage-encryptor.ts";
+import { createEncryptedTokenStore } from "./cloud/session-store.ts";
 import { ensureDeviceFingerprint } from "./device-identity.ts";
 import { resolveAuthRuntime } from "./ipc/cloud-auth.ts";
 import { verifyEngineDir } from "./tamper-check.ts";
@@ -72,9 +74,20 @@ function registerBridgeIpc(): void {
   console.log(
     `[client] 鉴权模式：${runtime.mode === "cloud" ? `cloud（${runtime.baseUrl}）` : runtime.mode}`,
   );
+  // SP3-4 本地安全存储：会话令牌加密落盘（safeStorage 密文进 SQLite；驱动不可用时回退内存并告警）
+  const sessionStore = secretStore
+    ? createEncryptedTokenStore({
+        secrets: secretStore,
+        encryptor: createPlatformEncryptor((message) => console.warn(`[client] ${message}`)),
+      })
+    : null;
+  if (!sessionStore) {
+    console.warn("[client] 会话落盘不可用（SQLite 降级）：重启后需重新登录");
+  }
+  console.log(`[client] 会话落盘：${sessionStore ? "已启用（加密）" : "未启用（内存）"}`);
   bridgeBackend = new BridgeBackend({
     secretStore,
-    auth: { runtime, fingerprint, platform: process.platform },
+    auth: { runtime, fingerprint, platform: process.platform, sessionStore },
     // 会话失效下发：业务 401 清会话后推给渲染层（回登录页；见 app-stores.bindSessionInvalidation）
     onSessionInvalidated: () => {
       mainWindow?.webContents.send(BRIDGE_CHANNELS.authSessionInvalidated, { reason: "unauthorized" });

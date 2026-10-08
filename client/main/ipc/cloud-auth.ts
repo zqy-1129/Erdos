@@ -10,12 +10,13 @@
  * - classifyAuthError：服务端错误码 / HTTP 状态 → AuthFailureError（reason 归因 + 可读中文），
  *   与 key-probe 的 KeyTestOutcome 同一「分类」风格，供 UI 展示与日志定位。
  *
- * 本模块不依赖 electron（node:test 可直接加载）；令牌默认内存存储，
- * 落盘（本地安全存储）随后续批次接入（auth-client.ts 同注释）。
+ * 本模块不依赖 electron（node:test 可直接加载）；令牌存储经 TokenStore 注入
+ * （生产：session-store.ts 加密落盘；默认内存）。
  */
 import {
   createSessionAuth,
   type RegisterRequest,
+  type StoredSession,
   type TokenPair,
   type TokenStore,
   type AuthClient,
@@ -171,8 +172,10 @@ export interface CloudAuthOptions {
   fetchImpl?: FetchLike;
   timeoutMs?: number;
   maxRetries?: number;
-  /** 令牌存储（默认内存；落盘随后续批次接入）。 */
+  /** 令牌存储（默认内存；生产接 session-store.ts 加密落盘）。 */
   store?: TokenStore;
+  /** ms 时间戳时钟（测试注入；会话恢复视图的剩余有效期计算用）。 */
+  clock?: () => number;
 }
 
 /** 云端正版鉴权桥：登录/注册/注销 + 会话查询（BridgeBackend 云模式使用）。 */
@@ -181,11 +184,13 @@ export class CloudAuthBridge {
   private readonly tokens: SessionTokenProvider;
   private readonly fingerprint: string;
   private readonly platform?: string;
+  private readonly clock: () => number;
 
   constructor(options: CloudAuthOptions) {
     const session = createSessionAuth({
       baseUrl: options.baseUrl,
       store: options.store,
+      clock: options.clock,
       timeoutMs: options.timeoutMs,
       maxRetries: options.maxRetries,
       fetchImpl: options.fetchImpl,
@@ -194,6 +199,7 @@ export class CloudAuthBridge {
     this.tokens = session.tokens;
     this.fingerprint = options.fingerprint;
     this.platform = options.platform;
+    this.clock = options.clock ?? (() => Date.now());
   }
 
   /** 密码登录：成功后登记会话，返回桥会话视图。 */
@@ -219,9 +225,10 @@ export class CloudAuthBridge {
     if (!built.ok) throw new AuthFailureError("invalid", built.message);
     try {
       const pair = await this.auth.register(built.body);
-      this.tokens.adopt(pair);
       // buildRegisterBody 已将 trim 后账号写入 email/phone，会话视图沿用同一账号
-      return sessionViewOf(pair, input.username.trim());
+      const username = input.username.trim();
+      this.tokens.adopt(pair, username);
+      return sessionViewOf(pair, username);
     } catch (error) {
       throw classifyAuthError(error);
     }
@@ -236,9 +243,20 @@ export class CloudAuthBridge {
     }
   }
 
-  /** 是否已登录（当前内存会话存在）。 */
+  /** 是否已登录（restore 时可由持久化会话直接为 true）。 */
   signedIn(): boolean {
     return this.tokens.signedIn();
+  }
+
+  /**
+   * 当前会话视图（会话恢复：启动时渲染层据此免登录进入；null=未登录）。
+   * 剩余有效期按「签发时刻 + 访问令牌 TTL - 当前时刻」计算（负值归零，轮换交给 getToken）。
+   */
+  currentView(): SessionView | null {
+    const session: StoredSession | null = this.tokens.currentSession();
+    if (session === null) return null;
+    const remaining = session.issued_at_ms + session.pair.expires_in * 1000 - this.clock();
+    return { username: session.username, expiresInMs: Math.max(0, remaining) };
   }
 
   /** 访问令牌读取（联调验证受保护端点；业务通道接线经 TokenProvider 复用同一会话）。 */

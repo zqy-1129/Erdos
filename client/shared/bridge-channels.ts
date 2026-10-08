@@ -9,6 +9,8 @@ export const BRIDGE_CHANNELS = {
   authLogin: "auth:login",
   authRegister: "auth:register",
   authLogout: "auth:logout",
+  /** 会话恢复查询（启动时读持久化会话；返回 SessionView | null）。 */
+  authSession: "auth:session",
   /** 会话失效下发（主进程业务 401/403 清会话后推送；渲染层回登录页，非 handle 通道）。 */
   authSessionInvalidated: "auth:session-invalidated",
   // Key 管家

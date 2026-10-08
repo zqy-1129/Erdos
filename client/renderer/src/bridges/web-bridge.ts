@@ -226,8 +226,10 @@ export class WebDemoBridge implements ErdosBridge {
     }
     const empty = username === "demo-empty" || demoSession()?.username === "demo-empty";
     switch (channel) {
-      case BRIDGE_CHANNELS.authLogin:
+      case BRIDGE_CHANNELS.authLogin: {
+        saveSession(String(username)); // 演示会话写 localStorage：与真实桥的会话恢复语义对齐
         return Promise.resolve({ username: String(username), expiresInMs: 900_000 } as T);
+      }
       case BRIDGE_CHANNELS.authRegister: {
         saveSession(String(username));
         return Promise.resolve({ username: String(username), expiresInMs: 900_000 } as T);
@@ -235,6 +237,11 @@ export class WebDemoBridge implements ErdosBridge {
       case BRIDGE_CHANNELS.authLogout:
         saveSession(null);
         return Promise.resolve({} as T);
+      case BRIDGE_CHANNELS.authSession: {
+        // 演示桥对齐真实桥的会话恢复语义（localStorage 中的演示会话）
+        const restored = demoSession();
+        return Promise.resolve((restored ? { username: restored.username, expiresInMs: 900_000 } : null) as T);
+      }
       case BRIDGE_CHANNELS.keysList:
         return Promise.resolve((empty ? [] : [
           { id: "k1", alias: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", masked: "sk-****7f2a", status: "ok" },

@@ -17,7 +17,9 @@ import {
 } from "../main/ipc/cloud-auth.ts";
 import { CloudApiError } from "../main/cloud/envelope.ts";
 import type { FetchLike } from "../main/cloud/http.ts";
-import type { TokenPair } from "../main/cloud/auth-client.ts";
+import { InMemoryTokenStore, type TokenPair } from "../main/cloud/auth-client.ts";
+import { SESSION_SCOPE, createEncryptedTokenStore } from "../main/cloud/session-store.ts";
+import { InMemorySecretStore, XorEncryptor } from "../main/key-vault.ts";
 
 /** 服务端统一信封（code=0 成功）。 */
 function envelope(data: unknown): string {
@@ -35,6 +37,9 @@ const PAIR: TokenPair = {
   expires_in: 900,
   refresh_expires_in: 86_400,
 };
+
+/** 会话签发时刻基准（恢复视图的剩余有效期断言用）。 */
+const BASE_TOKEN_MS = 1_767_744_000_000;
 
 interface CapturedRequest {
   url: string;
@@ -268,6 +273,54 @@ describe("CloudAuthBridge 云链路（fetch 桩）", () => {
         error.reason === "network" &&
         /无法连接云端服务/.test(error.message),
     );
+  });
+
+  it("会话恢复：持久化令牌直接进入登录态，currentView 返回账号与剩余有效期", () => {
+    const store = new InMemoryTokenStore();
+    store.save({ pair: PAIR, issued_at_ms: BASE_TOKEN_MS, username: "alice" });
+    const bridge = new CloudAuthBridge({
+      baseUrl: "http://stub",
+      fingerprint: "fp-12345678",
+      store,
+      clock: () => BASE_TOKEN_MS + 60_000,
+      maxRetries: 0,
+      fetchImpl: async () => {
+        throw new Error("恢复路径不应发起网络请求");
+      },
+    });
+    assert.equal(bridge.signedIn(), true);
+    assert.deepEqual(bridge.currentView(), { username: "alice", expiresInMs: 900_000 - 60_000 });
+  });
+
+  it("登录写入加密存储：账号与令牌可跨实例恢复（模拟重启），密文不含明文", async () => {
+    const secrets = new InMemorySecretStore();
+    const encryptor = new XorEncryptor("test-key");
+    const captured: CapturedRequest[] = [];
+    const bridge = new CloudAuthBridge({
+      baseUrl: "http://stub",
+      fingerprint: "fp-12345678",
+      store: createEncryptedTokenStore({ secrets, encryptor }),
+      clock: () => BASE_TOKEN_MS,
+      maxRetries: 0,
+      fetchImpl: stubFetch({ "/v1/auth/login": { status: 200, body: envelope(PAIR) } }, captured),
+    });
+    await bridge.login({ username: "alice", password: "secret" });
+    const ciphertext = secrets.get(SESSION_SCOPE) ?? "";
+    assert.ok(ciphertext.length > 0 && !ciphertext.includes("rt-1"), "密文不得包含明文令牌");
+
+    // 模拟重启：同一密文存储新建实例 → 免登录恢复
+    const restarted = new CloudAuthBridge({
+      baseUrl: "http://stub",
+      fingerprint: "fp-12345678",
+      store: createEncryptedTokenStore({ secrets, encryptor }),
+      clock: () => BASE_TOKEN_MS + 1000,
+      maxRetries: 0,
+      fetchImpl: async () => {
+        throw new Error("恢复路径不应发起网络请求");
+      },
+    });
+    assert.equal(restarted.signedIn(), true);
+    assert.equal(restarted.currentView()?.username, "alice");
   });
 
   it("空账号 → invalid 且不发起请求", async () => {

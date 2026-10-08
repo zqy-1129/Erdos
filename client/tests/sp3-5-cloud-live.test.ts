@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { AuthFailureError, CloudAuthBridge } from "../main/ipc/cloud-auth.ts";
+import { InMemoryTokenStore } from "../main/cloud/auth-client.ts";
 import { newFingerprint } from "../main/device-identity.ts";
 
 const BASE_URL = (process.env.ERDOS_API_BASE_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, "");
@@ -37,11 +38,13 @@ describe("CloudAuthBridge 真实服务端联调", () => {
     }
     const email = `live-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
     const password = "Live0Pass";
+    const store = new InMemoryTokenStore(); // 会话落盘替身：验证「重启免登录」恢复链路
     const bridge = new CloudAuthBridge({
       baseUrl: BASE_URL,
       fingerprint: newFingerprint(),
       platform: "test",
       timeoutMs: 5000,
+      store,
     });
 
     // 注册即登录
@@ -49,6 +52,16 @@ describe("CloudAuthBridge 真实服务端联调", () => {
     assert.equal(registered.username, email);
     assert.ok(registered.expiresInMs > 0, "访问令牌有效期应为正数");
     assert.equal(bridge.signedIn(), true);
+
+    // 模拟重启：同一会话存储重建桥 → 免登录恢复（账号回填）
+    const restored = new CloudAuthBridge({
+      baseUrl: BASE_URL,
+      fingerprint: newFingerprint(),
+      timeoutMs: 5000,
+      store,
+    });
+    assert.equal(restored.signedIn(), true);
+    assert.equal(restored.currentView()?.username, email);
 
     // 受保护端点：Bearer 令牌读取自身资料（令牌真实有效，而非仅签发成功）
     const token = await bridge.getToken();

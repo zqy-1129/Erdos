@@ -114,6 +114,24 @@ export async function loginAction(
   }
 }
 
+/**
+ * 启动会话恢复（SP3-4 本地安全存储）：主进程已持久化令牌时免登录进入。
+ * 失败（未配置云端/网络异常/无会话）一律保持匿名，不阻塞启动、不打扰用户。
+ */
+export async function restoreSessionAction(
+  stores: Pick<AppStores, "session" | "bridge">,
+): Promise<void> {
+  try {
+    const view = await stores.bridge.invoke<SessionView | null>(BRIDGE_CHANNELS.authSession);
+    // 仅匿名态写入：恢复响应迟到时不覆盖用户刚完成的登录（竞态守卫）
+    if (view && stores.session.getState().status !== "signed-in") {
+      stores.session.setState({ status: "signed-in", username: view.username, error: null });
+    }
+  } catch {
+    // 会话恢复属尽力而为：失败保持登录页
+  }
+}
+
 /** 注册即登录（与 loginAction 同构：失败态可读回显；密码强度由本地门禁 + 服务端校验）。 */
 export async function registerAction(
   stores: Pick<AppStores, "session" | "bridge">,
@@ -131,7 +149,8 @@ export async function registerAction(
 export function logoutAction(
   stores: Pick<AppStores, "session" | "bridge">,
 ): void {
-  void stores.bridge.invoke(BRIDGE_CHANNELS.authLogout, {});
+  // 本地先回落；云端吊销失败（桥侧已告警）不产生未处理拒绝
+  void stores.bridge.invoke(BRIDGE_CHANNELS.authLogout, {}).catch(() => {});
   stores.session.setState({ status: "anonymous", username: null, error: null });
 }
 

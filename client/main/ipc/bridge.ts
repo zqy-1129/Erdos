@@ -12,9 +12,10 @@
  * keysTest 真实化（FE-TOOLUI W12）：经注入的引擎探测函数走 provider_test
  * （见 main/ipc/key-probe.ts）；引擎未接线/Web 环境返回 unverified，不冒充连通。
  */
-import { safeStorage } from "electron";
 import { BRIDGE_CHANNELS } from "../../shared/bridge-channels.ts";
-import { KeyVault, InMemorySecretStore, XorEncryptor, type KeyEncryptor, type SecretStore } from "../key-vault.ts";
+import { KeyVault, InMemorySecretStore, type SecretStore } from "../key-vault.ts";
+import { createPlatformEncryptor } from "../safe-storage-encryptor.ts";
+import type { TokenStore } from "../cloud/auth-client.ts";
 import { maskSecret } from "../secret-masker.ts";
 import { TelemetrySdk, type TelemetryUploader, type UploadResult } from "../telemetry/sdk.ts";
 import { keysTestOutcome, type KeyTestOutcome, type ProbeFn } from "./key-probe.ts";
@@ -41,16 +42,6 @@ const DEMO_HISTORY = [
   { taskId: "t-1002", title: "2024 C 题打磨", status: "done", updatedAt: "2026-10-01T15:30:00Z", resumable: false },
 ];
 
-/** safeStorage（DPAPI/Keychain）加密器；不可用时回退 XorEncryptor（开发期）。 */
-class SafeStorageEncryptor implements KeyEncryptor {
-  encrypt(plaintext: string): string {
-    return safeStorage.encryptString(plaintext).toString("base64");
-  }
-  decrypt(ciphertext: string): string {
-    return safeStorage.decryptString(Buffer.from(ciphertext, "base64"));
-  }
-}
-
 /** 鉴权接线配置（index.ts 装配；未提供时按 demo 演示回退，保持既有演示语义）。 */
 export interface BridgeAuthOptions {
   /** 运行模式（resolveAuthRuntime：ERDOS_API_BASE_URL + dev 标志）。 */
@@ -61,6 +52,8 @@ export interface BridgeAuthOptions {
   platform?: string;
   /** 传输注入（测试/联调）。 */
   fetchImpl?: FetchLike;
+  /** 令牌加密落盘存储（SP3-4 本地安全存储；缺省内存 = 重启需重新登录）。 */
+  sessionStore?: TokenStore | null;
 }
 
 /** 桥后端构造选项（FE-KEYIN 落库：密钥密文存储注入）。 */
@@ -97,7 +90,7 @@ export class BridgeBackend {
   private probe: ProbeFn | null = null;
 
   constructor(options: BridgeBackendOptions = {}) {
-    const encryptor = safeStorage.isEncryptionAvailable() ? new SafeStorageEncryptor() : new XorEncryptor();
+    const encryptor = createPlatformEncryptor((message) => console.warn(`[client] ${message}`));
     this.keyVault = new KeyVault(encryptor, options.secretStore ?? new InMemorySecretStore());
     const noopUploader: TelemetryUploader = {
       async upload(): Promise<UploadResult> {
@@ -114,8 +107,11 @@ export class BridgeBackend {
         fingerprint: auth.fingerprint ?? "",
         platform: auth.platform,
         fetchImpl: auth.fetchImpl,
+        store: auth.sessionStore ?? undefined, // 缺省内存存储（重启需重新登录）
       });
       this.cloudAuth = cloudAuth;
+      // 会话恢复：持久化会话在桥构造时即登记登录标识（遥测 distinct_id 不回退 anonymous）
+      this.sessionUsername = cloudAuth.currentView()?.username ?? null;
       // 业务通道（权益/账单）：复用同一登录态令牌；401/403 清会话回退匿名
       this.cloudBusiness = new CloudBusinessBridge({
         baseUrl: auth.runtime.baseUrl,
@@ -153,6 +149,8 @@ export class BridgeBackend {
         return this.register(body);
       case BRIDGE_CHANNELS.authLogout:
         return this.logout();
+      case BRIDGE_CHANNELS.authSession:
+        return this.sessionView();
       case BRIDGE_CHANNELS.keysList:
         return this.keysList();
       case BRIDGE_CHANNELS.keysSave:
@@ -352,6 +350,14 @@ export class BridgeBackend {
   /** cloud 模式业务通道的登录态前置检查（未登录不发起请求）。 */
   private requireSignedIn(what: string): void {
     if (!this.cloudAuth?.signedIn()) throw new Error(`未登录，无法获取${what}`);
+  }
+
+  /**
+   * 会话恢复查询（auth:session）：cloud 模式返回持久化会话视图（重启免登录），
+   * 未登录/演示模式返回 null（渲染层保持登录页）。
+   */
+  private sessionView(): SessionView | null {
+    return this.cloudAuth?.currentView() ?? null;
   }
 
   /**

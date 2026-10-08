@@ -275,6 +275,7 @@ describe("SessionTokenProvider 登录态", () => {
           refresh_expires_in: 86_400,
         },
         issued_at_ms: 1_000_000,
+        username: "alice",
       };
       const store = new CapturingStore(seed);
       const provider = new SessionTokenProvider({
@@ -287,6 +288,7 @@ describe("SessionTokenProvider 登录态", () => {
       const restored = store.load();
       assert.ok(restored);
       assert.equal(restored.pair.refresh_token, "rt-2");
+      assert.equal(restored.username, "alice"); // 轮换保留登录标识
     } finally {
       await close();
     }

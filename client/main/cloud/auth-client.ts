@@ -21,11 +21,13 @@ export interface TokenPair {
   refresh_expires_in: number;
 }
 
-/** 持久化会话：令牌集 + 签发时刻（恢复后计算剩余有效期）。 */
+/** 持久化会话：令牌集 + 签发时刻（恢复后计算剩余有效期）+ 登录标识（恢复后回填视图）。 */
 export interface StoredSession {
   pair: TokenPair;
   /** 签发时刻（ms 时间戳）。 */
   issued_at_ms: number;
+  /** 登录标识（用户名/邮箱/手机号原文；会话恢复时用于渲染层展示）。 */
+  username: string;
 }
 
 /** 令牌存储（内存实现为默认；SP3-4 接本地安全存储）。 */
@@ -149,13 +151,18 @@ export class SessionTokenProvider {
   /** 登录并登记会话（返回令牌集；供显式登录流程调用）。 */
   async login(username: string, password: string, deviceId?: string): Promise<TokenPair> {
     const pair = await this.auth.login(username, password, deviceId ?? this.deviceId);
-    this.apply(pair);
+    this.apply(pair, username);
     return pair;
   }
 
   /** 载入外部签发的令牌集（注册即登录等场景：服务端已返回令牌，不再重复走登录接口）。 */
-  adopt(pair: TokenPair): void {
-    this.apply(pair);
+  adopt(pair: TokenPair, username: string): void {
+    this.apply(pair, username);
+  }
+
+  /** 当前会话（含登录标识与签发时刻；会话恢复/视图回填用，null=未登录）。 */
+  currentSession(): StoredSession | null {
+    return this.session;
   }
 
   /** 是否已登录（当前内存会话存在）。 */
@@ -180,8 +187,8 @@ export class SessionTokenProvider {
     return this.rotate();
   }
 
-  private apply(pair: TokenPair): StoredSession {
-    const session: StoredSession = { pair, issued_at_ms: this.clock() };
+  private apply(pair: TokenPair, username: string): StoredSession {
+    const session: StoredSession = { pair, issued_at_ms: this.clock(), username };
     this.session = session;
     this.store.save(session);
     return session;
@@ -223,7 +230,7 @@ export class SessionTokenProvider {
     }
     try {
       const pair = await this.auth.refresh(session.pair.refresh_token, this.deviceId);
-      this.apply(pair);
+      this.apply(pair, session.username); // 轮换保留登录标识
       return pair.access_token;
     } catch (error) {
       if (error instanceof CloudApiError && (error.httpStatus === 401 || error.httpStatus === 403)) {
