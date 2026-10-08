@@ -19,7 +19,7 @@ jobs:
       - name: Install
         run: pip install -e "./engine[dev]"
       - name: Ruff
-        run: ruff check engine
+        run: ruff check engine scripts
       - name: Mypy
         run: mypy --config-file engine/pyproject.toml engine
       - name: Dependency boundary guard

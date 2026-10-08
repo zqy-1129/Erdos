@@ -13,7 +13,6 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
@@ -34,7 +33,6 @@ from app.infra.auth import Principal
 from app.infra.events import EventBroker
 from app.repository.events import SQLAlchemyDashboardEventRepository
 from app.repository.metrics import SQLAlchemyOnlineTrendRepository, SQLAlchemyUsersTrendRepository
-from app.repository.models import UsersDailyStats
 from app.repository.presence import SQLAlchemyPresenceRepository
 
 router = APIRouter(prefix="/admin/dashboard", tags=["dashboard"])
@@ -127,8 +125,7 @@ async def users_total(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Envelope[UsersTotalView]:
     """用户总量/新增/活跃日序列（快照由账号域事件驱动写入，SP2-3 接入）。"""
-    stmt = select(UsersDailyStats).order_by(UsersDailyStats.stat_date)
-    rows = (await session.execute(stmt)).scalars().all()
+    rows = await SQLAlchemyUsersTrendRepository(session).list_all()
     series = [
         UsersTotalRow(
             stat_date=row.stat_date,

@@ -8,6 +8,7 @@ venv/
 .ruff_cache/
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 
 # 数据库与运行时产物

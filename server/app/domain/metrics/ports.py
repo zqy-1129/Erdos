@@ -55,3 +55,7 @@ class UsersTrendRepository(Protocol):
     async def list_between(self, start: date, end: date) -> list[DailyStatPoint]:
         """返回 [start, end] 区间内日快照（升序）。"""
         ...
+
+    async def list_all(self) -> list[DailyStatPoint]:
+        """返回全部日快照（升序）；看板总量序列用，不带区间上界。"""
+        ...
