@@ -101,6 +101,20 @@ export async function loginAction(
   }
 }
 
+/** 注册即登录（与 loginAction 同构：失败态可读回显；密码强度由本地门禁 + 服务端校验）。 */
+export async function registerAction(
+  stores: Pick<AppStores, "session" | "bridge">,
+  username: string,
+  password: string,
+): Promise<void> {
+  try {
+    const view = await stores.bridge.invoke<SessionView>(BRIDGE_CHANNELS.authRegister, { username, password });
+    stores.session.setState({ status: "signed-in", username: view.username, error: null });
+  } catch (error) {
+    stores.session.setState({ error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
 export function logoutAction(
   stores: Pick<AppStores, "session" | "bridge">,
 ): void {
