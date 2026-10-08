@@ -18,10 +18,12 @@ NOW = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 
 
 def _sample(**overrides) -> MonitoringSample:
+    # error_rate 基线取 0：可用性规则（1 - 5xx 占比 ≥ 99.5%）也算一条告警规则，
+    # 基线采样必须是健康值，否则"无告警"这条断言本身就不成立。
     base = dict(
         sampled_at=NOW,
         qps=10.0,
-        error_rate=0.01,
+        error_rate=0.0,
         p50_ms=20.0,
         p95_ms=80.0,
         cpu_percent=10.0,
@@ -55,7 +57,8 @@ def test_trigger_then_sustain_then_recover() -> None:
 def test_multiple_metrics_state_transitions() -> None:
     evaluator = AlertEvaluator(THRESHOLDS)
     transitions = evaluator.evaluate(_sample(p95_ms=600.0, error_rate=0.1))
-    assert {t.metric for t in transitions} == {"p95_ms", "error_rate"}
+    # 10% 的 5xx 同时把可用性打到 90%，所以 P0 的 availability 与两条 P1 一起触发
+    assert {t.metric for t in transitions} == {"p95_ms", "error_rate", "availability"}
     # 只剩一个超阈值 -> 另一个恢复
     transitions = evaluator.evaluate(_sample(p95_ms=600.0, error_rate=0.01))
     assert len(transitions) == 1

@@ -5,7 +5,7 @@
 对账事务提交之后，这个顺序在任何一处写错都会让 SQLite 单写锁自堵。
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -30,6 +30,7 @@ def _service(session: AsyncSession, settings: Settings) -> SchedulerService:
         SQLAlchemyAccountLedgerSource(session),
         SQLAlchemyMonthlyGrantRunner(session, settings.subscription_monthly_grant_points),
         SQLAlchemyExpireSubscriptionRunner(session),
+        stale_after_seconds=settings.scheduler_stale_after_seconds,
     )
 
 
@@ -57,9 +58,12 @@ async def run_reconcile_task(
     alerts: AlertOutlet,
     now: datetime,
 ) -> ReconcileResult:
-    """每日对账：差异全量发现，事务提交后经告警出口外发 P2（禁止静默）。"""
+    """每日对账：差异全量发现 + 事务提交后外发 P2 + 顺带裁剪批次账本。"""
+    prune_before = now - timedelta(days=settings.scheduler_runs_retention_days)
     async with UnitOfWork(session_factory) as uow:
-        result = await _service(uow.session, settings).run_reconcile(now)
+        result = await _service(uow.session, settings).run_reconcile(
+            now, prune_batches_older_than=prune_before
+        )
 
     alert = reconcile_alert(result)
     if alert is not None:

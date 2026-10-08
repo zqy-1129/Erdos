@@ -49,25 +49,39 @@ class BrokerAlertOutlet(AlertOutlet):
         self._webhook = webhook
         self._silence = silence or SilenceManager()
 
-    async def emit(self, alert: BusinessAlert, now: datetime) -> bool:
-        """外发一条告警；同级别同指标在静默窗口内只发一次（返回 False）。"""
+    async def emit(self, alert: BusinessAlert, now: datetime, dedupe: bool = True) -> bool:
+        """外发一条告警；dedupe=True 时同级别同指标在静默窗口内只发一次。
+
+        采样类告警的状态机已经保证"只在状态翻转时产出"，必须传 dedupe=False，
+        否则"触发→恢复→5 分钟内再触发"的 P0 会被静默窗口吞掉。恢复通知一律不去重。
+        """
         entry = Alert(
             severity=alert.severity,
             metric=alert.key,
             message=alert.message,
             occurred_at=now,
         )
-        if not self._silence.should_send(entry, now):
+        deduped = (
+            alert.state == "triggered"
+            and dedupe
+            and not self._silence.should_send(entry, now)
+        )
+        if deduped:
             logger.info("告警静默去重：%s %s", alert.key, alert.severity)
             return False
 
         transition = AlertTransition(
             metric=alert.key,
-            state="triggered",
+            state=alert.state,
             value=alert.value,
             threshold=alert.threshold,
             occurred_at=now,
             detail_message=alert.message,
+        )
+        event_severity = (
+            _EVENT_SEVERITY[alert.severity]
+            if alert.state == "triggered"
+            else "info"
         )
         payload = {
             "metric": transition.metric,
@@ -77,12 +91,12 @@ class BrokerAlertOutlet(AlertOutlet):
             "threshold": transition.threshold,
             "message": transition.message,
         }
-        await self._persist(now, alert, payload)
+        await self._persist(now, event_severity, payload)
         await self._broker.publish(
             EVENTS_TOPIC,
             {
                 "type": "monitor.alert",
-                "severity": _EVENT_SEVERITY[alert.severity],
+                "severity": event_severity,
                 "actor_id": "system",
                 "occurred_at": now.isoformat(),
                 "payload": payload,
@@ -90,17 +104,19 @@ class BrokerAlertOutlet(AlertOutlet):
         )
         # Webhook 未配置时 dispatch 直接返回；fire-and-forget，不阻塞调用方
         self._webhook.dispatch(transition)
-        logger.warning(
-            "业务告警外发：level=%s metric=%s value=%s message=%s",
+        logger.log(
+            logging.WARNING if alert.state == "triggered" else logging.INFO,
+            "业务告警外发：level=%s metric=%s state=%s value=%s message=%s",
             alert.severity.value,
             alert.key,
+            alert.state,
             alert.value,
             alert.message,
         )
         return True
 
     async def _persist(
-        self, now: datetime, alert: BusinessAlert, payload: dict[str, Any]
+        self, now: datetime, event_severity: str, payload: dict[str, Any]
     ) -> None:
         """告警事件独立事务落库；失败只记日志，不影响调用方事务与后续扇出。"""
         try:
@@ -108,9 +124,12 @@ class BrokerAlertOutlet(AlertOutlet):
                 await SQLAlchemyDashboardEventRepository(uow.session).append(
                     occurred_at=now,
                     type="monitor.alert",
-                    severity=_EVENT_SEVERITY[alert.severity],
+                    severity=event_severity,
                     actor_id="system",
                     payload=payload,
                 )
         except Exception:
-            logger.exception("告警事件落库失败：metric=%s（SSE 与 Webhook 仍会尝试外发）", alert.key)
+            logger.exception(
+                "告警事件落库失败：metric=%s（SSE 与 Webhook 仍会尝试外发）",
+                payload.get("metric"),
+            )

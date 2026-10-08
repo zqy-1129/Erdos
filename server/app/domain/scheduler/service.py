@@ -36,7 +36,11 @@ def reconcile_alert(result: ReconcileResult) -> BusinessAlert | None:
 
 
 class SchedulerService:
-    """调度用例：月赠 / 到期冻结 / 对账，均带幂等批次。"""
+    """调度用例：月赠 / 到期冻结 / 对账，均带幂等批次。
+
+    stale_after_seconds 决定"崩在半路的批次能否被重占"：0 表示批次一旦认领就永不重跑
+    （旧语义，会让崩溃当月的月赠永久缺失）；生产默认给一个远大于单次执行耗时的值。
+    """
 
     def __init__(
         self,
@@ -44,19 +48,27 @@ class SchedulerService:
         ledger_source: AccountLedgerSource,
         monthly_grant: MonthlyGrantRunner,
         expire_sub: ExpireSubscriptionRunner,
+        *,
+        stale_after_seconds: int = 0,
     ) -> None:
         self._runs = runs
         self._ledger_source = ledger_source
         self._monthly_grant = monthly_grant
         self._expire_sub = expire_sub
+        self._stale_after_seconds = stale_after_seconds
+
+    async def _claim(self, task: str, batch_key: str, now: datetime) -> bool:
+        return await self._runs.claim(
+            task, batch_key, now, stale_after_seconds=self._stale_after_seconds
+        )
 
     # ------------------------------------------------------------------
     # 月赠（幂等批次）
     # ------------------------------------------------------------------
     async def run_monthly_grant(self, now: datetime) -> str:
-        """月赠任务：批次键 = 年月，重复触发只执行一次。"""
+        """月赠任务：批次键 = 年月，重复触发只执行一次（卡死批次可重占）。"""
         batch_key = f"{now.year}{now.month:02d}"
-        if not await self._runs.claim("monthly_grant", batch_key, now):
+        if not await self._claim("monthly_grant", batch_key, now):
             return "already_ran"
         granted = await self._monthly_grant.grant_all_active(now)
         result = f"granted:{granted}"
@@ -67,9 +79,9 @@ class SchedulerService:
     # 订阅到期冻结（幂等批次）
     # ------------------------------------------------------------------
     async def run_expire_subscriptions(self, now: datetime) -> str:
-        """订阅到期冻结：批次键 = 日期，重复触发只执行一次。"""
+        """订阅到期冻结：批次键 = 日期，重复触发只执行一次（卡死批次可重占）。"""
         batch_key = now.date().isoformat()
-        if not await self._runs.claim("expire_subscriptions", batch_key, now):
+        if not await self._claim("expire_subscriptions", batch_key, now):
             return "already_ran"
         expired = await self._expire_sub.expire_overdue(now)
         result = f"expired:{expired}"
@@ -77,16 +89,23 @@ class SchedulerService:
         return result
 
     # ------------------------------------------------------------------
-    # 每日对账（差异发现 + 告警）
+    # 每日对账（差异发现 + 告警 + 批次账本裁剪）
     # ------------------------------------------------------------------
-    async def run_reconcile(self, now: datetime) -> ReconcileResult:
+    async def run_reconcile(
+        self, now: datetime, *, prune_batches_older_than: datetime | None = None
+    ) -> ReconcileResult:
         """对账任务：对比账户余额与流水净额，差异全量发现。
 
         告警外发由调用方在事务提交后经 AlertOutlet 执行（reconcile_alert 负责分级与短句）：
         告警落库要开自己的事务，嵌在对账事务里会让 SQLite 单写锁自堵（database is locked）。
+
+        顺带裁剪 scheduler_runs 旧批次行：查单兜底与关单复核把这里当去重账本用，
+        行数随订单线性增长，没有裁剪就是个慢速泄漏。
         """
         batch_key = now.date().isoformat()
-        await self._runs.claim("reconcile", batch_key, now)
+        await self._claim("reconcile", batch_key, now)
+        if prune_batches_older_than is not None:
+            await self._runs.prune_before(prune_batches_older_than)
 
         differences: list[ReconcileDifference] = []
         for user_id, balance in await self._ledger_source.list_accounts():

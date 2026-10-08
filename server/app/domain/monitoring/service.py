@@ -8,6 +8,7 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from app.domain.alerts.severity import availability_of
 from app.domain.monitoring.ports import (
     AlertThresholds,
     AlertTransition,
@@ -18,30 +19,65 @@ from app.domain.monitoring.ports import (
 
 
 class AlertEvaluator:
-    """告警状态机：活跃集合 diff -> 转换事件流。"""
+    """告警状态机：活跃集合 diff -> 转换事件流。
 
-    def __init__(self, thresholds: AlertThresholds) -> None:
-        self._rules: list[tuple[str, Callable[[MonitoringSample], float], float]] = [
-            ("p95_ms", lambda s: s.p95_ms, thresholds.p95_ms),
-            ("error_rate", lambda s: s.error_rate, thresholds.error_rate),
-            ("qps", lambda s: s.qps, thresholds.qps),
-            ("cpu_percent", lambda s: s.cpu_percent, thresholds.cpu_percent),
-            ("memory_percent", lambda s: s.memory_percent, thresholds.memory_percent),
-            ("db_query_p95_ms", lambda s: s.db_query_p95_ms, thresholds.db_query_p95_ms),
-            ("db_pool_usage", lambda s: s.db_pool_usage, thresholds.db_pool_usage),
+    规则含方向：延迟/错误率/容量是"超阈值"触发，可用性是"跌破阈值"触发。
+    可用性带最小样本门（低流量窗口里几个 5xx 就跌破 99.5% 属于统计噪声，不该叫醒值班）。
+    """
+
+    def __init__(
+        self,
+        thresholds: AlertThresholds,
+        *,
+        availability_target: float = 0.995,
+        availability_min_requests: float = 50.0,
+    ) -> None:
+        gt = "gt"
+        rules: list[tuple[str, Callable[[MonitoringSample], float], float, str]] = [
+            (metric, getter, thresholds.value_of(metric), gt)
+            for metric, getter in (
+                ("p95_ms", lambda s: s.p95_ms),
+                ("error_rate", lambda s: s.error_rate),
+                ("qps", lambda s: s.qps),
+                ("cpu_percent", lambda s: s.cpu_percent),
+                ("memory_percent", lambda s: s.memory_percent),
+                ("db_query_p95_ms", lambda s: s.db_query_p95_ms),
+                ("db_pool_usage", lambda s: s.db_pool_usage),
+            )
         ]
+        rules.append(
+            (
+                "availability",
+                lambda s: availability_of(
+                    s.error_rate, s.qps * s.window_seconds, availability_min_requests
+                ),
+                availability_target,
+                "lt",
+            )
+        )
+        self._rules = rules
         self._active: set[str] = set()
 
     @property
     def active(self) -> frozenset[str]:
         return frozenset(self._active)
 
+    def active_view(self) -> dict[str, str]:
+        """活跃告警视图（metric -> 文案），供 overview 即时读取。"""
+        thresholds = {metric: (getter, threshold, cmp) for metric, getter, threshold, cmp in self._rules}
+        out: dict[str, str] = {}
+        for metric in sorted(self._active):
+            _, threshold, cmp = thresholds[metric]
+            relation = "超过" if cmp == "gt" else "跌破"
+            out[metric] = f"{relation}阈值 {threshold:g}"
+        return out
+
     def evaluate(self, sample: MonitoringSample) -> list[AlertTransition]:
         """评估一次采样；返回新增触发/恢复的转换事件。"""
         triggered = {
             metric
-            for metric, getter, threshold in self._rules
-            if getter(sample) > threshold
+            for metric, getter, threshold, cmp in self._rules
+            if (getter(sample) > threshold if cmp == "gt" else getter(sample) < threshold)
         }
         transitions: list[AlertTransition] = []
         for metric in sorted(triggered - self._active):
@@ -54,8 +90,9 @@ class AlertEvaluator:
     def _transition(
         self, metric: str, sample: MonitoringSample, state: str
     ) -> AlertTransition:
-        getter = next(g for m, g, _ in self._rules if m == metric)
-        threshold = next(t for m, _, t in self._rules if m == metric)
+        getter, threshold, _ = next(
+            (g, t, c) for m, g, t, c in self._rules if m == metric
+        )
         return AlertTransition(
             metric=metric,
             state=state,

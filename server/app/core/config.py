@@ -46,10 +46,11 @@ class Settings(BaseSettings):
     monitoring_interval_seconds: float = 5.0  # 采样/推送周期
     monitoring_rate_window_seconds: float = 60.0  # QPS/错误率滑动窗口
     monitoring_retention_days: int = 7  # 分钟快照落库保留天数
+    monitoring_availability_min_requests: int = 50  # 可用性 P0 的最小样本门（低流量窗口不误报）
 
     # 告警阈值（ERDOS_ALERT_* 覆盖；看板内红色状态与告警事件判据）
     alert_p95_ms: float = 500.0
-    alert_error_rate: float = 0.05
+    alert_error_rate: float = 0.01  # 《服务端架构》§10 P1 口径：错误率 > 1%（原默认 5% 与文档不符）
     alert_qps: float = 100.0
     alert_cpu_percent: float = 85.0
     alert_memory_percent: float = 85.0
@@ -104,6 +105,8 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True  # false 时三大任务只剩管理端手动触发
     scheduler_tick_seconds: int = 60  # 轮询到点的间隔
     scheduler_tz_offset_hours: int = 8  # 东八区（无夏令时，固定偏移即可）
+    scheduler_stale_after_seconds: int = 1800  # 卡死批次可重占阈值（崩溃当月的月赠不能永久不再发放）
+    scheduler_runs_retention_days: int = 30  # scheduler_runs 批次账本保留天数（每日对账顺带裁剪）
 
     # Redis（SP2-7 多实例迁移）：跨进程防爆破/验证码限流
     redis_url: str | None = None  # 如 redis://127.0.0.1:6379/0；未配置时回退进程内实现

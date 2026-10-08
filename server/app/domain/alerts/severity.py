@@ -9,6 +9,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
+from typing import Final
 
 
 class Severity(StrEnum):
@@ -60,6 +61,39 @@ def classify_reconcile_diff(diff_count: int) -> Severity | None:
     if diff_count > 0:
         return Severity.P2
     return None
+
+
+# 《服务端架构》§10 与 PRD 6.1 的承诺：云端可用性 99.5%。这是产品口径，不做成部署可调项。
+SLO_AVAILABILITY: Final[float] = 0.995
+
+# 采样指标 -> SLO 档位。可用性是唯一 P0；错误率与延迟类为 P1；容量水位为 P2。
+# 延迟档按 P95 口径评估（PRD 写的是 P99>500ms），P99 需要监测表增列，
+# 该替换口径已登记待契约/架构评审确认，不假装它就是 P99。
+METRIC_SEVERITY: Final[dict[str, Severity]] = {
+    "availability": Severity.P0,
+    "error_rate": Severity.P1,
+    "p95_ms": Severity.P1,
+    "db_query_p95_ms": Severity.P1,
+    "qps": Severity.P2,
+    "cpu_percent": Severity.P2,
+    "memory_percent": Severity.P2,
+    "db_pool_usage": Severity.P2,
+}
+
+
+def severity_for_metric(metric: str) -> Severity:
+    """采样指标所属 SLO 档位；未知指标按 P2 兜底（宁可多报不可漏报）。"""
+    return METRIC_SEVERITY.get(metric, Severity.P2)
+
+
+def availability_of(error_rate: float, requests_in_window: float, min_requests: float) -> float:
+    """窗口可用性 = 1 - 5xx 占比；样本不足时返回 1.0（低流量下几个 5xx 不该触发 P0）。
+
+    error_rate 的口径就是 5xx 占比（infra/monitoring 只把 status>=500 计为错误）。
+    """
+    if requests_in_window < min_requests:
+        return 1.0
+    return 1.0 - error_rate
 
 
 class SilenceManager:

@@ -43,12 +43,22 @@ class ReconcileResult:
 class SchedulerRunRepository(Protocol):
     """调度批次仓储端口（task_name + batch_key 幂等）。"""
 
-    async def claim(self, task_name: str, batch_key: str, now: datetime) -> bool:
-        """尝试认领批次（唯一约束兜底）；返回 False 表示已执行过。"""
+    async def claim(
+        self, task_name: str, batch_key: str, now: datetime, *, stale_after_seconds: int = 0
+    ) -> bool:
+        """尝试认领批次（唯一约束兜底）；返回 False 表示本批次已被占用。
+
+        stale_after_seconds>0 时允许重占"running 但已卡死"的批次（上次执行崩在半路），
+        否则崩溃会让当月月赠永久不再发放；重复发放的安全性在积分流水 exec_id 上。
+        """
         ...
 
     async def mark_done(self, task_name: str, batch_key: str, result: str, now: datetime) -> None:
         """标记批次完成。"""
+        ...
+
+    async def prune_before(self, cutoff: datetime) -> int:
+        """删除 started_at < cutoff 的批次行，返回删除行数（账本必须有尽头）。"""
         ...
 
 

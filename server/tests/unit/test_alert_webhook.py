@@ -131,6 +131,9 @@ class FakeEvaluator:
     def evaluate(self, sample: Any) -> list[AlertTransition]:
         return self._transitions
 
+    def active_view(self) -> dict[str, str]:
+        return {}
+
 
 class FakeBroker:
     def __init__(self) -> None:
@@ -141,8 +144,18 @@ class FakeBroker:
 
 
 class TestSamplingIntegration:
-    async def test_transition_dispatches_webhook_and_keeps_dashboard(self, monkeypatch) -> None:
-        # 隔离落库（本测试聚焦外发接线；_persist 有独立测试覆盖）
+    async def test_transition_dispatches_webhook_and_keeps_dashboard(
+        self, monkeypatch, session_factory
+    ) -> None:
+        """采样告警经统一出口扇出：状态转换 -> 看板事件 + Webhook（含恢复通知）。
+
+        出口与落库口径本身由 test_alert_outlet.py 覆盖；本用例只证明监测循环不再自带
+        第二套告警外发实现。
+        """
+        from app.core.topics import EVENTS_TOPIC
+        from app.infra.alert_outlet import BrokerAlertOutlet
+        from app.infra.events import EventBroker
+
         async def fake_persist(**kwargs: Any) -> None:
             return None
 
@@ -150,31 +163,62 @@ class TestSamplingIntegration:
 
         send = RecordingSend()
         dispatcher = make_dispatcher(send, url="http://hook.example/alert")
-        broker = FakeBroker()
+        real_broker = EventBroker()
+        outlet = BrokerAlertOutlet(session_factory, real_broker, dispatcher)
         app = SimpleNamespace(
             state=SimpleNamespace(
                 engine=SimpleNamespace(pool=None),  # _pool_usage 对无池信息按 0 处理
                 session_factory=None,
                 monitoring_alerts={},
+                alert_outlet=outlet,
+                event_broker=real_broker,
+                settings=Settings(),
             )
         )
         result = await sampling._run_once(
             app=app,  # type: ignore[arg-type]
             collector=FakeCollector(),  # type: ignore[arg-type]
-            broker=broker,  # type: ignore[arg-type]
+            broker=broker_topics(EVENTS_TOPIC),  # type: ignore[arg-type]
             evaluator=FakeEvaluator(  # type: ignore[arg-type]
                 [transition("triggered"), transition("recovered")]
             ),
             settings=Settings(),
             last_minute=None,
-            webhook=dispatcher,
         )
         await asyncio_sleep0()
-        # 原有看板事件投影保持（2 条 monitor.alert 进事件总线；另有快照主题消息无 type）
-        alert_events = [p for p in broker.published if p.get("type") == "monitor.alert"]
+        # 原有看板事件投影保持（2 条 monitor.alert 进事件总线）
+        alert_events = await _alert_events(real_broker)
         assert len(alert_events) == 2
         # 旁路外发同样 2 条（payload 与事件口径一致）
         assert len(send.calls) == 2
         assert send.calls[0][1]["metric"] == "p95_ms"
         assert send.calls[1][1]["severity"] == "info"
         assert result is not None
+
+
+def broker_topics(_topic: str) -> FakeBroker:
+    """占位：监测循环内不再直接投影告警，broker 仅用于快照主题。"""
+    return FakeBroker()
+
+
+async def _alert_events(broker: object) -> list[dict]:
+    import asyncio
+    import contextlib
+
+    from app.core.topics import EVENTS_TOPIC
+
+    out: list[dict] = []
+    generator = broker.subscribe({EVENTS_TOPIC}, since=0)  # type: ignore[attr-defined]
+    try:
+        while True:
+            try:
+                event = await asyncio.wait_for(generator.__anext__(), timeout=0.1)
+            except (TimeoutError, StopAsyncIteration):
+                break
+            payload = dict(event.payload)
+            if payload.get("type") == "monitor.alert":
+                out.append(payload)
+    finally:
+        with contextlib.suppress(Exception):
+            await generator.aclose()
+    return out
