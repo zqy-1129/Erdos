@@ -34,6 +34,9 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/v1/billing/products"): "public",
     ("POST", "/v1/billing/callbacks/payment"): "public",  # HMAC 验签 fail-closed
     ("POST", "/v1/notifications/verification-code"): "public",  # 限流 60s/日10
+    # 匿名摄入是既有跨端契约（登录前事件靠设备级 distinct_id 归因）；收紧会静默打断
+    # 客户端 outbox 补报，伪造治理口径归 DEC-028，见 contracts/openapi.yaml 同条描述
+    ("POST", "/v1/telemetry/events"): "public",
     # ---- 登录用户 ----
     ("GET", "/v1/account/profile"): "user",
     ("POST", "/v1/account/password"): "user",
@@ -57,7 +60,6 @@ POLICY: dict[tuple[str, str], str] = {
     ("GET", "/v1/content/cases"): "user",
     ("GET", "/v1/content/manifest"): "user",
     ("POST", "/v1/presence/heartbeat"): "user",
-    ("POST", "/v1/telemetry/events"): "user",
     # ---- 管理端（admin 或 operator）----
     ("GET", "/v1/admin/dashboard/users/online"): "admin",
     ("GET", "/v1/admin/dashboard/users/total"): "admin",

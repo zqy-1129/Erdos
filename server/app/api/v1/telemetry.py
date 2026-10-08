@@ -1,8 +1,12 @@
 """遥测摄入接口（SP4-1）：/v1/telemetry/events。
 
 隐私红线：事件经 schema 校验 + props 白名单过滤，违禁字段拦截丢弃并告警。
-访问红线：需登录凭证——匿名批量摄入等于任何人可向行为看板/漏斗注入伪造事件（distinct_id
-与登录主体的绑定口径待 DE/DEC-028 定，本处先关闭匿名写入口）。
+
+匿名可达是**既有跨端契约**，不是漏洞：客户端 telemetry SDK 明确按"事件端点公开、登录时附带
+Bearer"实现（client/main/telemetry/sdk.ts），而注册漏斗、首题等事件恰恰发生在登录前，只能用
+设备级 distinct_id 归因。伪造风险的治理口径（批签名 / 共享上报密钥 / 采样校验）归数据平台裁决
+（DEC-028），不在服务端单方面收紧——本轮曾把它改成 require_principal，因会静默打断客户端
+outbox 补报而回退。
 """
 
 from typing import Annotated
@@ -11,12 +15,11 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.deps import get_session_factory, require_principal
+from app.api.deps import get_session_factory
 from app.core.envelope import Envelope, ok
 from app.core.logging import request_id_var
 from app.domain.telemetry.ports import TelemetryEvent
 from app.domain.telemetry.service import TelemetryService
-from app.infra.auth import Principal
 from app.repository.telemetry import SQLAlchemyTelemetryRepository
 from app.repository.uow import UnitOfWork
 
@@ -52,7 +55,6 @@ class IngestView(BaseModel):
 async def ingest_events(
     request: Request,
     payload: TelemetryBatchBody,
-    principal: Annotated[Principal, Depends(require_principal)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[IngestView]:
     """摄入遥测事件（批 1000 行）：schema 校验 + 白名单过滤 + 违禁拦截。"""

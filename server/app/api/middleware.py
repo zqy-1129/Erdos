@@ -51,6 +51,8 @@ PUBLIC_PATHS: frozenset[str] = frozenset(
         "/v1/billing/products",
         "/v1/billing/callbacks/payment",
         "/v1/notifications/verification-code",
+        # 登录前事件靠设备级 distinct_id 归因，收紧会打断客户端 outbox 补报（跨端契约）
+        "/v1/telemetry/events",
         "/metrics",
     }
 )

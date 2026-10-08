@@ -1320,13 +1320,12 @@ paths:
     post:
       tags: [telemetry]
       operationId: ingestTelemetryEvents
-      summary: 遥测事件批量摄入
+      summary: 遥测事件批量摄入（匿名可达）
       description: >
         SDK 批上报（≤1000 行）；props 白名单过滤，违禁字段拒绝；不含题面/Key。
-        需登录凭证：匿名摄入等于任何人可向行为看板/漏斗注入伪造事件。
-        distinct_id 与登录主体的绑定口径待数据平台裁决（DEC-028），本处只关闭匿名写入口。
-      security:
-        - BearerAuth: []
+        匿名可达是既有跨端契约：注册漏斗、首题等事件发生在登录前，只能按设备级 distinct_id
+        归因（客户端 telemetry SDK 按"公开端点 + 登录时附带 Bearer"实现）。伪造风险的治理
+        口径（批签名/共享上报密钥/采样校验）归数据平台裁决 DEC-028，服务端不得单方面收紧。
       requestBody:
         required: true
         content:
@@ -1339,7 +1338,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/EnvelopeIngestView" }
         "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
 
 components:
   securitySchemes:
