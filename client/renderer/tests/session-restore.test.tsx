@@ -9,7 +9,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 
 import { fakeBridge } from "./helpers.ts";
 import { App, createStores } from "../src/entry.tsx";
-import { createAppStores, restoreSessionAction } from "../src/state/app-stores.ts";
+import { createAppStores, refreshEntitlementAction, restoreSessionAction } from "../src/state/app-stores.ts";
 import { BRIDGE_CHANNELS } from "../src/bridges/bridge.ts";
 
 afterEach(cleanup);
@@ -99,5 +99,42 @@ describe("启动会话恢复", () => {
     await act(async () => {}); // flush 恢复的微任务
     expect(stores.session.getState().status).toBe("signed-in");
     expect(stores.session.getState().username).toBe("restored@example.com");
+  });
+});
+
+describe("启动权益快照回退（SP3-4 第二批）", () => {
+  it("主进程回退本地快照（stale=true）→ 状态保留快照余额与宽限倒计时", async () => {
+    const deadline = Date.now() + 60_000;
+    const bridge = fakeBridge({
+      results: {
+        [BRIDGE_CHANNELS.entitlementStatus]: {
+          status: "ready",
+          balance: 100,
+          graceDeadlineMs: deadline,
+          stale: true,
+        },
+      },
+    });
+    const stores = createAppStores(bridge);
+    await act(async () => {
+      await refreshEntitlementAction(stores);
+    });
+    expect(stores.entitlement.getState()).toEqual({
+      status: "ready",
+      balance: 100,
+      graceDeadlineMs: deadline,
+      stale: true,
+    });
+  });
+
+  it("通道异常（无本地快照）→ 保留上次状态并标 stale（不清零误导）", async () => {
+    const bridge = fakeBridge({ failChannels: new Set([BRIDGE_CHANNELS.entitlementStatus]) });
+    const stores = createAppStores(bridge);
+    stores.entitlement.setState({ status: "ready", balance: 100, graceDeadlineMs: null, stale: false });
+    await act(async () => {
+      await refreshEntitlementAction(stores);
+    });
+    expect(stores.entitlement.getState().balance).toBe(100);
+    expect(stores.entitlement.getState().stale).toBe(true);
   });
 });

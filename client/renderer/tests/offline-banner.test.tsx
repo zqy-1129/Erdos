@@ -1,6 +1,6 @@
 /**
  * 断网横幅测试（SP3-4 / US-006）：断网宽限倒计时与快照余额、
- * 超 72h 明确提示、冻结提示、同步失败轻提示、正常在线不渲染。
+ * 超 72h 明确提示（在线/断网均不吞没）、冻结提示、同步失败轻提示、正常在线不渲染。
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -83,5 +83,35 @@ describe("OfflineBanner 断网态分级提示", () => {
       />,
     );
     expect(getByText(/权益信息同步失败/)).toBeTruthy();
+  });
+
+  it("断网且宽限已超：危险提示不被「已断网」轻提示吞没", () => {
+    const { getByText, container } = render(
+      <OfflineBanner
+        {...makeStores({ online: false }, { ...READY, status: "grace_expired" })}
+      />,
+    );
+    expect(getByText(/已断网：离线宽限已超 72 小时/)).toBeTruthy();
+    expect(container.querySelector(".offline-banner.tone-danger")).toBeTruthy();
+  });
+
+  it("断网且冻结：危险提示（欠费派生不可用）", () => {
+    const { getByText, container } = render(
+      <OfflineBanner
+        {...makeStores({ online: false }, { ...READY, status: "frozen", balance: 0, graceDeadlineMs: null })}
+      />,
+    );
+    expect(getByText(/已断网：账号欠费已冻结/)).toBeTruthy();
+    expect(container.querySelector(".offline-banner.tone-danger")).toBeTruthy();
+  });
+
+  it("断网且无快照（未同步）：提示未同步，不展示「余额 0 分」假象", () => {
+    const { getByText, queryByText } = render(
+      <OfflineBanner
+        {...makeStores({ online: false }, { status: "empty", balance: 0, graceDeadlineMs: null, stale: false })}
+      />,
+    );
+    expect(getByText(/暂无本地权益快照/)).toBeTruthy();
+    expect(queryByText(/快照余额/)).toBeNull();
   });
 });

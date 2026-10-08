@@ -349,6 +349,7 @@ export class WebDemoBridge implements ErdosBridge {
           status: "ready",
           balance: 93,
           graceDeadlineMs: Date.now() + 72 * 3600 * 1000,
+          stale: false,
         };
         return Promise.resolve(view as T);
       }

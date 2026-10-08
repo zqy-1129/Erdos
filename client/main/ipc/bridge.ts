@@ -26,6 +26,7 @@ import {
   type BillingOverviewView,
   type EntitlementView,
 } from "./cloud-business.ts";
+import type { EntitlementStateStore } from "../entitlement/service.ts";
 import type { FetchLike } from "../cloud/http.ts";
 
 const STAGES = ["analysis", "modeling", "solving", "writing"];
@@ -54,6 +55,8 @@ export interface BridgeAuthOptions {
   fetchImpl?: FetchLike;
   /** 令牌加密落盘存储（SP3-4 本地安全存储；缺省内存 = 重启需重新登录）。 */
   sessionStore?: TokenStore | null;
+  /** 权益本地状态存储（SP3-4 第二批；缺省内存 = 重启后需联网刷新才恢复宽限）。 */
+  entitlementStore?: EntitlementStateStore | null;
 }
 
 /** 桥后端构造选项（FE-KEYIN 落库：密钥密文存储注入）。 */
@@ -117,6 +120,7 @@ export class BridgeBackend {
         baseUrl: auth.runtime.baseUrl,
         getToken: () => cloudAuth.getToken(),
         onUnauthorized: () => this.invalidateSession(),
+        entitlementStore: auth.entitlementStore ?? undefined,
         fetchImpl: auth.fetchImpl,
       });
       this.authMode = "cloud";
@@ -197,6 +201,8 @@ export class BridgeBackend {
     if (this.cloudAuth) {
       const view = await this.cloudAuth.login({ username, password });
       this.sessionUsername = view.username;
+      // 会话级缓存：登录即清旧权益快照（换账号离线回退不得展示上一账号数据）
+      this.cloudBusiness?.resetEntitlement();
       return view;
     }
     if (this.authMode === "unconfigured") {
@@ -212,6 +218,7 @@ export class BridgeBackend {
     if (this.cloudAuth) {
       const view = await this.cloudAuth.register({ username, password });
       this.sessionUsername = view.username;
+      this.cloudBusiness?.resetEntitlement(); // 同登录：新会话不带旧权益快照
       return view;
     }
     if (this.authMode === "unconfigured") {
@@ -223,6 +230,7 @@ export class BridgeBackend {
   /**
    * 注销：cloud 模式先请求服务端吊销（失败仅告警：本地会话已清，令牌到期自失效），
    * demo/unconfigured 仅清本地会话；始终返回空对象（渲染层不依赖结果）。
+   * 权益快照为会话级缓存，登出即清（防下一账号离线回退读到本账号数据）。
    */
   private async logout(): Promise<Record<string, never>> {
     if (this.cloudAuth) {
@@ -234,6 +242,7 @@ export class BridgeBackend {
       }
     }
     this.sessionUsername = null;
+    this.cloudBusiness?.resetEntitlement();
     return {};
   }
 
@@ -307,20 +316,21 @@ export class BridgeBackend {
   }
 
   /**
-   * 权益视图（entitlement:status）：cloud 已登录 → 云端快照（拉取 + JWKS 验签 + 72h 宽限）；
-   * 未登录 → 空态（不发起请求）；unconfigured → fail-closed；demo → 演示数据。
+   * 权益视图（entitlement:status）：cloud 已登录 → 云端快照（拉取 + JWKS 验签 + 72h 宽限；
+   * 刷新失败回退本地快照并标 stale）；未登录 → 空态（不发起请求）；
+   * unconfigured → fail-closed；demo → 演示数据。
    */
   private async entitlementStatus(): Promise<EntitlementView> {
     if (this.cloudBusiness) {
       if (!this.cloudAuth?.signedIn()) {
-        return { status: "empty", balance: 0, graceDeadlineMs: null };
+        return { status: "empty", balance: 0, graceDeadlineMs: null, stale: false };
       }
       return this.cloudBusiness.entitlement();
     }
     if (this.authMode === "unconfigured") {
       throw new Error("未配置云端服务地址（ERDOS_API_BASE_URL），权益不可用");
     }
-    return { status: "ready", balance: 93, graceDeadlineMs: Date.now() + 72 * 3600 * 1000 };
+    return { status: "ready", balance: 93, graceDeadlineMs: Date.now() + 72 * 3600 * 1000, stale: false };
   }
 
   /** 账单总览（billing:overview）：cloud 已登录 → 订阅 + 余额；未登录/未配置 → 报错（页面需登录态）。 */

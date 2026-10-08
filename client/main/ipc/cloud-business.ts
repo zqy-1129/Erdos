@@ -2,8 +2,8 @@
  * 云端业务通道接线（SP3-5 应用层）：权益快照 / 账单（订阅 + 余额 + 流水）→ 桥视图。
  *
  * - 权益：复用 SP3-5 云端适配层（createCloudEntitlementService：拉取 /v1/entitlements/snapshot
- *   → JWKS 验签 → 防回拨落库 → 72h 宽限），桥视图由本地快照派生；刷新失败原样抛出，
- *   由渲染层标记 stale 并保留上次快照与倒计时（见 offline-banner.tsx）；
+ *   → JWKS 验签 → 防回拨落库 → 72h 宽限），桥视图由本地快照派生；
+ *   刷新失败时回退本地快照视图并标 stale（离线宽限跨重启，见 entitlement()）；
  * - 账单：/v1/billing/subscription（契约按 plan 维度，monthly/yearly 并行取后择取；
  *   null=免费版）+ /v1/points/balance（余额）+ /v1/points/ledger（流水页，时间倒序）；
  * - 401/403 → onUnauthorized（挂 SessionTokenProvider.clearSession，回退匿名防死循环），
@@ -14,7 +14,7 @@
 import { CloudApiError } from "../cloud/envelope.ts";
 import { CloudHttpClient, type FetchLike } from "../cloud/http.ts";
 import { createCloudEntitlementService } from "../cloud/entitlement-cloud.ts";
-import type { EntitlementService } from "../entitlement/service.ts";
+import type { EntitlementService, EntitlementStateStore } from "../entitlement/service.ts";
 import type { EntitlementStatus } from "../entitlement/types.ts";
 
 // ---------------------------------------------------------------------------
@@ -27,6 +27,8 @@ export interface EntitlementView {
   balance: number;
   /** 宽限到期时刻（绝对 ms 时间戳；null=无快照）。 */
   graceDeadlineMs: number | null;
+  /** true=联网刷新失败、本次为本地快照视图（渲染层显示「同步失败」轻提示）。 */
+  stale: boolean;
 }
 
 /** 账单总览（渲染层 BillingOverview）。 */
@@ -149,7 +151,10 @@ export function normalizeIso(ts: string): string {
 }
 
 /** 已验证快照 → 权益视图（balance=购买余额+月度余额；宽限到期=最近同步+72h）。 */
-export function entitlementViewOf(service: EntitlementService, nowMs: number): EntitlementView {
+export function entitlementViewOf(
+  service: EntitlementService,
+  nowMs: number,
+): Omit<EntitlementView, "stale"> {
   const snapshot = service.snapshot();
   const remaining = service.graceRemainingMs();
   return {
@@ -196,6 +201,8 @@ export interface CloudBusinessOptions {
   getToken?: (() => Promise<string | null>) | undefined;
   /** 401/403 清会话回调（挂 SessionTokenProvider.clearSession）。 */
   onUnauthorized?: ((status: number) => void) | undefined;
+  /** 权益本地状态存储（SP3-4 第二批：宽限/防重放门跨重启延续；缺省内存）。 */
+  entitlementStore?: EntitlementStateStore | null;
   /** 传输注入（测试/联调）。 */
   fetchImpl?: FetchLike;
   timeoutMs?: number;
@@ -211,6 +218,7 @@ export class CloudBusinessBridge {
   private readonly clock: () => number;
 
   constructor(options: CloudBusinessOptions) {
+    this.clock = options.clock ?? (() => Date.now());
     this.http = new CloudHttpClient({
       baseUrl: options.baseUrl,
       getToken: options.getToken,
@@ -219,26 +227,50 @@ export class CloudBusinessBridge {
       timeoutMs: options.timeoutMs,
       maxRetries: options.maxRetries,
     });
-    // 权益链路复用 SP3-5 适配层（独立客户端实例；注入同一令牌/清会话回调）
+    // 权益链路复用 SP3-5 适配层（独立客户端实例；注入同一令牌/清会话回调/本地状态存储；
+    // 时钟与桥视图同源：宽限剩余与到期时刻必须基于同一时间基准计算）
     this.entitlementService = createCloudEntitlementService({
       baseUrl: options.baseUrl,
       getToken: options.getToken,
       onUnauthorized: options.onUnauthorized,
+      store: options.entitlementStore ?? undefined,
+      clock: this.clock,
       fetchImpl: options.fetchImpl,
       timeoutMs: options.timeoutMs,
       maxRetries: options.maxRetries,
     });
-    this.clock = options.clock ?? (() => Date.now());
+  }
+
+  /**
+   * 清空本地权益状态（会话级缓存语义）：BridgeBackend 在登录/注册/登出时调用，
+   * 防跨账号离线回退展示上一账号快照；清空后需联网刷新重建。
+   */
+  resetEntitlement(): void {
+    this.entitlementService.reset();
   }
 
   /**
    * 权益视图：联网刷新（拉取 → JWKS 验签 → 防回拨）成功后返回最新视图。
-   * 刷新失败（网络/验签/重放）原样抛出：渲染层标记 stale，保留上次快照与宽限倒计时。
+   * 刷新失败但有本地快照（含跨重启恢复的落盘快照）→ 返回本地视图并标 stale，
+   * 保证断网启动仍可展示快照余额与宽限倒计时；无本地快照/会话失效（401/403）原样抛出。
    */
   async entitlement(): Promise<EntitlementView> {
     return this.guard(async () => {
-      await this.entitlementService.refresh();
-      return entitlementViewOf(this.entitlementService, this.clock());
+      try {
+        await this.entitlementService.refresh();
+        return { ...entitlementViewOf(this.entitlementService, this.clock()), stale: false };
+      } catch (error) {
+        // 401/403：会话已由 onUnauthorized 清除，渲染层回登录页（不透出旧快照）
+        if (error instanceof CloudApiError && (error.httpStatus === 401 || error.httpStatus === 403)) {
+          throw error;
+        }
+        const local = entitlementViewOf(this.entitlementService, this.clock());
+        if (local.status === "empty") throw error; // 无本地快照：无法回退（渲染层 stale 轻提示）
+        // 可观测：回退不静默（含验签失败/重放等安全类错误的归因线索）
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(`[client] 权益刷新失败，回退本地快照（stale）：${reason}`);
+        return { ...local, stale: true };
+      }
     });
   }
 

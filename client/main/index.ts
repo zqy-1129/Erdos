@@ -18,6 +18,7 @@ import { isAllowedSenderUrl } from "./ipc/guard.ts";
 import { createSqliteSecretStore } from "./sqlite-secret-store.ts";
 import { createPlatformEncryptor } from "./safe-storage-encryptor.ts";
 import { createEncryptedTokenStore } from "./cloud/session-store.ts";
+import { createEncryptedEntitlementStateStore } from "./entitlement/state-store.ts";
 import { ensureDeviceFingerprint } from "./device-identity.ts";
 import { resolveAuthRuntime } from "./ipc/cloud-auth.ts";
 import { verifyEngineDir } from "./tamper-check.ts";
@@ -85,9 +86,20 @@ function registerBridgeIpc(): void {
     console.warn("[client] 会话落盘不可用（SQLite 降级）：重启后需重新登录");
   }
   console.log(`[client] 会话落盘：${sessionStore ? "已启用（加密）" : "未启用（内存）"}`);
+  // SP3-4 第二批：权益快照 + 同步元数据加密落盘（断网重启仍可展示快照余额与 72h 宽限倒计时）
+  const entitlementStore = secretStore
+    ? createEncryptedEntitlementStateStore({
+        secrets: secretStore,
+        encryptor: createPlatformEncryptor((message) => console.warn(`[client] ${message}`)),
+      })
+    : null;
+  if (!entitlementStore) {
+    console.warn("[client] 权益快照落盘不可用（SQLite 降级）：重启后需联网刷新恢复宽限");
+  }
+  console.log(`[client] 权益快照落盘：${entitlementStore ? "已启用（加密）" : "未启用（内存）"}`);
   bridgeBackend = new BridgeBackend({
     secretStore,
-    auth: { runtime, fingerprint, platform: process.platform, sessionStore },
+    auth: { runtime, fingerprint, platform: process.platform, sessionStore, entitlementStore },
     // 会话失效下发：业务 401 清会话后推给渲染层（回登录页；见 app-stores.bindSessionInvalidation）
     onSessionInvalidated: () => {
       mainWindow?.webContents.send(BRIDGE_CHANNELS.authSessionInvalidated, { reason: "unauthorized" });

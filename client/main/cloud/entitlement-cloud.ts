@@ -6,40 +6,27 @@
  * - createCloudEntitlementService → 装配上述 + JWKS 验签解析为 EntitlementService。
  */
 
-import { EntitlementService, type SnapshotFetcher } from "../entitlement/service.ts";
-import type {
-  EntitlementPayload,
-  EntitlementSnapshot,
-  OfflineSyncItem,
-  OfflineSyncResult,
+import { EntitlementService, type SnapshotFetcher, type EntitlementStateStore } from "../entitlement/service.ts";
+import {
+  isEntitlementPayload,
+  type EntitlementSnapshot,
+  type OfflineSyncItem,
+  type OfflineSyncResult,
 } from "../entitlement/types.ts";
 import { CloudHttpClient, type FetchLike } from "./http.ts";
 import { JwksKeyResolver } from "./jwks.ts";
-
-function isPayload(value: unknown): value is EntitlementPayload {
-  if (typeof value !== "object" || value === null) return false;
-  const p = value as Record<string, unknown>;
-  return (
-    typeof p["subscribed"] === "boolean" &&
-    (typeof p["sub_end_at"] === "string" || p["sub_end_at"] === null) &&
-    typeof p["purchased_balance"] === "number" &&
-    typeof p["monthly_balance"] === "number" &&
-    typeof p["frozen"] === "boolean" &&
-    typeof p["issued_at"] === "string"
-  );
-}
 
 function parseSnapshot(value: unknown): EntitlementSnapshot {
   if (typeof value !== "object" || value === null) {
     throw new Error("快照响应形状非法");
   }
   const s = value as Record<string, unknown>;
-  if (!isPayload(s["payload"]) || typeof s["signature"] !== "string" ||
+  if (!isEntitlementPayload(s["payload"]) || typeof s["signature"] !== "string" ||
       typeof s["key_version"] !== "string" || typeof s["issued_at"] !== "string") {
     throw new Error("快照响应形状非法");
   }
   return {
-    payload: s["payload"] as EntitlementPayload,
+    payload: s["payload"] as EntitlementSnapshot["payload"],
     signature: s["signature"] as string,
     key_version: s["key_version"] as string,
     issued_at: s["issued_at"] as string,
@@ -86,6 +73,10 @@ export interface CloudEntitlementOptions {
   getToken?: (() => Promise<string | null>) | undefined;
   /** 401/403 清会话回调（挂 SessionTokenProvider.clearSession 回退匿名）。 */
   onUnauthorized?: ((status: number) => void) | undefined;
+  /** 权益本地状态存储（SP3-4 第二批：宽限/防重放门跨重启延续；缺省内存）。 */
+  store?: EntitlementStateStore | null;
+  /** ms 时间戳时钟（与桥视图同源；缺省真实时钟）。 */
+  clock?: () => number;
   /** 传输注入（测试/联调；透传 CloudHttpClient）。 */
   fetchImpl?: FetchLike;
   timeoutMs?: number;
@@ -108,5 +99,7 @@ export function createCloudEntitlementService(
     fetcher: new CloudSnapshotFetcher(http),
     keyResolver: new JwksKeyResolver(http),
     uploader: new CloudOfflineSyncUploader(http),
+    store: options.store ?? undefined,
+    clock: options.clock,
   });
 }

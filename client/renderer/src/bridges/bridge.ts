@@ -30,6 +30,8 @@ export interface EntitlementView {
   balance: number;
   /** 宽限到期时刻（绝对 ms 时间戳；null=无快照），供断网横幅倒计时。 */
   graceDeadlineMs: number | null;
+  /** true=联网刷新失败、本次为本地快照视图（显示「同步失败」轻提示）。 */
+  stale: boolean;
 }
 
 export interface KeyItemView {

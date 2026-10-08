@@ -20,7 +20,8 @@ import {
   parseSubscription,
   pickSubscription,
 } from "../main/ipc/cloud-business.ts";
-import { EntitlementService } from "../main/entitlement/service.ts";
+import { EntitlementService, InMemoryEntitlementStateStore } from "../main/entitlement/service.ts";
+import type { EntitlementStateStore } from "../main/entitlement/service.ts";
 import type { EntitlementPayload } from "../main/entitlement/types.ts";
 import { canonicalBytes } from "../main/entitlement/verify.ts";
 import { newFingerprint } from "../main/device-identity.ts";
@@ -96,7 +97,11 @@ function stubFetch(
 }
 
 /** 单测旁路：直接装配 EntitlementService（不触网）。 */
-function makeEntitlementService(now: () => number, snapshots: unknown[] = []): EntitlementService {
+function makeEntitlementService(
+  now: () => number,
+  snapshots: unknown[] = [],
+  store?: EntitlementStateStore,
+): EntitlementService {
   return new EntitlementService({
     fetcher: {
       fetch: async () => snapshots.shift() as never,
@@ -105,6 +110,7 @@ function makeEntitlementService(now: () => number, snapshots: unknown[] = []): E
     uploader: {
       upload: async () => ({ applied: 0, duplicate: 0, insufficient: 0, frozen: false }),
     },
+    store,
     clock: now,
     graceMs: GRACE_MS,
   });
@@ -116,11 +122,13 @@ function makeBridge(options: {
   now?: () => number;
   token?: string | null;
   onUnauthorized?: (status: number) => void;
+  entitlementStore?: EntitlementStateStore | null;
 }): CloudBusinessBridge {
   return new CloudBusinessBridge({
     baseUrl: "http://stub",
     getToken: async () => options.token ?? null,
     onUnauthorized: options.onUnauthorized,
+    entitlementStore: options.entitlementStore,
     maxRetries: 0,
     fetchImpl: stubFetch(options.routes, options.captured),
     clock: options.now,
@@ -237,12 +245,100 @@ describe("CloudBusinessBridge 云链路（fetch 桩）", () => {
       token: "at-1",
     });
     const view = await bridge.entitlement();
-    assert.deepEqual(view, { status: "ready", balance: 100, graceDeadlineMs: BASE + GRACE_MS });
+    assert.deepEqual(view, { status: "ready", balance: 100, graceDeadlineMs: BASE + GRACE_MS, stale: false });
     const snapshotRequest = captured.find((r) => r.url.endsWith("/v1/entitlements/snapshot"));
     assert.equal(snapshotRequest?.headers["authorization"], "Bearer at-1");
   });
 
-  it("权益：快照被篡改（验签失败）→ 原样抛错（渲染层标记 stale）", async () => {
+  it("权益：刷新失败但有本地快照（重启恢复）→ 回退本地视图并标 stale", async () => {
+    // 上一进程已落盘快照（同一 store 注入：模拟重启后磁盘状态）；本进程网络不可达
+    let now = BASE;
+    const store = new InMemoryEntitlementStateStore();
+    await makeEntitlementService(
+      () => now,
+      [signedSnapshot(BASE, { purchased_balance: 20, monthly_balance: 80 })],
+      store,
+    ).refresh();
+
+    now = BASE + 3600_000; // 重启后离线 1h：宽限应按落盘同步时间延续
+    const bridge = makeBridge({ routes: {}, now: () => now, entitlementStore: store });
+    assert.deepEqual(await bridge.entitlement(), {
+      status: "ready",
+      balance: 100,
+      graceDeadlineMs: BASE + GRACE_MS,
+      stale: true,
+    });
+  });
+
+  it("权益：刷新失败且无本地快照 → 原样抛错（不回退假态）", async () => {
+    const bridge = makeBridge({ routes: {}, now: () => BASE });
+    await assert.rejects(() => bridge.entitlement(), /未预期请求/);
+  });
+
+  it("权益：401 → 不回退本地快照，触发清会话并归一为「登录已失效」", async () => {
+    let now = BASE;
+    const store = new InMemoryEntitlementStateStore();
+    await makeEntitlementService(() => now, [signedSnapshot(BASE)], store).refresh();
+    now = BASE + 1000;
+
+    let unauthorized = 0;
+    const bridge = makeBridge({
+      routes: {
+        "/v1/entitlements/snapshot": {
+          status: 401,
+          body: JSON.stringify({ code: 40101, message: "未认证", detail: null }),
+        },
+      },
+      now: () => now,
+      entitlementStore: store,
+      onUnauthorized: () => {
+        unauthorized += 1;
+      },
+    });
+    await assert.rejects(() => bridge.entitlement(), /登录已失效/);
+    assert.equal(unauthorized, 1);
+  });
+
+  it("权益：快照 200 但 JWKS 401 → 同样清会话并归一为「登录已失效」（不回退本地快照）", async () => {
+    let now = BASE;
+    const store = new InMemoryEntitlementStateStore();
+    await makeEntitlementService(() => now, [signedSnapshot(BASE)], store).refresh();
+    now = BASE + 1000;
+
+    let unauthorized = 0;
+    const bridge = makeBridge({
+      routes: {
+        "/v1/auth/jwks": {
+          status: 401,
+          body: JSON.stringify({ code: 40101, message: "未认证", detail: null }),
+        },
+        "/v1/entitlements/snapshot": { status: 200, body: envelope(signedSnapshot(BASE + 1000)) },
+      },
+      now: () => now,
+      entitlementStore: store,
+      onUnauthorized: () => {
+        unauthorized += 1;
+      },
+    });
+    await assert.rejects(() => bridge.entitlement(), /登录已失效/);
+    assert.equal(unauthorized, 1);
+  });
+
+  it("resetEntitlement（会话级缓存）：清空后刷新失败不再回退本地快照", async () => {
+    const now = BASE;
+    const store = new InMemoryEntitlementStateStore();
+    await makeEntitlementService(() => now, [signedSnapshot(BASE)], store).refresh();
+
+    const bridge = makeBridge({ routes: {}, now: () => now, entitlementStore: store });
+    bridge.resetEntitlement();
+    await assert.rejects(
+      () => bridge.entitlement(),
+      /未预期请求/,
+      "登录/登出清空本地快照后，无本地状态可回退（防换账号离线回退泄漏）",
+    );
+  });
+
+  it("权益：快照被篡改（验签失败）→ 原样抛错（无本地快照时不透出旧值）", async () => {
     const tampered = signedSnapshot(BASE) as { payload: EntitlementPayload; signature: string };
     tampered.payload.purchased_balance = 9999; // 改载荷不重签 → 验签必失败
     const bridge = makeBridge({

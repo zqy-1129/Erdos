@@ -20,6 +20,8 @@ export interface OfflineLedger {
   pendingItems(): OfflineLedgerEntry[];
   /** 上报成功后标记已对账。 */
   markUploaded(execIds: string[]): void;
+  /** 清空账本（会话级缓存：登录/注册/登出时随账号切换清空，防旧账号待补扣残留）。 */
+  clear(): void;
 }
 
 /** 内存实现（SP3-4 前作为客户端默认存储；时钟可注入便于测试）。 */
@@ -78,6 +80,10 @@ export class InMemoryOfflineLedger implements OfflineLedger {
       const entry = this.entries.get(execId);
       if (entry && !entry.uploaded) entry.uploaded = true;
     }
+  }
+
+  clear(): void {
+    this.entries.clear();
   }
 
   /** 转上报条目（SP3-5 云端集成的 /v1/points/offline-sync 请求体）。 */

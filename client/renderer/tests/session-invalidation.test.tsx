@@ -1,6 +1,7 @@
 /**
- * 会话失效下发测试（上批评审遗留项修复）：
+ * 会话失效下发测试（上批评审遗留项修复 + SP3-4 第二批权益清空）：
  * 主进程业务 401 清会话后推送 auth:session-invalidated → 渲染层回登录页并显示可读提示；
+ * 会话回落/登出同时清空会话级权益视图（防换账号残留上一账号余额）；
  * dispose 后订阅清理，事件不再改变会话。
  */
 
@@ -9,6 +10,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 
 import { fakeBridgeHandle } from "./helpers.ts";
 import { App, createStores } from "../src/entry.tsx";
+import { logoutAction } from "../src/state/app-stores.ts";
 import { BRIDGE_CHANNELS } from "../src/bridges/bridge.ts";
 
 afterEach(cleanup);
@@ -79,5 +81,38 @@ describe("会话失效下发", () => {
       handle.emit(BRIDGE_CHANNELS.authSessionInvalidated, { reason: "unauthorized" });
     });
     expect(stores.session.getState().status).toBe("signed-in");
+  });
+
+  it("会话失效回落同时清空会话级权益视图（防旧账号余额残留）", () => {
+    const handle = fakeBridgeHandle({ results: SIGNED_IN_RESULTS });
+    const stores = createStores(handle.bridge);
+    act(() => {
+      stores.session.setState({ status: "signed-in", username: "demo" });
+      stores.entitlement.setState({ status: "ready", balance: 93, graceDeadlineMs: 1, stale: false });
+    });
+    act(() => {
+      handle.emit(BRIDGE_CHANNELS.authSessionInvalidated, { reason: "unauthorized" });
+    });
+    expect(stores.entitlement.getState()).toEqual({
+      status: "empty",
+      balance: 0,
+      graceDeadlineMs: null,
+      stale: false,
+    });
+  });
+
+  it("登出同时清空会话级权益视图（防下一账号离线回退残留展示）", () => {
+    const handle = fakeBridgeHandle({ results: SIGNED_IN_RESULTS });
+    const stores = createStores(handle.bridge);
+    act(() => {
+      stores.session.setState({ status: "signed-in", username: "demo" });
+      stores.entitlement.setState({ status: "ready", balance: 93, graceDeadlineMs: 1, stale: false });
+    });
+    act(() => {
+      logoutAction(stores);
+    });
+    expect(stores.session.getState().status).toBe("anonymous");
+    expect(stores.entitlement.getState().balance).toBe(0);
+    expect(stores.entitlement.getState().status).toBe("empty");
   });
 });
