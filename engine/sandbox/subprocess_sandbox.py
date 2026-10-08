@@ -9,6 +9,8 @@
 
 import asyncio
 import os
+import shutil
+import sys
 from pathlib import Path
 
 from engine.sandbox.base import (
@@ -23,19 +25,70 @@ from engine.sandbox.base import (
 # 允许透传给沙箱子进程的环境变量白名单（禁止 Key/敏感变量）
 _ENV_WHITELIST = ("PATH", "SYSTEMROOT", "TEMP", "TMP", "LANG", "PYTHONPATH")
 
+# 解释器探测超时：探测失败要快，不能占用求解阶段的 120s 执行预算
+_INTERPRETER_PROBE_TIMEOUT = 5.0
+
+
+async def _probe_interpreter(python: str) -> bool:
+    """候选解释器能否真正执行代码（商店占位 stub / 不存在路径都会在这里被排除）。"""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            python, "-c", "pass",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError:
+        return False
+    try:
+        _, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=_INTERPRETER_PROBE_TIMEOUT)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return False
+    return proc.returncode == 0
+
+
+async def resolve_python(explicit: str | None = None) -> str | None:
+    """解析沙箱可用的 Python 执行体，找不到返回 None（不静默退化为"裸跑"）。
+
+    优先级：`ERDOS_SANDBOX_PYTHON`（打包分发时由壳指向随附解释器）→ 未冻结时的
+    `sys.executable`（开发/测试环境，确定性最好）→ PATH 上的 python3/python（逐个探测）。
+    为什么不能写死 `"python"`：Windows 上它常解析到微软商店的 App Execution Alias 占位
+    stub，GUI 父进程派生时会挂到执行超时上限；PyInstaller 冻结后 `sys.executable` 又是
+    引擎自身 exe，必须由 `ERDOS_SANDBOX_PYTHON` 指定随附解释器（正式隔离路径是 Docker）。
+    """
+    override = explicit or os.environ.get("ERDOS_SANDBOX_PYTHON")
+    path_candidates = [p for p in (shutil.which("python3"), shutil.which("python")) if p]
+    if override:
+        # 显式配置就只认它：探测失败如实报错，不静默回退到别的解释器（EC 原则 2）
+        candidates: list[str] = [override]
+    elif getattr(sys, "frozen", False):
+        # PyInstaller 冻结后 sys.executable 是引擎自身 exe，只能走随附解释器或 PATH 探测
+        candidates = path_candidates
+    else:
+        candidates = [sys.executable, *path_candidates]
+    for cand in candidates:
+        if await _probe_interpreter(cand):
+            return cand
+    return None
+
 
 class SubprocessSandbox:
     """subprocess 降级沙箱：python 子进程 + 超时强杀 + 环境隔离 + 路径校验。"""
 
     isolation_mode = "subprocess"  # 显式上报（DEC-006：降级不得宣称为安全隔离）
 
-    def __init__(self, timeout: float = 120.0, memory_limit_mb: int = 2048) -> None:
+    def __init__(
+        self, timeout: float = 120.0, memory_limit_mb: int = 2048, python: str | None = None
+    ) -> None:
         if timeout <= 0:
             raise ValueError("timeout 必须 >0")
         self._timeout = timeout
         # subprocess 模式无法精确限制内存（Windows Job Object 需额外实现），
         # 此处记录限制供未来接入，Docker 模式由 --memory 精确限制。
         self._memory_limit_mb = memory_limit_mb
+        self._python = python  # 显式指定执行体（打包分发时由壳传入随附解释器路径）
+        self._resolved: str | None | bool = False  # False=未探测；None=探测后确认不可用
 
     async def execute(self, code: str, files: dict[str, str], work_dir: Path) -> ExecutionResult:
         """执行代码：落 files → 写脚本 → subprocess 执行 → 捕获结果 → 扫产物。"""
@@ -59,10 +112,23 @@ class SubprocessSandbox:
         # 3. 受限环境变量（不传 Key/敏感变量）
         env = {k: v for k, v in os.environ.items() if k in _ENV_WHITELIST}
 
-        # 4. subprocess 执行（cwd=工作目录，超时强杀）
+        # 4. 解析执行体（探测结果缓存复用；不可用则快速失败，不烧掉执行超时预算）
+        if self._resolved is False:
+            self._resolved = await resolve_python(self._python)
+        python = self._resolved if isinstance(self._resolved, str) else None
+        if python is None:
+            return ExecutionResult(
+                exit_code=-1, stdout="", stderr="",
+                error=(
+                    "未找到可用的 Python 执行体（subprocess 降级模式需随附解释器）："
+                    "请设置 ERDOS_SANDBOX_PYTHON 指向可用 python，或启用 Docker 沙箱"
+                ),
+            )
+
+        # 5. subprocess 执行（cwd=工作目录，超时强杀）
         try:
             proc = await asyncio.create_subprocess_exec(
-                "python", str(script),
+                python, str(script),
                 cwd=str(work_dir),
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
