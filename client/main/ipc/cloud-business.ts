@@ -11,6 +11,7 @@
  *
  * 本模块不依赖 electron（node:test 直接加载）；令牌经 getToken 注入，不出主进程。
  */
+import path from "node:path";
 import { CloudApiError } from "../cloud/envelope.ts";
 import { CloudHttpClient, type FetchLike } from "../cloud/http.ts";
 import { createCloudEntitlementService } from "../cloud/entitlement-cloud.ts";
@@ -45,6 +46,24 @@ export interface BillingLedgerRowView {
   stage: string;
   points: number;
   taskId: string;
+}
+
+/**
+ * 导出落盘回调（主进程接线为原生保存对话框 + 写盘；测试注入桩）。
+ * 返回实际保存路径；用户取消时 canceled=true、path=null（不写盘、不报错）。
+ */
+export type ExportSaver = (
+  suggestedName: string,
+  content: string,
+) => Promise<{ canceled: boolean; path: string | null }>;
+
+/** 账单导出视图（渲染层 BillingExportView）。 */
+export interface BillingExportView {
+  /** 建议/实际文件名（取消时为建议名）。 */
+  filename: string;
+  /** 实际保存路径（用户取消或未落盘为 null）。 */
+  savedPath: string | null;
+  canceled: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +167,13 @@ export function parseLedgerPage(value: unknown): LedgerPage {
 /** ISO 时间归一（服务端 datetime 序列化为 +00:00，渲染层按 Z 形态截断展示）。 */
 export function normalizeIso(ts: string): string {
   return ts.replace("+00:00", "Z");
+}
+
+/** 导出文件名时间戳（本地时区 YYYYMMDD-HHmm，便于用户区分多次导出）。 */
+export function formatStamp(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
 }
 
 /** 已验证快照 → 权益视图（balance=购买余额+月度余额；宽限到期=最近同步+72h）。 */
@@ -293,6 +319,31 @@ export class CloudBusinessBridge {
       const page = parseLedgerPage(await this.http.get("/v1/points/ledger?limit=50"));
       return page.items.map(ledgerRowOf);
     });
+  }
+
+  /**
+   * 积分流水 CSV 导出：GET /v1/points/ledger/export（裸 CSV，上限 200 条）
+   * → 经注入的保存回调落盘（原生保存对话框由主进程接线方提供；取消不视为失败）。
+   * 注：fetch 的 text() 解码会剥离响应开头的 BOM；契约要求 UTF-8 BOM（Excel 兼容），
+   * 故落盘前补回（内容语义不变，仅恢复服务端发出的 BOM 前缀）。
+   */
+  async exportLedgerCsv(save: ExportSaver): Promise<BillingExportView> {
+    const csv = await this.guard(() => this.http.getRaw("/v1/points/ledger/export"));
+    const content = csv.startsWith("\ufeff") ? csv : `\ufeff${csv}`;
+    const suggestedName = `erdos-ledger-${formatStamp(this.clock())}.csv`;
+    let result: { canceled: boolean; path: string | null };
+    try {
+      result = await save(suggestedName, content);
+    } catch (error) {
+      // 落盘失败（磁盘/权限/对话框异常）归一为可读前缀（渲染层直接展示；经 IPC 不被裸前缀污染）
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`导出保存失败：${reason}`, { cause: error });
+    }
+    return {
+      filename: result.path ? path.basename(result.path) : suggestedName,
+      savedPath: result.path,
+      canceled: result.canceled,
+    };
   }
 
   /**

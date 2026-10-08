@@ -24,7 +24,7 @@ body { font-family: var(--font); color: var(--text); background: var(--bg); font
 .muted { color: var(--muted); }
 .pos { color: var(--ok); }
 .neg { color: var(--danger); }
-.ok-text { color: var(--ok); margin-left: 8px; }
+.ok-text { color: var(--ok); margin-left: 8px; overflow-wrap: anywhere; }
 .form-error { color: var(--danger); margin: 6px 0; font-size: 13px; }
 
 /* ---------- 壳 ---------- */

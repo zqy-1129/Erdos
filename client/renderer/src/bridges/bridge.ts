@@ -77,6 +77,15 @@ export interface BillingOverview {
   pointsBalance: number;
 }
 
+/** 流水导出结果（billing:export）：真实保存路径或演示文件名；取消=用户主动放弃。 */
+export interface BillingExportView {
+  /** 建议/实际文件名（取消时为建议名）。 */
+  filename: string;
+  /** 实际保存路径（用户取消或演示模式为 null）。 */
+  savedPath: string | null;
+  canceled: boolean;
+}
+
 export interface ContentItem {
   id: string;
   kind: "template" | "case";

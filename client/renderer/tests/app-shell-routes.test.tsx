@@ -13,17 +13,20 @@ import type { AppStores } from "../src/state/app-stores.ts";
 
 afterEach(cleanup);
 
-function signedInStores(): AppStores {
-  const bridge = fakeBridge({
-    results: {
-      [BRIDGE_CHANNELS.keysList]: [],
-      [BRIDGE_CHANNELS.billingOverview]: { planName: "免费版", subEndAt: null, pointsBalance: 0 },
-      [BRIDGE_CHANNELS.billingLedger]: [],
-      [BRIDGE_CHANNELS.contentList]: [],
-      [BRIDGE_CHANNELS.historyList]: [],
-      [BRIDGE_CHANNELS.entitlementStatus]: { status: "ready", balance: 93, graceDeadlineMs: Date.now() + 72 * 3600 * 1000 },
-    },
-  });
+/** 登录态基础通道数据（导出用例需持有结果对象引用以便中途改桩）。 */
+function baseResults(): Record<string, unknown> {
+  return {
+    [BRIDGE_CHANNELS.keysList]: [],
+    [BRIDGE_CHANNELS.billingOverview]: { planName: "免费版", subEndAt: null, pointsBalance: 0 },
+    [BRIDGE_CHANNELS.billingLedger]: [],
+    [BRIDGE_CHANNELS.contentList]: [],
+    [BRIDGE_CHANNELS.historyList]: [],
+    [BRIDGE_CHANNELS.entitlementStatus]: { status: "ready", balance: 93, graceDeadlineMs: Date.now() + 72 * 3600 * 1000 },
+  };
+}
+
+function signedInStores(extraResults: Record<string, unknown> = {}): AppStores {
+  const bridge = fakeBridge({ results: { ...baseResults(), ...extraResults } });
   const stores = createStores(bridge);
   act(() => {
     stores.session.setState({ status: "signed-in", username: "demo" });
@@ -95,5 +98,55 @@ describe("AppShell 路由走查", () => {
     render(<App stores={signedInStores()} />);
     goto("/history");
     await screen.findByText(/还没有任务/);
+  });
+
+  it("账单导出：保存成功 → 展示保存路径；取消 → 清空上次成功文案且不报错", async () => {
+    // 同一 results 引用：二次导出前改为「取消」桩，验证旧成功文案被清空（非全新渲染的假阳性）
+    const results: Record<string, unknown> = {
+      ...baseResults(),
+      [BRIDGE_CHANNELS.billingExport]: {
+        filename: "erdos-ledger-20261008-1530.csv",
+        savedPath: "C:\\Users\\demo\\Downloads\\erdos-ledger-20261008-1530.csv",
+        canceled: false,
+      },
+    };
+    const bridge = fakeBridge({ results });
+    const stores = createStores(bridge);
+    act(() => {
+      stores.session.setState({ status: "signed-in", username: "demo" });
+    });
+    render(<App stores={stores} />);
+    goto("/billing");
+    const button = await screen.findByRole("button", { name: "导出流水（CSV）" });
+    await act(async () => {
+      button.click();
+    });
+    expect(screen.getByText(/已保存至 .*erdos-ledger-20261008-1530\.csv/)).toBeTruthy();
+
+    results[BRIDGE_CHANNELS.billingExport] = { filename: "erdos-ledger-x.csv", savedPath: null, canceled: true };
+    await act(async () => {
+      button.click();
+    });
+    expect(screen.queryByText(/已保存至|已生成/)).toBeNull();
+    expect(document.querySelector(".form-error")).toBeNull();
+  });
+
+  it("账单导出：桥报错 → 展示可读错误且不冒充成功（fail-closed）", async () => {
+    const bridge = fakeBridge({
+      results: baseResults(),
+      failChannels: new Set([BRIDGE_CHANNELS.billingExport]),
+    });
+    const stores = createStores(bridge);
+    act(() => {
+      stores.session.setState({ status: "signed-in", username: "demo" });
+    });
+    render(<App stores={stores} />);
+    goto("/billing");
+    const button = await screen.findByRole("button", { name: "导出流水（CSV）" });
+    await act(async () => {
+      button.click();
+    });
+    expect(await screen.findByText(/模拟网络错误/)).toBeTruthy();
+    expect(screen.queryByText(/已保存至|已生成/)).toBeNull();
   });
 });

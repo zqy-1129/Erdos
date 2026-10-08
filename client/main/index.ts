@@ -19,6 +19,7 @@ import { createSqliteSecretStore } from "./sqlite-secret-store.ts";
 import { createPlatformEncryptor } from "./safe-storage-encryptor.ts";
 import { createEncryptedTokenStore } from "./cloud/session-store.ts";
 import { createEncryptedEntitlementStateStore } from "./entitlement/state-store.ts";
+import { createExportSaver } from "./save-export.ts";
 import { ensureDeviceFingerprint } from "./device-identity.ts";
 import { resolveAuthRuntime } from "./ipc/cloud-auth.ts";
 import { verifyEngineDir } from "./tamper-check.ts";
@@ -100,6 +101,8 @@ function registerBridgeIpc(): void {
   bridgeBackend = new BridgeBackend({
     secretStore,
     auth: { runtime, fingerprint, platform: process.platform, sessionStore, entitlementStore },
+    // billing:export 落盘：原生保存对话框 + 写盘（取消不视为失败；写盘异常由桥归一为可读错误）
+    saveExport: createExportSaver(() => mainWindow, "导出积分流水（CSV）"),
     // 会话失效下发：业务 401 清会话后推给渲染层（回登录页；见 app-stores.bindSessionInvalidation）
     onSessionInvalidated: () => {
       mainWindow?.webContents.send(BRIDGE_CHANNELS.authSessionInvalidated, { reason: "unauthorized" });

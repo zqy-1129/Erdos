@@ -4,7 +4,8 @@
  * 鉴权通道（登录/注册/注销）与业务通道（权益/账单）真实对接服务端（SP3-5 接线，
  * 见 main/ipc/cloud-auth.ts、cloud-business.ts）：cloud 模式走契约接口；demo 模式为
  * 开发期演示回退；unconfigured（生产未配置）fail-closed 报错，不冒充成功。
- * 其余通道（内容库/历史/导出）暂为演示数据（后续批次逐步接入）。
+ * billing:export 经注入的落盘回调（原生保存对话框 + 写盘，见 main/save-export.ts）落盘。
+ * 其余通道（内容库/历史）暂为演示数据（后续批次逐步接入）。
  *
  * keys → KeyVault（safeStorage 加密），telemetry → TelemetrySdk（白名单 + 隐私过滤）。
  * 明文 Key / 令牌永不出主进程。
@@ -22,9 +23,11 @@ import { keysTestOutcome, type KeyTestOutcome, type ProbeFn } from "./key-probe.
 import { CloudAuthBridge, type AuthRuntime, type SessionView } from "./cloud-auth.ts";
 import {
   CloudBusinessBridge,
+  type BillingExportView,
   type BillingLedgerRowView,
   type BillingOverviewView,
   type EntitlementView,
+  type ExportSaver,
 } from "./cloud-business.ts";
 import type { EntitlementStateStore } from "../entitlement/service.ts";
 import type { FetchLike } from "../cloud/http.ts";
@@ -73,6 +76,11 @@ export interface BridgeBackendOptions {
    * 业务通道 401/403 清会话后触发一次，渲染层据此回登录页（见 app-stores.bindSessionInvalidation）。
    */
   onSessionInvalidated?: (() => void) | null;
+  /**
+   * 导出落盘回调（billing:export 接线：原生保存对话框 + 写盘，见 main/save-export.ts）。
+   * 未接线时云端导出报错（fail-closed），演示模式不受影响。
+   */
+  saveExport?: ExportSaver | null;
 }
 
 export class BridgeBackend {
@@ -87,6 +95,8 @@ export class BridgeBackend {
   private readonly authMode: AuthRuntime["mode"];
   /** 会话失效下发（主进程接线；未接线时静默，不影响清会话语义）。 */
   private readonly onSessionInvalidated: (() => void) | null;
+  /** 导出落盘回调（未接线时云端导出 fail-closed 报错）。 */
+  private readonly saveExport: ExportSaver | null;
   private sessionUsername: string | null = null;
   private activeKeyId: string | null = null;
   /** 引擎探测函数（FE-KEYIN/W12 接线：EngineHost.reloadKey → provider_test）。 */
@@ -103,6 +113,7 @@ export class BridgeBackend {
     this.telemetry = new TelemetrySdk({ uploader: noopUploader });
 
     this.onSessionInvalidated = options.onSessionInvalidated ?? null;
+    this.saveExport = options.saveExport ?? null;
     const auth = options.auth ?? { runtime: { mode: "demo" } as AuthRuntime };
     if (auth.runtime.mode === "cloud" && (auth.fingerprint ?? "").trim()) {
       const cloudAuth = new CloudAuthBridge({
@@ -170,7 +181,7 @@ export class BridgeBackend {
       case BRIDGE_CHANNELS.billingLedger:
         return this.billingLedger();
       case BRIDGE_CHANNELS.billingExport:
-        return { filename: "erdos-ledger.csv" };
+        return this.billingExport();
       case BRIDGE_CHANNELS.contentList:
         return DEMO_CONTENT;
       case BRIDGE_CHANNELS.historyList:
@@ -355,6 +366,24 @@ export class BridgeBackend {
       throw new Error("未配置云端服务地址（ERDOS_API_BASE_URL），账单不可用");
     }
     return this.demoLedger();
+  }
+
+  /**
+   * 流水导出（billing:export）：cloud 已登录 → 服务端 CSV（裸文本）+ 落盘回调（原生保存对话框）；
+   * demo → 演示文件名（不落盘，保持演示语义）；unconfigured/未接线落盘 → fail-closed 报错。
+   */
+  private async billingExport(): Promise<BillingExportView> {
+    if (this.cloudBusiness) {
+      this.requireSignedIn("流水导出");
+      if (!this.saveExport) {
+        throw new Error("导出保存不可用：未接线文件保存（saveExport）");
+      }
+      return this.cloudBusiness.exportLedgerCsv(this.saveExport);
+    }
+    if (this.authMode === "unconfigured") {
+      throw new Error("未配置云端服务地址（ERDOS_API_BASE_URL），账单不可用");
+    }
+    return { filename: "erdos-ledger.csv", savedPath: null, canceled: false };
   }
 
   /** cloud 模式业务通道的登录态前置检查（未登录不发起请求）。 */

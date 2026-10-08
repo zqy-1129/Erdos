@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign as edSign } from "node:crypto";
 import { describe, it } from "node:test";
+import { join } from "node:path";
 
 import { CloudAuthBridge } from "../main/ipc/cloud-auth.ts";
 import {
@@ -433,6 +434,95 @@ describe("CloudBusinessBridge 云链路（fetch 桩）", () => {
     ]);
   });
 
+  it("导出：裸 CSV 透传 + BOM 补回（fetch 解码剥离）+ Bearer 头 + 建议名/保存路径映射", async () => {
+    // fetch 的 text() 解码会剥离响应 BOM：桩按客户端实际所见形态（无 BOM）注入
+    const csv = "流水号,幂等键,变动\n1,register:x,100\n";
+    const captured: Captured[] = [];
+    const saved: Array<{ name: string; content: string }> = [];
+    const bridge = makeBridge({
+      routes: { "/v1/points/ledger/export": { status: 200, body: csv } },
+      captured,
+      now: () => BASE,
+      token: "at-9",
+    });
+    const result = await bridge.exportLedgerCsv(async (suggestedName, content) => {
+      saved.push({ name: suggestedName, content });
+      // 平台自适应路径（Windows 反斜杠 / POSIX 斜杠）：filename 取 basename，CI（Linux）同断言通过
+      return { canceled: false, path: join("out", suggestedName) };
+    });
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0]?.content, `\ufeff${csv}`, "落盘前按契约补回 UTF-8 BOM（Excel 兼容）");
+    assert.match(saved[0]?.name ?? "", /^erdos-ledger-\d{8}-\d{4}\.csv$/);
+    assert.equal(result.filename, saved[0]?.name, "保存后文件名应为路径 basename");
+    assert.equal(result.savedPath, join("out", saved[0]?.name ?? ""));
+    assert.equal(result.canceled, false);
+    const request = captured.find((r) => r.url.endsWith("/v1/points/ledger/export"));
+    assert.equal(request?.headers["authorization"], "Bearer at-9");
+    assert.match(request?.headers["accept"] ?? "", /text\/csv/, "裸文本通道应协商 CSV 类型");
+  });
+
+  it("导出：用户取消 → canceled=true、savedPath=null（不视为失败）", async () => {
+    const bridge = makeBridge({
+      routes: { "/v1/points/ledger/export": { status: 200, body: "流水号\n" } },
+      now: () => BASE,
+    });
+    const result = await bridge.exportLedgerCsv(async () => ({ canceled: true, path: null }));
+    assert.equal(result.canceled, true);
+    assert.equal(result.savedPath, null);
+    assert.match(result.filename, /^erdos-ledger-\d{8}-\d{4}\.csv$/);
+  });
+
+  it("导出：401 → 清会话回调 + 归一「登录已失效」，不触发落盘", async () => {
+    let unauthorized = 0;
+    let saveCalls = 0;
+    const bridge = makeBridge({
+      routes: {
+        "/v1/points/ledger/export": {
+          status: 401,
+          body: JSON.stringify({ code: 40101, message: "未认证", detail: null }),
+        },
+      },
+      onUnauthorized: () => {
+        unauthorized += 1;
+      },
+    });
+    await assert.rejects(
+      () =>
+        bridge.exportLedgerCsv(async () => {
+          saveCalls += 1;
+          return { canceled: false, path: "C:\\tmp\\x.csv" };
+        }),
+      /登录已失效/,
+    );
+    assert.equal(unauthorized, 1);
+    assert.equal(saveCalls, 0, "未授权不应落盘");
+  });
+
+  it("导出：写盘失败归一为「导出保存失败：…」（渲染层直接展示可读原因）", async () => {
+    const bridge = makeBridge({
+      routes: { "/v1/points/ledger/export": { status: 200, body: "流水号\n" } },
+      now: () => BASE,
+    });
+    await assert.rejects(
+      () =>
+        bridge.exportLedgerCsv(async () => {
+          throw new Error("EACCES: permission denied");
+        }),
+      /导出保存失败：EACCES/,
+    );
+  });
+
+  it("导出：服务端 4xx（非 401）→ 按 HTTP 错误抛出（裸文本无业务错误码可解）", async () => {
+    const bridge = makeBridge({
+      routes: { "/v1/points/ledger/export": { status: 404, body: "not found" } },
+      now: () => BASE,
+    });
+    await assert.rejects(
+      () => bridge.exportLedgerCsv(async () => ({ canceled: false, path: null })),
+      /HTTP 404/,
+    );
+  });
+
   it("响应漂移（余额字段类型错误）→ 抛形状非法（不静默显示错误数据）", async () => {
     const bridge = makeBridge({
       routes: {
@@ -497,5 +587,19 @@ describe("云端正版业务通道联调", () => {
       rows.some((row) => row.action === "grant" && row.points === 100),
       `流水中应有注册赠分：${JSON.stringify(rows)}`,
     );
+
+    // 导出：裸 CSV（UTF-8 BOM + 服务端表头 + 注册赠分行），落盘回调原样收到内容
+    let savedCsv = "";
+    let savedName = "";
+    const exported = await business.exportLedgerCsv(async (suggestedName, content) => {
+      savedName = suggestedName;
+      savedCsv = content;
+      return { canceled: false, path: `C:\\tmp\\${suggestedName}` };
+    });
+    assert.equal(exported.canceled, false);
+    assert.match(savedName, /^erdos-ledger-\d{8}-\d{4}\.csv$/);
+    assert.ok(savedCsv.startsWith("\ufeff"), "CSV 应含 UTF-8 BOM（fetch 解码剥离，客户端落盘前补回）");
+    assert.ok(savedCsv.includes("流水号"), `表头应为服务端口径：${savedCsv.slice(0, 60)}`);
+    assert.ok(/,(?:100),/.test(savedCsv), `CSV 应含注册赠分 +100 行：${savedCsv.slice(0, 200)}`);
   });
 });

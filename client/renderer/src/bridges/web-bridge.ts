@@ -298,7 +298,7 @@ export class WebDemoBridge implements ErdosBridge {
         return Promise.resolve(rows as T);
       }
       case BRIDGE_CHANNELS.billingExport:
-        return Promise.resolve({ filename: "erdos-ledger-demo.csv" } as T);
+        return Promise.resolve({ filename: "erdos-ledger-demo.csv", savedPath: null, canceled: false } as T);
       case BRIDGE_CHANNELS.contentList:
         return Promise.resolve((empty ? [] : DEMO_CONTENT) as T);
       case BRIDGE_CHANNELS.historyList:
