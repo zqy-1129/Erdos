@@ -137,6 +137,29 @@ async def test_provider_test_missing_params() -> None:
     assert resp["error"]["code"] == -32602  # INVALID_PARAMS
 
 
+@pytest.mark.asyncio
+async def test_provider_test_persists_probe_to_capabilities_cache(tmp_path) -> None:
+    """探测结果必须落 capabilities.json：装配期 tool_mode 复用它的实测值（EN-CAP 消费侧）。"""
+    from engine.adapters.capabilities import CapabilityCache, capability_key
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": []})
+
+    cache = CapabilityCache(tmp_path)
+    keys = KeyStore()
+    keys.inject("sk-provider-secret")
+    server, _ = _server(probe_transport=httpx.MockTransport(handler), key_store=keys,
+                        capability_cache=cache)
+    resp = await _call(server, "p1", "provider_test",
+                       {"base_url": "https://api.test/v1", "model": "m1", "provider": "deepseek"})
+    assert resp["result"]["tool_mode"] == "tool_loop"
+
+    stored = cache.load(capability_key("https://api.test/v1", "m1"))
+    assert stored is not None, "provider_test 未把实测能力落盘"
+    assert stored.tools is True
+    assert stored.models_endpoint is True
+
+
 # ----------------------------------------------------------------------
 # events_replay
 # ----------------------------------------------------------------------

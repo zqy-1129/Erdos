@@ -1,7 +1,8 @@
-"""6 个 RPC 方法实现（SP1-1 通信骨架 + SP1-2 编排器接入 + EN-WIRE W2 事件回流）。
+"""10 个 RPC 方法实现（SP1-1 通信骨架 + SP1-2 编排接入 + EN-WIRE W2 事件回流 + CT-V2 增量）。
 
-与 contracts/engine-rpc.schema.json 的 methods 对齐：
+与 contracts/engine-rpc.schema.json 的 methods 对齐（v1 六方法 + CT-V2 四方法）：
 start_stage / pause / resume / cancel / get_status / answer_gate
+initialize / provider_test / events_replay / task_create
 
 W2 集成：
 - register_all 可注入真实 StageRunner（StagePipeline.process）与 EventEmitter；
@@ -51,6 +52,7 @@ def register_all(
     events: EventEmitter | None = None,
     runtime_info: dict | None = None,  # W14：protocol_version/engine_version/tool_mode/isolation_mode
     key_store=None,  # noqa: ANN001 - KeyStore | None（provider_test 用，Key 不经方法传递）
+    capability_cache=None,  # noqa: ANN001 - CapabilityCache | None（探测结果落盘供装配期复用）
     probe_transport=None,  # noqa: ANN001 - httpx.AsyncBaseTransport | None（测试注入）
 ) -> EngineRuntime:
     """注册全部 9 个 RPC 方法；可注入 checkpoint / runner / 事件 / 运行时信息 / 探测依赖。
@@ -225,7 +227,8 @@ def register_all(
         caps = await probe_capabilities(
             str(base_url), str(model),
             provider=str(params.get("provider") or ""),
-            keys=key_store, transport=probe_transport, force=True,
+            keys=key_store, transport=probe_transport,
+            cache=capability_cache, force=True,
         )
         return {
             "ok": caps.models_endpoint,

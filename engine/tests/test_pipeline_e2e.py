@@ -27,6 +27,25 @@ class SinkRecorder:
         self.calls.append((task_id, stage, data))
 
 
+async def test_stage_data_carries_model_duration(tmp_path: Path) -> None:
+    """阶段数据透传模型耗时，sink 才能记下真实 duration_ms（F-007 精度）。"""
+
+    async def timed_llm(messages: list[dict[str, str]], stage: str) -> dict:
+        return {
+            "content": "决策变量；约束条件",
+            "usage": {"prompt_tokens": 5, "completion_tokens": 5},
+            "model": "timed-model",
+            "stage": stage,
+            "duration_ms": 777.5,
+        }
+
+    sink = SinkRecorder()
+    pipeline = StagePipeline(llm=timed_llm, sink=sink, work_root=tmp_path)
+    data = await pipeline.process("t-dur", "analysis")
+    assert data["duration_ms"] == 777.5
+    assert sink.calls[0][2]["duration_ms"] == 777.5
+
+
 async def _run_full(task_id: str, pipeline: StagePipeline) -> dict:
     orch = StageOrchestrator(task_id, runner=pipeline.process)
     final: dict = {}

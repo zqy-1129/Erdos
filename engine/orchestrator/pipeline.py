@@ -184,6 +184,7 @@ class StagePipeline:
             "question_focused": True,
             "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
+            "duration_ms": reply.get("duration_ms", 0.0),
         }
 
     async def _modeling(self, task_id: str) -> dict[str, Any]:
@@ -203,6 +204,7 @@ class StagePipeline:
             "variables": ["slope", "intercept"],
             "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
+            "duration_ms": reply.get("duration_ms", 0.0),
         }
 
     async def _solving(self, task_id: str) -> dict[str, Any]:
@@ -230,6 +232,7 @@ class StagePipeline:
             "artifacts": result.artifacts,
             "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
+            "duration_ms": reply.get("duration_ms", 0.0),
         }
 
     async def _solving_tool_loop(self, task_id: str, registry: Any, solve_llm: Any, operations: Any) -> dict[str, Any]:
@@ -323,4 +326,5 @@ class StagePipeline:
             "paper_path": str(paper_path),
             "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
+            "duration_ms": reply.get("duration_ms", 0.0),
         }

@@ -14,6 +14,20 @@ def _recorder(tmp_path) -> tuple[TrailRecorder, TrailStore]:
     return TrailRecorder(store), store
 
 
+async def test_sink_records_measured_model_duration(tmp_path) -> None:
+    """model_call 的耗时来自真实测量值，不是占位 0（F-007 留痕精度）。"""
+    from engine.__main__ import _build_sink
+
+    recorder, store = _recorder(tmp_path)
+    await _build_sink(recorder)("t1", "analysis", {
+        "model": "timed-model",
+        "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+        "duration_ms": 1234.5,
+    })
+    event = next(e for e in store.events("t1") if e.event_type == EventType.MODEL_CALL)
+    assert event.detail["duration_ms"] == 1234.5
+
+
 def test_four_event_types_all_recorded(tmp_path) -> None:
     """跑完整一题：四类事件齐全。"""
     recorder, store = _recorder(tmp_path)

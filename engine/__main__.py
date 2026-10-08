@@ -26,10 +26,12 @@ import os
 import signal
 import sqlite3
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn
 
+from engine.adapters.capabilities import CapabilityCache, capability_key, fixture_capabilities
 from engine.adapters.key_store import KeyStore
 from engine.adapters.openai_compat import ChatMessage, ModelConfig, OpenAIChatAdapter
 from engine.checkpoint.store import SQLiteCheckpointStore
@@ -110,7 +112,39 @@ def _classify_first_line(line: str) -> tuple[bool, str | None]:
     return False, stripped
 
 
-def _build_llm(keys: KeyStore, trail: TrailRecorder):  # noqa: ANN201 - (text_llm, solve_llm_port)
+def _model_config() -> ModelConfig:
+    """Key 模式的模型坐标：env 缺失即拒启（红线：禁止猜测默认厂商端点）。"""
+    base_url = os.environ.get("ERDOS_MODEL_BASE_URL")
+    model = os.environ.get("ERDOS_MODEL_NAME")
+    if not base_url or not model:
+        _fail("Key 模式需要环境变量 ERDOS_MODEL_BASE_URL 与 ERDOS_MODEL_NAME")
+    return ModelConfig(
+        provider=os.environ.get("ERDOS_MODEL_PROVIDER", "openai-compat"),
+        base_url=base_url,
+        model=model,
+    )
+
+
+def _resolve_tool_mode(keys: KeyStore, config: ModelConfig | None, home: Path) -> str:
+    """求解路径选择：显式覆盖 → 已实测的能力缓存 → 离线矩阵 → 保守阶段级。
+
+    这里不做网络探测：/models 探测会把引擎拉起阻塞到 2s 超时上限，而冷启动 <2s 是硬目标。
+    真实探测走 `provider_test`（客户端连通测试，结果落 capabilities.json），下次拉起即被复用。
+    """
+    forced = os.environ.get("ERDOS_TOOL_MODE")
+    if forced:
+        return forced
+    if keys.has_key and config is not None:
+        cached = CapabilityCache(home).load(capability_key(config.base_url, config.model))
+        if cached is not None:
+            return cached.tool_mode
+        fixture = fixture_capabilities(config.provider)
+        if fixture is not None:
+            return fixture.tool_mode
+    return "stage_level"
+
+
+def _build_llm(keys: KeyStore, trail: TrailRecorder, config: ModelConfig | None):  # noqa: ANN201
     """按密钥状态装配 LLM：Key 模式走真实 OpenAI 兼容适配器，无 Key 走 FakeLLM。
 
     返回 (text_llm, solve_llm_port)：text_llm 供四阶段文本生成；solve_llm_port 为
@@ -118,19 +152,12 @@ def _build_llm(keys: KeyStore, trail: TrailRecorder):  # noqa: ANN201 - (text_ll
     """
     if not keys.has_key:
         return FakeLLM().chat, None
-    base_url = os.environ.get("ERDOS_MODEL_BASE_URL")
-    model = os.environ.get("ERDOS_MODEL_NAME")
-    if not base_url or not model:
-        _fail("Key 模式需要环境变量 ERDOS_MODEL_BASE_URL 与 ERDOS_MODEL_NAME")
-    config = ModelConfig(
-        provider=os.environ.get("ERDOS_MODEL_PROVIDER", "openai-compat"),
-        base_url=base_url,
-        model=model,
-    )
-    adapter = OpenAIChatAdapter(config, keys)
+    cfg = config or _model_config()
+    adapter = OpenAIChatAdapter(cfg, keys)
 
     async def llm(messages: list[dict[str, str]], stage: str) -> dict[str, Any]:
-        """适配 pipeline 的 _LLM 端口：(messages, stage) → {content, usage, model, stage}。"""
+        """适配 pipeline 的 _LLM 端口：(messages, stage) → {content, usage, model, stage, duration_ms}。"""
+        started = time.monotonic()
         reply = await adapter.chat(
             [ChatMessage(role=m["role"], content=m["content"]) for m in messages]
         )
@@ -140,8 +167,9 @@ def _build_llm(keys: KeyStore, trail: TrailRecorder):  # noqa: ANN201 - (text_ll
                 "prompt_tokens": reply.usage.prompt_tokens,
                 "completion_tokens": reply.usage.completion_tokens,
             },
-            "model": config.model,
+            "model": cfg.model,
             "stage": stage,
+            "duration_ms": round((time.monotonic() - started) * 1000, 1),
         }
 
     async def solve_llm_port(
@@ -161,8 +189,10 @@ def _build_sink(trail: TrailRecorder):
         model = data.get("model")
         usage = data.get("usage")
         if model and usage:
-            # duration_ms 在此层不可得（计处于 llm 包装内），v1 记 0，W11 收口到统一计量
-            trail.record_model_call(task_id, stage, str(model), dict(usage), duration_ms=0.0)
+            trail.record_model_call(
+                task_id, stage, str(model), dict(usage),
+                duration_ms=float(data.get("duration_ms", 0.0)),
+            )
         paper_path = data.get("paper_path")
         if stage == "writing" and paper_path and Path(str(paper_path)).exists():
             trail.record_artifact(task_id, stage, "paper", Path(str(paper_path)))
@@ -201,8 +231,9 @@ def main() -> None:
     events = EventEmitter()
     registry = build_default_registry(sandbox, events=events, trail=trail)
     operations = OperationLog(str(home / "operations.db"))
-    tool_mode = os.environ.get("ERDOS_TOOL_MODE", "stage_level")  # 能力探测就绪前保守默认
-    text_llm, solve_llm_port = _build_llm(keys, trail)
+    config = _model_config() if keys.has_key else None
+    tool_mode = _resolve_tool_mode(keys, config, home)
+    text_llm, solve_llm_port = _build_llm(keys, trail, config)
 
     def delta_sink(task_id: str, delta: str) -> None:
         """W15：求解循环 token 增量 → model.delta 事件（节流后；允许丢帧不补发）。"""
@@ -237,6 +268,7 @@ def main() -> None:
             "isolation_mode": getattr(sandbox, "isolation_mode", "unknown"),
         },
         key_store=keys,
+        capability_cache=CapabilityCache(home),
     )
 
     loop = asyncio.new_event_loop()

@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from engine.adapters.capabilities import CapabilityCache, ProviderCapabilities, capability_key
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENGINE_HOME_KEY = "ERDOS_ENGINE_HOME"
 # 事件负载禁止出现的敏感字段名（trail/事件红线，DEC-011）
@@ -180,6 +182,45 @@ def test_first_line_jsonrpc_replayed(tmp_path: Path) -> None:
     assert [r["id"] for r in responses] == ["ui-1", "ui-2"]
     assert all("engine" in r["result"] for r in responses)
     assert proc.returncode == 0
+
+
+BASE_URL = "https://api.test/v1"
+MODEL = "reasoner-mini"
+
+
+def test_cached_capabilities_drive_tool_mode(tmp_path: Path) -> None:
+    """EN-CAP 消费侧接线：capabilities.json 的实测能力决定装配期 tool_mode。
+
+    装配期不做网络探测（冷启动 <2s 硬目标）——真实探测由 provider_test 落盘，这里验证
+    "落盘 → 下次拉起即被复用"这条闭环，并确认 initialize 如实上报。
+    """
+    home = tmp_path / "home"
+    home.mkdir(parents=True)
+    CapabilityCache(home).store(
+        capability_key(BASE_URL, MODEL),
+        ProviderCapabilities(tools=True, tool_choice=True, models_endpoint=True,
+                             probe_source="probe"),
+    )
+    proc = _spawn(
+        [
+            "sk-dummy-key-1234567890",
+            json.dumps({"jsonrpc": "2.0", "id": "i-1", "method": "initialize",
+                        "params": {"client_protocol_version": 2}}),
+        ],
+        home=home,
+        extra_env={
+            "ERDOS_MODEL_BASE_URL": BASE_URL,
+            "ERDOS_MODEL_NAME": MODEL,
+            "ERDOS_MODEL_PROVIDER": "unknown-provider",  # 不在离线矩阵里，只能来自缓存
+        },
+    )
+    q = _reader(proc)
+    msg = _wait_for_response(q, "i-1")
+    proc.stdin.close()  # type: ignore[union-attr]
+    proc.wait(timeout=30)
+    _close_pipes(proc)
+
+    assert msg["result"]["capabilities"]["tool_mode"] == "tool_loop"
 
 
 def test_protocol_streams_are_utf8_regardless_of_console_codepage(tmp_path: Path) -> None:
