@@ -40,12 +40,12 @@ export class EngineEventPump {
 
   /** 开始订阅桥事件流；返回停止函数（幂等）。 */
   start(): () => void {
-    if (this.started) return this.stop;
+    if (this.started) return () => this.stop();
     this.started = true;
     this.unsubscribeBridge = this.bridge.subscribe("engine:event", (payload) => {
       this.push(payload as EngineEvent);
     });
-    return this.stop;
+    return () => this.stop();
   }
 
   stop(): void {

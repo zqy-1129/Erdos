@@ -20,16 +20,43 @@ export interface FakeBridgeOptions {
 }
 
 export function fakeBridge(options: FakeBridgeOptions = {}): ErdosBridge {
+  return fakeBridgeHandle(options).bridge;
+}
+
+/** fake bridge 句柄：除桥本体外支持事件投递（emit）与调用留痕，供事件型通道测试。 */
+export interface FakeBridgeHandle {
+  bridge: ErdosBridge;
+  calls: FakeBridgeCall[];
+  /** 向该通道订阅者投递事件（模拟主进程推送）。 */
+  emit(channel: string, payload: unknown): void;
+}
+
+export function fakeBridgeHandle(options: FakeBridgeOptions = {}): FakeBridgeHandle {
   const results = options.results ?? {};
   const failChannels = options.failChannels ?? new Set<string>();
+  const calls = options.calls ?? [];
+  const subscribers = new Map<string, Set<(payload: unknown) => void>>();
   return {
-    invoke: async <T = unknown>(channel: string, payload?: unknown): Promise<T> => {
-      options.calls?.push({ channel, payload });
-      if (failChannels.has(channel)) {
-        throw new Error(`模拟网络错误（${channel}）：fetch failed`);
-      }
-      return results[channel] as T;
+    calls,
+    bridge: {
+      invoke: async <T = unknown>(channel: string, payload?: unknown): Promise<T> => {
+        calls.push({ channel, payload });
+        if (failChannels.has(channel)) {
+          throw new Error(`模拟网络错误（${channel}）：fetch failed`);
+        }
+        return results[channel] as T;
+      },
+      subscribe(channel: string, handler: (payload: unknown) => void): () => void {
+        const set = subscribers.get(channel) ?? new Set<(payload: unknown) => void>();
+        set.add(handler);
+        subscribers.set(channel, set);
+        return () => {
+          set.delete(handler);
+        };
+      },
     },
-    subscribe: () => () => {},
+    emit(channel: string, payload: unknown): void {
+      for (const handler of [...(subscribers.get(channel) ?? [])]) handler(payload);
+    },
   };
 }

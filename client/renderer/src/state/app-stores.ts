@@ -61,6 +61,17 @@ export interface AppStores {
   dispose(): void;
 }
 
+/** 会话失效下发订阅（主进程业务 401 清会话后推送 → 回登录页并提示可读原因）。 */
+export function bindSessionInvalidation(
+  stores: Pick<AppStores, "session" | "bridge">,
+): () => void {
+  return stores.bridge.subscribe(BRIDGE_CHANNELS.authSessionInvalidated, () => {
+    // 仅登录态回落：并发 401 的重复下发、登出后迟到的 in-flight 事件均不再产生噪声
+    if (stores.session.getState().status !== "signed-in") return;
+    stores.session.setState({ status: "anonymous", username: null, error: "登录已失效，请重新登录" });
+  });
+}
+
 export function createAppStores(bridge: ErdosBridge): AppStores {
   const session = createStore<SessionState>(initialSession);
   const entitlement = createStore<EntitlementState>(initialEntitlement);
@@ -69,8 +80,10 @@ export function createAppStores(bridge: ErdosBridge): AppStores {
   const pump = new EngineEventPump(bridge);
   const engineHandle: EngineStoreHandle = createEngineStore(pump);
   const stopPump = pump.start();
+  const stopSessionInvalidation = bindSessionInvalidation({ session, bridge });
+  const stopConnectivity = bindConnectivity({ connectivity });
 
-  const disposers: Array<() => void> = [stopPump];
+  const disposers: Array<() => void> = [stopPump, stopSessionInvalidation, stopConnectivity];
   return {
     bridge,
     session,

@@ -72,6 +72,11 @@ export interface BridgeBackendOptions {
   secretStore?: SecretStore | null;
   /** 鉴权运行接线（缺省 demo：开发期演示回退）。 */
   auth?: BridgeAuthOptions | null;
+  /**
+   * 会话失效下发（主进程接线：webContents.send(auth:session-invalidated)）。
+   * 业务通道 401/403 清会话后触发一次，渲染层据此回登录页（见 app-stores.bindSessionInvalidation）。
+   */
+  onSessionInvalidated?: (() => void) | null;
 }
 
 export class BridgeBackend {
@@ -84,6 +89,8 @@ export class BridgeBackend {
   private readonly cloudBusiness: CloudBusinessBridge | null = null;
   /** 鉴权运行模式（cloud 缺设备指纹时降级为 unconfigured，fail-closed）。 */
   private readonly authMode: AuthRuntime["mode"];
+  /** 会话失效下发（主进程接线；未接线时静默，不影响清会话语义）。 */
+  private readonly onSessionInvalidated: (() => void) | null;
   private sessionUsername: string | null = null;
   private activeKeyId: string | null = null;
   /** 引擎探测函数（FE-KEYIN/W12 接线：EngineHost.reloadKey → provider_test）。 */
@@ -99,6 +106,7 @@ export class BridgeBackend {
     };
     this.telemetry = new TelemetrySdk({ uploader: noopUploader });
 
+    this.onSessionInvalidated = options.onSessionInvalidated ?? null;
     const auth = options.auth ?? { runtime: { mode: "demo" } as AuthRuntime };
     if (auth.runtime.mode === "cloud" && (auth.fingerprint ?? "").trim()) {
       const cloudAuth = new CloudAuthBridge({
@@ -112,7 +120,7 @@ export class BridgeBackend {
       this.cloudBusiness = new CloudBusinessBridge({
         baseUrl: auth.runtime.baseUrl,
         getToken: () => cloudAuth.getToken(),
-        onUnauthorized: () => cloudAuth.clearSession(),
+        onUnauthorized: () => this.invalidateSession(),
         fetchImpl: auth.fetchImpl,
       });
       this.authMode = "cloud";
@@ -344,6 +352,16 @@ export class BridgeBackend {
   /** cloud 模式业务通道的登录态前置检查（未登录不发起请求）。 */
   private requireSignedIn(what: string): void {
     if (!this.cloudAuth?.signedIn()) throw new Error(`未登录，无法获取${what}`);
+  }
+
+  /**
+   * 会话失效（业务通道 401/403）：清主进程会话（幂等，刷新失败路径可能已清）并下发渲染层。
+   * 不按 signedIn 门控：401 到来说明令牌已不可用，无论本地是否仍留存会话都需回登录页。
+   */
+  private invalidateSession(): void {
+    this.cloudAuth?.clearSession();
+    this.sessionUsername = null;
+    this.onSessionInvalidated?.();
   }
 
   /** 开发期演示流水（无云端配置场景）。 */

@@ -75,9 +75,15 @@ function registerBridgeIpc(): void {
   bridgeBackend = new BridgeBackend({
     secretStore,
     auth: { runtime, fingerprint, platform: process.platform },
+    // 会话失效下发：业务 401 清会话后推给渲染层（回登录页；见 app-stores.bindSessionInvalidation）
+    onSessionInvalidated: () => {
+      mainWindow?.webContents.send(BRIDGE_CHANNELS.authSessionInvalidated, { reason: "unauthorized" });
+    },
   });
+  // 事件型通道（主进程 → 渲染层推送）：不注册 ipcMain.handle
+  const eventChannels = new Set<string>([BRIDGE_CHANNELS.engineEvent, BRIDGE_CHANNELS.authSessionInvalidated]);
   for (const channel of Object.values(BRIDGE_CHANNELS)) {
-    if (channel === BRIDGE_CHANNELS.engineEvent) continue;
+    if (eventChannels.has(channel)) continue;
     ipcMain.handle(channel, (event, payload) => {
       if (!isTrustedSender(event.senderFrame?.url)) {
         return Promise.reject(new Error("非法调用来源：已拒绝"));
