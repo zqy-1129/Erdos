@@ -29,11 +29,11 @@ _ENV_WHITELIST = ("PATH", "SYSTEMROOT", "TEMP", "TMP", "LANG", "PYTHONPATH")
 _INTERPRETER_PROBE_TIMEOUT = 5.0
 
 
-async def _probe_interpreter(python: str) -> bool:
+async def _probe_interpreter(python: str, code: str = "pass") -> bool:
     """候选解释器能否真正执行代码（商店占位 stub / 不存在路径都会在这里被排除）。"""
     try:
         proc = await asyncio.create_subprocess_exec(
-            python, "-c", "pass",
+            python, "-c", code,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -67,10 +67,16 @@ async def resolve_python(explicit: str | None = None) -> str | None:
         candidates = path_candidates
     else:
         candidates = [sys.executable, *path_candidates]
+    workable: list[str] = []
     for cand in candidates:
-        if await _probe_interpreter(cand):
+        if not await _probe_interpreter(cand):
+            continue
+        # 能跑 pass ≠ 能跑建模代码：PATH 上的解释器可能缺 numpy/matplotlib，让模型代码
+        # 以 ModuleNotFoundError 形式伪装成工具失败。优先取带建模依赖的那个。
+        if await _probe_interpreter(cand, "import numpy"):
             return cand
-    return None
+        workable.append(cand)
+    return workable[0] if workable else None
 
 
 class SubprocessSandbox:
@@ -168,7 +174,7 @@ async def detect_docker_available() -> bool:
         return False
 
 
-async def make_sandbox(timeout: float = 120.0) -> Sandbox:
+async def make_sandbox(timeout: float = 120.0, python: str | None = None) -> Sandbox:
     """沙箱工厂（EN-BOX W10）：Docker 优先，不可用降级 subprocess（EC-S3）。
 
     降级红线（DEC-006）：`ERDOS_SANDBOX_REQUIRE_DOCKER=1` 时环境无 Docker 直接抛
@@ -184,4 +190,4 @@ async def make_sandbox(timeout: float = 120.0) -> Sandbox:
             "要求 Docker 沙箱但环境不可用（ERDOS_SANDBOX_REQUIRE_DOCKER=1）；"
             "请安装并启动 Docker Desktop 后重试"
         )
-    return SubprocessSandbox(timeout=timeout)
+    return SubprocessSandbox(timeout=timeout, python=python)

@@ -53,7 +53,7 @@ class _EngineTransport:
     ) -> None:
         self._proc = subprocess.Popen(  # noqa: S603 - 受控固定参数（回归工具）
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", cwd=str(cwd), env=env,
+            text=True, encoding="utf-8", errors="replace", cwd=str(cwd), env=env,
         )
         self._lines: list[str] = []
         self._cond = threading.Condition()
@@ -195,7 +195,15 @@ class RpcTaskFlow:
         self._cursor: str | None = None
         self._on_event = on_event  # 事件回调（展示/证据用；异常不外抛，见 _pump_events）
 
-        env = {**os.environ, "ERDOS_ENGINE_HOME": str(self._home)}
+        # 覆盖率钩子会随环境传进引擎子进程，其导入期告警按宿主码页写入管道，早于引擎
+        # configure_stdio() 生效，导致 stderr 诊断解码失败（进程级验收丢日志），必须剥离。
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith("COV_CORE_")
+            and k not in ("COVERAGE_PROCESS_START", "COVERAGE_PROCESS_CONFIG", "PYTHONSTARTUP")
+        }
+        env["ERDOS_ENGINE_HOME"] = str(self._home)
         if extra_env:
             env.update(extra_env)
         if api_key:

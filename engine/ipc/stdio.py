@@ -12,7 +12,9 @@ from typing import TextIO
 
 def configure_stdio() -> None:
     """强制 stdin/stdout/stderr 为 UTF-8；stdout 行结束符固定 LF（不做平台翻译）。"""
-    _reconfigure(sys.stdin, errors="replace")
+    # stdin 用 strict：坏字节若按 replace 变成 U+FFFD，task_id/题面会被静默改写后照常执行，
+    # 比直接失败更危险（如实呈现原则）。
+    _reconfigure(sys.stdin)
     _reconfigure(sys.stdout, newline="\n")
     _reconfigure(sys.stderr, errors="replace")
 

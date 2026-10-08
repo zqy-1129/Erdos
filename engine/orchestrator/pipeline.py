@@ -8,6 +8,7 @@
 """
 
 import json
+import time
 from collections.abc import Awaitable, Callable
 from hashlib import sha256
 from pathlib import Path
@@ -252,11 +253,13 @@ class StagePipeline:
             work_root=self._work_root,
             delta_sink=self._delta_sink,
         )
+        loop_started = time.monotonic()
         outcome = await loop.run(task_prompt)
         usage = outcome.get("usage", {})
         return {
             "stage": "solving",
             "mode": "tool_loop",
+            "duration_ms": round((time.monotonic() - loop_started) * 1000, 1),
             "status": outcome["status"],
             "results": outcome["results"],
             "repair_count": outcome["repair_count"],
