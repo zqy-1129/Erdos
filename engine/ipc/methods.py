@@ -9,6 +9,8 @@ W2 集成：
 - start_stage 创建四阶段编排器（可选注入 checkpoint 断点恢复）后以后台任务驱动
   run_current_stage，请求立即返回受理（耗时结果走事件，开发文档 §6.2）；
 - 阶段启动/完成发 stage.progress，writing 产物发 artifact.ready；
+- SP1-3 硬检查驳回：发 gate.failed（reason=违规说明）并把 task 置 paused（需人工处置），
+  不上报 stage.progress=1.0/artifact.ready/done；
 - cancel 取消在跑的阶段任务（协作取消，沙箱子进程树由沙箱自身超时/强杀兜底）。
 """
 
@@ -77,6 +79,18 @@ def register_all(
         try:
             _emit_progress(task_id, stage, 0.05)
             data = await orch.run_current_stage()
+            if orch.last_hard_reject:
+                # SP1-3 硬检查驳回：阶段未成功，不得上报完成（无 progress=1.0 / artifact.ready）
+                if events is not None:
+                    events.emit(
+                        "gate.failed",
+                        task_id=task_id,
+                        gate=f"gate_{stage}",
+                        reason=orch.last_hard_reject,
+                    )
+                orch.last_hard_reject = None  # 已上报，避免下一轮重复发 gate.failed
+                state.task = TaskState(task_id=task_id, stage=stage, status="paused")
+                return
             _emit_progress(task_id, stage, 1.0)
             if events is not None and isinstance(data, dict) and data.get("paper_sha256"):
                 events.emit(
