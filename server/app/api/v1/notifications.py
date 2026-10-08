@@ -15,7 +15,7 @@ from app.core.config import Settings
 from app.core.envelope import Envelope, ok
 from app.core.logging import request_id_var
 from app.domain.notification.service import NotificationService
-from app.domain.scheduler.service import SchedulerService
+from app.domain.scheduler.service import SchedulerService, reconcile_alert
 from app.infra.auth import Principal
 from app.repository.notification import SQLAlchemyNotificationLogRepository
 from app.repository.scheduler import (
@@ -135,8 +135,14 @@ async def trigger_reconcile(
     principal: admin_dep,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[dict]:
+    """触发每日对账：差异全量发现，并在事务外经 AlertOutlet 外发 P2 告警。
+
+    对账本身只读；告警落库开自己的事务，因此必须在对账事务提交后再发——
+    嵌在同一事务里会让 SQLite 单写锁自堵（database is locked）。
+    """
+    now = utc_now()
     async with UnitOfWork(session_factory) as uow:
-        result = await _scheduler_service(request, uow.session).run_reconcile(utc_now())
+        result = await _scheduler_service(request, uow.session).run_reconcile(now)
         view = {
             "alerted": result.alerted,
             "differences": [
@@ -144,4 +150,8 @@ async def trigger_reconcile(
                 for d in result.differences
             ],
         }
+
+    alert = reconcile_alert(result)
+    if alert is not None:
+        await request.app.state.alert_outlet.emit(alert, now)
     return ok(view, request_id_var.get())

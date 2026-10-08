@@ -32,6 +32,8 @@ from app.core.errors import AppError
 from app.core.logging import get_logger, setup_logging
 from app.domain.account.reset import PasswordResetService
 from app.domain.account.service import PasswordPolicy
+from app.infra.alert_outlet import BrokerAlertOutlet
+from app.infra.alert_webhook import AlertWebhookDispatcher
 from app.infra.auth import (
     BcryptPasswordHasher,
     DevCredentialVerifier,
@@ -136,6 +138,12 @@ def create_app(
     # SP2-7 通知与调度：消息总线 + 通知发送器（dev 日志渠道）+ 验证码限流器（进程级）
     app.state.message_bus = MessageBus()
     app.state.notification_sender = LogNotificationSender()
+    # 业务告警出口（对账差异/资金差异等）：告警事件落库 + 看板 SSE + Webhook 外发，静默窗口去重
+    app.state.alert_outlet = BrokerAlertOutlet(
+        session_factory,
+        app.state.event_broker,
+        AlertWebhookDispatcher.from_settings(config),
+    )
     # Redis 跨进程状态（SP2-7 多实例迁移）：配置 ERDOS_REDIS_URL 时防爆破/验证码限流
     # 自动切换；未配置或 redis 包缺失回退进程内实现（可用性优先）。
     redis_client = build_redis_client(config.redis_url)

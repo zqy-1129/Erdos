@@ -12,9 +12,10 @@ from datetime import UTC, datetime
 import pytest
 
 from app.core.config import Settings
+from app.domain.alerts.severity import Severity
 from app.domain.notification.ports import NotificationChannel
 from app.domain.notification.service import NotificationService
-from app.domain.scheduler.service import SchedulerService
+from app.domain.scheduler.service import SchedulerService, reconcile_alert
 from app.infra.notification_sender import LogNotificationSender
 from app.infra.verification_limiter import FixedWindowCodeLimiter
 from app.repository.notification import SQLAlchemyNotificationLogRepository
@@ -174,7 +175,7 @@ async def test_monthly_grant_idempotent_batch(session_factory, settings) -> None
 
 
 async def test_reconcile_detects_all_differences(session_factory, settings) -> None:
-    """对账：构造 5 条差异，全量发现并告警。"""
+    """对账：构造 5 条差异，全量发现并分级为 P2 告警。"""
     async with UnitOfWork(session_factory) as uow:
         # 5 个账户，余额与流水净额不一致
         accounts = [(f"u{i}", 100) for i in range(5)]
@@ -187,9 +188,16 @@ async def test_reconcile_detects_all_differences(session_factory, settings) -> N
         assert result.alerted is True
         assert len(result.differences) == 5  # 差异全量发现
 
+        alert = reconcile_alert(result)
+        assert alert is not None
+        assert alert.key == "reconcile_diff"
+        assert alert.severity == Severity.P2  # 架构 §10：对账差异非零为 P2
+        assert "5 个账户" in alert.message
+        assert "u0" not in alert.message, "告警短句不落用户明细"
+
 
 async def test_reconcile_no_differences(session_factory, settings) -> None:
-    """对账：无差异时不告警。"""
+    """对账：无差异时不生成告警。"""
     async with UnitOfWork(session_factory) as uow:
         accounts = [("u1", 100)]
         nets = {"u1": 100}
@@ -198,3 +206,4 @@ async def test_reconcile_no_differences(session_factory, settings) -> None:
         result = await svc.run_reconcile(datetime.now(UTC))
         assert result.alerted is False
         assert len(result.differences) == 0
+        assert reconcile_alert(result) is None

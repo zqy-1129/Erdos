@@ -34,7 +34,7 @@ class ReconcileDifference:
 
 @dataclass(frozen=True, slots=True)
 class ReconcileResult:
-    """对账结果：差异列表 + 是否告警。"""
+    """对账结果：差异列表 + 是否存在需告警的差异。"""
 
     differences: tuple[ReconcileDifference, ...]
     alerted: bool

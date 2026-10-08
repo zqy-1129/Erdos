@@ -128,9 +128,12 @@ class AlertTransition:
     value: float
     threshold: float
     occurred_at: datetime
+    detail_message: str = ""  # 业务告警自带短句；空则按采样指标生成
 
     @property
     def message(self) -> str:
+        if self.detail_message:
+            return self.detail_message
         labels = {m.key: m.label for m in METRICS}
         units = {m.key: m.unit for m in METRICS}
         label = labels.get(self.metric, self.metric)

@@ -7,6 +7,8 @@
 
 from datetime import datetime
 
+from app.domain.alerts.ports import BusinessAlert
+from app.domain.alerts.severity import Severity, classify_reconcile_diff
 from app.domain.scheduler.ports import (
     AccountLedgerSource,
     ExpireSubscriptionRunner,
@@ -15,6 +17,22 @@ from app.domain.scheduler.ports import (
     ReconcileResult,
     SchedulerRunRepository,
 )
+
+
+def reconcile_alert(result: ReconcileResult) -> BusinessAlert | None:
+    """对账差异 -> P2 告警短句；无差异返回 None（不外发）。
+
+    短句只带差异计数，不落 user_id 明细（明细走接口响应给值班人员）。
+    """
+    severity = classify_reconcile_diff(len(result.differences))
+    if severity is None:
+        return None
+    return BusinessAlert(
+        key="reconcile_diff",
+        severity=Severity.P2,
+        message=f"积分对账差异 {len(result.differences)} 个账户（余额与流水净额不一致）",
+        value=float(len(result.differences)),
+    )
 
 
 class SchedulerService:
@@ -64,7 +82,8 @@ class SchedulerService:
     async def run_reconcile(self, now: datetime) -> ReconcileResult:
         """对账任务：对比账户余额与流水净额，差异全量发现。
 
-        差异非空即触发告警（返回 alerted=True，禁止静默忽略）。
+        告警外发由调用方在事务提交后经 AlertOutlet 执行（reconcile_alert 负责分级与短句）：
+        告警落库要开自己的事务，嵌在对账事务里会让 SQLite 单写锁自堵（database is locked）。
         """
         batch_key = now.date().isoformat()
         await self._runs.claim("reconcile", batch_key, now)
