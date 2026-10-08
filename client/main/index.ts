@@ -12,8 +12,10 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createMainWindow } from "./window.ts";
 import { EngineHost } from "./engine-host/host.ts";
+import { runSmoke } from "./smoke.ts";
 import { BridgeBackend } from "./ipc/bridge.ts";
 import { isAllowedSenderUrl } from "./ipc/guard.ts";
+import { createSqliteSecretStore } from "./sqlite-secret-store.ts";
 import { verifyEngineDir } from "./tamper-check.ts";
 import { resolveChannel } from "./update/policy.ts";
 import { setupAutoUpdate } from "./update/updater.ts";
@@ -57,7 +59,11 @@ function channelToMethod(channel: string): RpcMethod | null {
 }
 
 function registerBridgeIpc(): void {
-  bridgeBackend = new BridgeBackend();
+  // FE-KEYIN 落库：密钥密文进 SQLite（node:sqlite，零原生依赖）；驱动不可用自动回退内存并告警
+  const secretStore = createSqliteSecretStore(path.join(app.getPath("userData"), "erdos.db"), (message) =>
+    console.warn(`[client] ${message}`),
+  );
+  bridgeBackend = new BridgeBackend({ secretStore });
   for (const channel of Object.values(BRIDGE_CHANNELS)) {
     if (channel === BRIDGE_CHANNELS.engineEvent) continue;
     ipcMain.handle(channel, (event, payload) => {
@@ -161,21 +167,47 @@ function boot(): void {
   });
 }
 
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
-  app.quit();
+/**
+ * 壳级冒烟模式（ERDOS_SMOKE=1，FE-HOST W3 验收预演 / 10-24 J-1024 前置）：
+ * 不建窗口、不走单实例锁，直接跑「引擎启动→握手→四阶段→论文」链路，
+ * 退出码 0=通过 / 1=失败，证据 JSON 由 runSmoke 写入 ERDOS_SMOKE_OUT。
+ */
+if (process.env.ERDOS_SMOKE === "1") {
+  const outPath = process.env.ERDOS_SMOKE_OUT ?? path.join(clientRoot, "dist", "smoke-evidence.json");
+  const home = process.env.ERDOS_SMOKE_HOME ?? path.join(app.getPath("temp"), `erdos-smoke-${Date.now()}`);
+  void app.whenReady().then(async () => {
+    const { command, args, cwd } = engineCommand();
+    const evidence = await runSmoke({
+      command,
+      args,
+      cwd,
+      home,
+      outPath,
+      key: process.env.ERDOS_SMOKE_KEY ?? null,
+      // FakeLLM 下 solving 走真实沙箱执行（实测 ~60s+），默认放宽到 180s，可用环境变量覆盖
+      stageTimeoutMs: Number(process.env.ERDOS_SMOKE_STAGE_TIMEOUT_MS ?? "180000"),
+      onLog: (line) => console.log(line),
+    });
+    console.log(`[smoke] ${evidence.ok ? "通过" : "失败"}：证据 → ${outPath}`);
+    app.exit(evidence.ok ? 0 : 1);
+  });
 } else {
-  app.on("second-instance", () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
-  });
-  void app.whenReady().then(boot);
-  app.on("before-quit", () => {
-    engineHost?.stop();
-  });
-  app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") app.quit();
-  });
+  const gotLock = app.requestSingleInstanceLock();
+  if (!gotLock) {
+    app.quit();
+  } else {
+    app.on("second-instance", () => {
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+      }
+    });
+    void app.whenReady().then(boot);
+    app.on("before-quit", () => {
+      engineHost?.stop();
+    });
+    app.on("window-all-closed", () => {
+      if (process.platform !== "darwin") app.quit();
+    });
+  }
 }

@@ -9,7 +9,7 @@
  */
 import { safeStorage } from "electron";
 import { BRIDGE_CHANNELS } from "../../shared/bridge-channels.ts";
-import { KeyVault, InMemorySecretStore, XorEncryptor, type KeyEncryptor } from "../key-vault.ts";
+import { KeyVault, InMemorySecretStore, XorEncryptor, type KeyEncryptor, type SecretStore } from "../key-vault.ts";
 import { maskSecret } from "../secret-masker.ts";
 import { TelemetrySdk, type TelemetryUploader, type UploadResult } from "../telemetry/sdk.ts";
 import { keysTestOutcome, type KeyTestOutcome, type ProbeFn } from "./key-probe.ts";
@@ -38,6 +38,15 @@ class SafeStorageEncryptor implements KeyEncryptor {
   }
 }
 
+/** 桥后端构造选项（FE-KEYIN 落库：密钥密文存储注入）。 */
+export interface BridgeBackendOptions {
+  /**
+   * 密钥密文存储（通常为 SqliteSecretStore，见 main/sqlite-secret-store.ts）。
+   * 未提供或为 null（驱动不可用降级路径）→ 回退 InMemorySecretStore（重启后需重录 Key）。
+   */
+  secretStore?: SecretStore | null;
+}
+
 export class BridgeBackend {
   private readonly keyVault: KeyVault;
   private readonly keyMetas = new Map<string, { alias: string; baseUrl: string; masked: string; status: string }>();
@@ -47,9 +56,9 @@ export class BridgeBackend {
   /** 引擎探测函数（FE-KEYIN/W12 接线：EngineHost.reloadKey → provider_test）。 */
   private probe: ProbeFn | null = null;
 
-  constructor() {
+  constructor(options: BridgeBackendOptions = {}) {
     const encryptor = safeStorage.isEncryptionAvailable() ? new SafeStorageEncryptor() : new XorEncryptor();
-    this.keyVault = new KeyVault(encryptor, new InMemorySecretStore());
+    this.keyVault = new KeyVault(encryptor, options.secretStore ?? new InMemorySecretStore());
     const noopUploader: TelemetryUploader = {
       async upload(): Promise<UploadResult> {
         return { accepted: 0, rejected: 0, reasons: [] };
