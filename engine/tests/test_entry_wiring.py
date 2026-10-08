@@ -27,6 +27,25 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ENGINE_HOME_KEY = "ERDOS_ENGINE_HOME"
 # 事件负载禁止出现的敏感字段名（trail/事件红线，DEC-011）
 FORBIDDEN_EVENT_FIELDS = {"api_key", "authorization", "secret", "token", "key"}
+# 子进程必须剥离的钩子：覆盖率钩子一旦在引擎进程内自启动（pytest-cov 经 COV_CORE_SOURCE
+# 下发），其导入期告警会按宿主码页（Windows 常为 cp936）写进 stderr，把 UTF-8 协议管道搅成
+# 混合字节序——那时引擎自己的 configure_stdio() 还没跑到，无法纠正。进程级测试只测协议。
+_CHILD_ENV_EXCLUDED = ("COVERAGE_PROCESS_START", "COVERAGE_PROCESS_CONFIG", "PYTHONSTARTUP")
+_CHILD_ENV_EXCLUDED_PREFIXES = ("COV_CORE_",)
+
+
+def _child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """构造引擎子进程环境：剥离 ERDOS_* 与覆盖率/启动钩子，再叠加显式覆盖项。"""
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("ERDOS_")
+        and k not in _CHILD_ENV_EXCLUDED
+        and not k.startswith(_CHILD_ENV_EXCLUDED_PREFIXES)
+    }
+    if extra:
+        env.update(extra)
+    return env
 
 
 def _spawn(
@@ -34,9 +53,10 @@ def _spawn(
     home: Path | None = None,
     close_stdin: bool = True,
     drop_home: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.Popen:
     """拉起引擎进程；返回 Popen（stdout 由调用方经队列读取）。"""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ERDOS_")}
+    env = _child_env(extra_env)
     if home is not None:
         env[ENGINE_HOME_KEY] = str(home)
     if drop_home:
@@ -162,6 +182,40 @@ def test_first_line_jsonrpc_replayed(tmp_path: Path) -> None:
     assert proc.returncode == 0
 
 
+def test_protocol_streams_are_utf8_regardless_of_console_codepage(tmp_path: Path) -> None:
+    """NDJSON 字节序红线：引擎输出/输入恒为 UTF-8，即使宿主码页是 GBK。
+
+    Windows 控制台默认码页常为 cp936/GBK，中文负载（题面、门禁意见）不强制编码就会按 GBK
+    落管道，主进程按 utf8 解码即得乱码并静默丢弃事件——Linux CI 永远不会暴露这条。
+    用 PYTHONIOENCODING=gbk 把子进程置于 GBK 宿主下，验证引擎自行纠偏。
+    """
+    create = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": "ui-1",
+            "method": "task_create",
+            "params": {
+                "task_id": "t1",
+                "title": "装配误差优化",
+                "problem_text": "某厂需确定最优生产计划，使装配误差最小。",
+            },
+        }
+    )
+    proc = _spawn(
+        ["", create, create.replace("ui-1", "ui-2")],  # 第二次同 task_id → 中文冲突诊断
+        home=tmp_path / "home",
+        extra_env={"PYTHONIOENCODING": "gbk"},
+    )
+    lines = _drain(_reader(proc), timeout=30)
+    proc.wait(timeout=30)
+    _close_pipes(proc)
+
+    assert lines, "引擎 stdout 按 UTF-8 读取无一行有效——协议字节被宿主码页污染"
+    responses = {json.loads(x)["id"]: json.loads(x) for x in lines if '"id"' in x and '"event"' not in x}
+    assert responses["ui-1"]["result"]["status"] == "created"
+    assert "任务已登记" in responses["ui-2"]["error"]["message"]
+
+
 def test_key_without_model_config_rejected(tmp_path: Path) -> None:
     """Key 模式缺 ERDOS_MODEL_BASE_URL/NAME → 退出码 2 + 可读诊断（禁止猜默认厂商）。"""
     proc = _spawn(["sk-dummy-key-1234567890"], home=tmp_path / "home")
@@ -185,7 +239,7 @@ def test_missing_home_rejected() -> None:
 
 def test_version_flag_prints_and_exits() -> None:
     """W17 打包前置：`engine --version` 打印版本退出码 0，无需 ERDOS_ENGINE_HOME/stdin。"""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ERDOS_")}
+    env = _child_env()
     for flag in ("--version", "-V"):
         proc = subprocess.run(  # noqa: S603 - 固定解释器/模块/受控参数
             [sys.executable, "-m", "engine", flag],

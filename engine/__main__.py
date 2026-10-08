@@ -7,7 +7,7 @@
     KeyStore ← stdin 首行 → (OpenAI 适配器 | FakeLLM 无 Key 模式)
       → StagePipeline(sink=留痕 recorder) → StageOrchestrator runner
       → SQLiteCheckpointStore / TrailStore 落 ERDOS_ENGINE_HOME
-      → JsonRpcServer(6 方法) + EventEmitter(5 事件)
+      → JsonRpcServer(10 方法) + EventEmitter(6 事件)
 
 首行密钥约定（与 client/main/engine-protocol.md §3 对齐）：
 - 首行空行或 `ERDOS_NO_KEY` → 无 Key 模式（FakeLLM 离线演示，FakeLLM 仅供测试/演示）；
@@ -37,6 +37,7 @@ from engine.ipc.events import EventEmitter
 from engine.ipc.methods import register_all
 from engine.ipc.server import JsonRpcServer
 from engine.ipc.state import EngineState
+from engine.ipc.stdio import configure_stdio
 from engine.orchestrator.operations import OperationLog
 from engine.orchestrator.pipeline import FakeLLM, StagePipeline
 from engine.sandbox.subprocess_sandbox import make_sandbox
@@ -170,6 +171,8 @@ def _build_sink(trail: TrailRecorder):
 
 
 def main() -> None:
+    configure_stdio()  # 协议字节序红线：先于任何 stdio 读写，与宿主码页无关
+
     # W17 打包前置：`engine --version` 打印版本并退出（构建时校验引擎版本与 lockfile 绑定，
     # 不依赖 ERDOS_ENGINE_HOME / stdin / 网络，禁运行时动态升级）。
     if "--version" in sys.argv or "-V" in sys.argv:
