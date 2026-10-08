@@ -1,9 +1,10 @@
 /**
  * 主进程桥后端（FE-PRELOAD W4）：业务通道的 ipcMain.handle 分发实现。
  *
- * 鉴权通道（登录/注册/注销）真实对接服务端（SP3-5 接线，见 main/ipc/cloud-auth.ts）：
- * cloud 模式走契约接口；demo 模式为开发期演示回退；unconfigured（生产未配置）
- * fail-closed 报错，不冒充登录成功。其余业务通道暂为演示数据（后续批次逐步接入）。
+ * 鉴权通道（登录/注册/注销）与业务通道（权益/账单）真实对接服务端（SP3-5 接线，
+ * 见 main/ipc/cloud-auth.ts、cloud-business.ts）：cloud 模式走契约接口；demo 模式为
+ * 开发期演示回退；unconfigured（生产未配置）fail-closed 报错，不冒充成功。
+ * 其余通道（内容库/历史/导出）暂为演示数据（后续批次逐步接入）。
  *
  * keys → KeyVault（safeStorage 加密），telemetry → TelemetrySdk（白名单 + 隐私过滤）。
  * 明文 Key / 令牌永不出主进程。
@@ -18,6 +19,12 @@ import { maskSecret } from "../secret-masker.ts";
 import { TelemetrySdk, type TelemetryUploader, type UploadResult } from "../telemetry/sdk.ts";
 import { keysTestOutcome, type KeyTestOutcome, type ProbeFn } from "./key-probe.ts";
 import { CloudAuthBridge, type AuthRuntime, type SessionView } from "./cloud-auth.ts";
+import {
+  CloudBusinessBridge,
+  type BillingLedgerRowView,
+  type BillingOverviewView,
+  type EntitlementView,
+} from "./cloud-business.ts";
 import type { FetchLike } from "../cloud/http.ts";
 
 const STAGES = ["analysis", "modeling", "solving", "writing"];
@@ -73,6 +80,8 @@ export class BridgeBackend {
   private readonly telemetry: TelemetrySdk;
   /** 云端正版鉴权（cloud 模式非空；demo/unconfigured 为 null）。 */
   private readonly cloudAuth: CloudAuthBridge | null = null;
+  /** 云端业务通道（权益/账单；cloud 模式非空，令牌复用登录态）。 */
+  private readonly cloudBusiness: CloudBusinessBridge | null = null;
   /** 鉴权运行模式（cloud 缺设备指纹时降级为 unconfigured，fail-closed）。 */
   private readonly authMode: AuthRuntime["mode"];
   private sessionUsername: string | null = null;
@@ -92,10 +101,18 @@ export class BridgeBackend {
 
     const auth = options.auth ?? { runtime: { mode: "demo" } as AuthRuntime };
     if (auth.runtime.mode === "cloud" && (auth.fingerprint ?? "").trim()) {
-      this.cloudAuth = new CloudAuthBridge({
+      const cloudAuth = new CloudAuthBridge({
         baseUrl: auth.runtime.baseUrl,
         fingerprint: auth.fingerprint ?? "",
         platform: auth.platform,
+        fetchImpl: auth.fetchImpl,
+      });
+      this.cloudAuth = cloudAuth;
+      // 业务通道（权益/账单）：复用同一登录态令牌；401/403 清会话回退匿名
+      this.cloudBusiness = new CloudBusinessBridge({
+        baseUrl: auth.runtime.baseUrl,
+        getToken: () => cloudAuth.getToken(),
+        onUnauthorized: () => cloudAuth.clearSession(),
         fetchImpl: auth.fetchImpl,
       });
       this.authMode = "cloud";
@@ -139,7 +156,7 @@ export class BridgeBackend {
       case BRIDGE_CHANNELS.keysUsage:
         return { modelCalls: 0, models: [], totalTokens: 0, estimatedCostCents: null, ratedCalls: 0 };
       case BRIDGE_CHANNELS.billingOverview:
-        return { planName: "免费版", subEndAt: null, pointsBalance: 93 };
+        return this.billingOverview();
       case BRIDGE_CHANNELS.billingLedger:
         return this.billingLedger();
       case BRIDGE_CHANNELS.billingExport:
@@ -153,7 +170,7 @@ export class BridgeBackend {
       case BRIDGE_CHANNELS.complianceExport:
         return this.complianceExport(body);
       case BRIDGE_CHANNELS.entitlementStatus:
-        return { status: "ready", balance: 93, graceDeadlineMs: Date.now() + 72 * 3600 * 1000 };
+        return this.entitlementStatus();
       default:
         throw new Error(`未注册业务通道：${channel}`);
     }
@@ -283,7 +300,54 @@ export class BridgeBackend {
     return { ok: true, requeue };
   }
 
-  private billingLedger(): Array<{ ts: string; action: string; stage: string; points: number; taskId: string }> {
+  /**
+   * 权益视图（entitlement:status）：cloud 已登录 → 云端快照（拉取 + JWKS 验签 + 72h 宽限）；
+   * 未登录 → 空态（不发起请求）；unconfigured → fail-closed；demo → 演示数据。
+   */
+  private async entitlementStatus(): Promise<EntitlementView> {
+    if (this.cloudBusiness) {
+      if (!this.cloudAuth?.signedIn()) {
+        return { status: "empty", balance: 0, graceDeadlineMs: null };
+      }
+      return this.cloudBusiness.entitlement();
+    }
+    if (this.authMode === "unconfigured") {
+      throw new Error("未配置云端服务地址（ERDOS_API_BASE_URL），权益不可用");
+    }
+    return { status: "ready", balance: 93, graceDeadlineMs: Date.now() + 72 * 3600 * 1000 };
+  }
+
+  /** 账单总览（billing:overview）：cloud 已登录 → 订阅 + 余额；未登录/未配置 → 报错（页面需登录态）。 */
+  private async billingOverview(): Promise<BillingOverviewView> {
+    if (this.cloudBusiness) {
+      this.requireSignedIn("账单");
+      return this.cloudBusiness.billingOverview();
+    }
+    if (this.authMode === "unconfigured") {
+      throw new Error("未配置云端服务地址（ERDOS_API_BASE_URL），账单不可用");
+    }
+    return { planName: "免费版", subEndAt: null, pointsBalance: 93 };
+  }
+
+  /** 积分流水（billing:ledger）：语义同 billingOverview。 */
+  private async billingLedger(): Promise<BillingLedgerRowView[]> {
+    if (this.cloudBusiness) {
+      this.requireSignedIn("流水");
+      return this.cloudBusiness.billingLedger();
+    }
+    if (this.authMode === "unconfigured") {
+      throw new Error("未配置云端服务地址（ERDOS_API_BASE_URL），账单不可用");
+    }
+    return this.demoLedger();
+  }
+
+  /** cloud 模式业务通道的登录态前置检查（未登录不发起请求）。 */
+  private requireSignedIn(what: string): void {
+    if (!this.cloudAuth?.signedIn()) throw new Error(`未登录，无法获取${what}`);
+  }
+
+  /** 开发期演示流水（无云端配置场景）。 */
+  private demoLedger(): BillingLedgerRowView[] {
     return Array.from({ length: 120 }, (_, i) => ({
       ts: `2026-10-${String((i % 28) + 1).padStart(2, "0")}T09:00:00Z`,
       action: i % 3 === 0 ? "grant" : "consume",

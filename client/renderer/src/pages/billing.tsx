@@ -11,6 +11,18 @@ import { VirtualList } from "../components/virtual-list.tsx";
 import { useStore } from "../storage/store.ts";
 import type { AppStores } from "../state/app-stores.ts";
 
+/** 流水动作标签（对齐服务端 LedgerKind；未知类型回退原文，不猜测语义）。 */
+function actionLabel(action: string): string {
+  const labels: Record<string, string> = {
+    grant: "赠分",
+    reserve: "预扣",
+    confirm: "消耗",
+    refund: "退还",
+    offline_sync: "离线补扣",
+  };
+  return labels[action] ?? action;
+}
+
 function renewNotice(subEndAt: string | null): string | null {
   if (!subEndAt) return null;
   const remainMs = Date.parse(subEndAt) - Date.now();
@@ -103,7 +115,7 @@ export function BillingPage(props: { stores: AppStores }): ReactNode {
             <div className="ledger-row">
               <span className="mono">{row.ts.replace("T", " ").replace("Z", "")}</span>
               <span>{row.stage}</span>
-              <span>{row.action === "grant" ? "赠分" : "消耗"}</span>
+              <span>{actionLabel(row.action)}</span>
               <span className={row.points >= 0 ? "pos" : "neg"}>{row.points >= 0 ? `+${row.points}` : row.points}</span>
               <span className="mono">{row.taskId}</span>
             </div>

@@ -13,7 +13,7 @@ import type {
   OfflineSyncItem,
   OfflineSyncResult,
 } from "../entitlement/types.ts";
-import { CloudHttpClient } from "./http.ts";
+import { CloudHttpClient, type FetchLike } from "./http.ts";
 import { JwksKeyResolver } from "./jwks.ts";
 
 function isPayload(value: unknown): value is EntitlementPayload {
@@ -86,6 +86,8 @@ export interface CloudEntitlementOptions {
   getToken?: (() => Promise<string | null>) | undefined;
   /** 401/403 清会话回调（挂 SessionTokenProvider.clearSession 回退匿名）。 */
   onUnauthorized?: ((status: number) => void) | undefined;
+  /** 传输注入（测试/联调；透传 CloudHttpClient）。 */
+  fetchImpl?: FetchLike;
   timeoutMs?: number;
   maxRetries?: number;
 }
@@ -98,6 +100,7 @@ export function createCloudEntitlementService(
     baseUrl: options.baseUrl,
     getToken: options.getToken,
     onUnauthorized: options.onUnauthorized,
+    fetchImpl: options.fetchImpl,
     timeoutMs: options.timeoutMs,
     maxRetries: options.maxRetries,
   });

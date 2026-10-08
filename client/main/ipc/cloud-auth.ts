@@ -245,4 +245,9 @@ export class CloudAuthBridge {
   getToken(): Promise<string | null> {
     return this.tokens.getToken();
   }
+
+  /** 业务通道 401/403 清会话（回退匿名；挂 CloudHttpClient.onUnauthorized 防死循环 401）。 */
+  clearSession(): void {
+    this.tokens.clearSession();
+  }
 }
