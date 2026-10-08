@@ -4,9 +4,9 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import { fakeBridge } from "./helpers.ts";
+import { fakeBridge, type FakeBridgeCall } from "./helpers.ts";
 import { App, createStores } from "../src/entry.tsx";
 import { BRIDGE_CHANNELS } from "../src/bridges/bridge.ts";
 import type { AppStores } from "../src/state/app-stores.ts";
@@ -148,5 +148,87 @@ describe("AppShell 路由走查", () => {
     });
     expect(await screen.findByText(/模拟网络错误/)).toBeTruthy();
     expect(screen.queryByText(/已保存至|已生成/)).toBeNull();
+  });
+
+  it("合规导出：无任务本地拦截（不调用通道）；有任务时携带任务号并渲染留痕预览", async () => {
+    const calls: FakeBridgeCall[] = [];
+    const bridge = fakeBridge({
+      results: {
+        ...baseResults(),
+        [BRIDGE_CHANNELS.complianceExport]: {
+          content: "AI 工具使用声明（真实留痕）",
+          filename: "AI工具使用声明_t-1.md",
+          artifactHashes: ["a".repeat(64)],
+        },
+      },
+      calls,
+    });
+    const stores = createStores(bridge);
+    act(() => {
+      stores.session.setState({ status: "signed-in", username: "demo" });
+    });
+    render(<App stores={stores} />);
+    goto("/compliance");
+    const note = await screen.findByRole("textbox");
+    fireEvent.change(note, { target: { value: "数据预处理由本人手动完成。" } });
+
+    // 无任务：声明依据任务留痕生成，页面先行拦截（不发起桥调用）
+    await act(async () => {
+      screen.getByRole("button", { name: "生成声明" }).click();
+    });
+    expect(screen.getByText(/暂无任务/)).toBeTruthy();
+    expect(calls.some((call) => call.channel === BRIDGE_CHANNELS.complianceExport)).toBe(false);
+
+    // 有任务（引擎事件已归约出 taskId）：携带任务号调用并渲染预览
+    act(() => {
+      stores.engine.setState({ taskId: "t-1" });
+    });
+    await act(async () => {
+      screen.getByRole("button", { name: "生成声明" }).click();
+    });
+    const exportCall = calls.find((call) => call.channel === BRIDGE_CHANNELS.complianceExport);
+    expect(exportCall?.payload).toMatchObject({ taskId: "t-1", format: "md", unusedAi: false });
+    expect(await screen.findByText(/AI工具使用声明_t-1\.md/)).toBeTruthy();
+    expect(screen.getByText(/AI 工具使用声明（真实留痕）/)).toBeTruthy();
+  });
+
+  it("合规导出：桥失败清空旧预览并展示可读错误；未使用 AI 页脚与哈希口径一致", async () => {
+    const failChannels = new Set<string>();
+    const bridge = fakeBridge({
+      results: {
+        ...baseResults(),
+        [BRIDGE_CHANNELS.complianceExport]: {
+          content: "预览正文（旧）",
+          filename: "AI工具使用声明_t-2.md",
+          artifactHashes: [],
+        },
+      },
+      failChannels,
+    });
+    const stores = createStores(bridge);
+    act(() => {
+      stores.session.setState({ status: "signed-in", username: "demo" });
+      stores.engine.setState({ taskId: "t-2" });
+    });
+    render(<App stores={stores} />);
+    goto("/compliance");
+    const note = await screen.findByRole("textbox");
+    fireEvent.change(note, { target: { value: "说明" } });
+    fireEvent.click(screen.getByRole("checkbox")); // 未使用 AI 版本
+
+    await act(async () => {
+      screen.getByRole("button", { name: "生成声明" }).click();
+    });
+    expect(await screen.findByText(/预览正文（旧）/)).toBeTruthy();
+    expect(screen.getByText(/未使用 AI 版本：声明不含工具清单/)).toBeTruthy();
+    expect(screen.queryByText(/产物哈希（可信声明依据）/)).toBeNull();
+
+    // 二次导出：桥失败 → 旧预览被清空、展示可读错误（不冒充成功）
+    failChannels.add(BRIDGE_CHANNELS.complianceExport);
+    await act(async () => {
+      screen.getByRole("button", { name: "生成声明" }).click();
+    });
+    expect(await screen.findByText(/模拟网络错误/)).toBeTruthy();
+    expect(screen.queryByText(/预览正文（旧）/)).toBeNull();
   });
 });

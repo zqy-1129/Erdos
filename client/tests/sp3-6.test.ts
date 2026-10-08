@@ -194,11 +194,12 @@ describe("必填与降级红线", () => {
 });
 
 describe("渲染层桥接入（web-bridge 合规通道）", () => {
-  it("页面调用合规通道：真实模板生成 + 演示留痕数据闭环", async () => {
+  it("页面调用合规通道：真实模板生成 + 演示留痕数据闭环（任务号必填）", async () => {
     const { WebDemoBridge } = await import("../renderer/src/bridges/web-bridge.ts");
     const { BRIDGE_CHANNELS } = await import("../renderer/src/bridges/bridge.ts");
     const bridge = new WebDemoBridge();
     const result = await bridge.invoke<ComplianceExportResult>(BRIDGE_CHANNELS.complianceExport, {
+      taskId: "demo-task",
       format: "md",
       unusedAi: false,
       humanNote: "图表由本人核验。",
@@ -206,10 +207,12 @@ describe("渲染层桥接入（web-bridge 合规通道）", () => {
     assert.ok(result.content.includes("AI 工具使用声明"));
     assert.ok(result.content.includes("deepseek-chat"));
     assert.ok(result.filename.endsWith(".md"));
+    assert.ok(result.filename.includes("demo-task"), "文件名应含任务号（与主进程桥同口径）");
     assert.deepEqual(result.artifactHashes, ["9f".repeat(32)]);
 
     // 未用 AI 模板走同一通道
     const unused = await bridge.invoke<ComplianceExportResult>(BRIDGE_CHANNELS.complianceExport, {
+      taskId: "demo-task",
       format: "md",
       unusedAi: true,
       humanNote: "无 AI 使用。",
@@ -220,8 +223,20 @@ describe("渲染层桥接入（web-bridge 合规通道）", () => {
 
     // 人工说明缺失：桥抛可读必填错误（页面 ErrorState 消费）
     await assert.rejects(
-      () => bridge.invoke(BRIDGE_CHANNELS.complianceExport, { format: "md", unusedAi: false, humanNote: " " }),
+      () =>
+        bridge.invoke(BRIDGE_CHANNELS.complianceExport, {
+          taskId: "demo-task",
+          format: "md",
+          unusedAi: false,
+          humanNote: " ",
+        }),
       /人工修改说明为必填项/,
+    );
+
+    // 任务号缺失：与主进程桥同口径拦截（演示桥不得掩盖空任务路径）
+    await assert.rejects(
+      () => bridge.invoke(BRIDGE_CHANNELS.complianceExport, { format: "md", unusedAi: false, humanNote: "说明" }),
+      /暂无任务/,
     );
   });
 });

@@ -58,6 +58,11 @@ let mainWindow: BrowserWindow | null = null;
 let engineHost: EngineHost | null = null;
 let bridgeBackend: BridgeBackend | null = null;
 
+/** 引擎数据根目录（留痕/检查点/产物）：EngineHost home 与留痕库路径共用同一约定。 */
+function engineHomePath(): string {
+  return path.join(app.getPath("userData"), "engine-home");
+}
+
 /** 引擎通道 → RPC 方法名（engine:event 与业务通道不在此列）。 */
 function channelToMethod(channel: string): RpcMethod | null {
   if (channel === "engine:event" || !channel.startsWith("engine:")) return null;
@@ -103,6 +108,8 @@ function registerBridgeIpc(): void {
     auth: { runtime, fingerprint, platform: process.platform, sessionStore, entitlementStore },
     // billing:export 落盘：原生保存对话框 + 写盘（取消不视为失败；写盘异常由桥归一为可读错误）
     saveExport: createExportSaver(() => mainWindow, "导出积分流水（CSV）"),
+    // F-002 用量估算 / SP3-6 声明数据源：引擎留痕库（与 EngineHost home 同一约定）
+    engineTrailDbPath: path.join(engineHomePath(), "audit.db"),
     // 会话失效下发：业务 401 清会话后推给渲染层（回登录页；见 app-stores.bindSessionInvalidation）
     onSessionInvalidated: () => {
       mainWindow?.webContents.send(BRIDGE_CHANNELS.authSessionInvalidated, { reason: "unauthorized" });
@@ -123,7 +130,7 @@ function registerBridgeIpc(): void {
 }
 
 function registerEngineIpc(): void {
-  const home = path.join(app.getPath("userData"), "engine-home");
+  const home = engineHomePath();
   const { command, args, cwd } = engineCommand();
 
   engineHost = new EngineHost({

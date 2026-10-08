@@ -311,20 +311,25 @@ export class WebDemoBridge implements ErdosBridge {
           rawFormat === "latex" ? "latex" : rawFormat === "docx" ? "docx" : "md";
         const unusedAi = Boolean(body["unusedAi"]);
         const humanNote = String(body["humanNote"] ?? "");
+        // 任务号由页面携带（与主进程桥同口径：空任务号同样拦截，避免演示桥掩盖空任务路径）
+        const taskId = String(body["taskId"] ?? "");
+        if (!taskId) {
+          return Promise.reject(new Error("暂无任务：请先在工作台运行任务后再生成声明")) as Promise<T>;
+        }
         return (async (): Promise<ComplianceExportResult> => {
           if (format === "docx") {
             // Word 为二进制：演示环境生成 docx（校验数据链路）并以 md 文本预览展示
-            await exportDeclaration(DEMO_TRAIL, { taskId: "demo-task", format: "docx", humanNote, unusedAi });
-            const md = await exportDeclaration(DEMO_TRAIL, { taskId: "demo-task", format: "md", humanNote, unusedAi });
+            await exportDeclaration(DEMO_TRAIL, { taskId, format: "docx", humanNote, unusedAi });
+            const md = await exportDeclaration(DEMO_TRAIL, { taskId, format: "md", humanNote, unusedAi });
             return {
-              content: `${String(md.content)}\n\n（Word 版本已按同一留痕生成；演示环境等效于下载预览。）`,
-              filename: "AI工具使用声明_demo-task.docx",
+              content: `${String(md.content)}\n\n（Word 为二进制格式：演示环境仅预览同源 Markdown，不生成二进制文件。）`,
+              filename: `AI工具使用声明_${taskId}.docx`,
               // 未使用 AI 声明不引用产物支撑材料
               artifactHashes: unusedAi ? [] : md.data.artifactHashes.map((artifact) => artifact.sha256),
             };
           }
           const exported = await exportDeclaration(DEMO_TRAIL, {
-            taskId: "demo-task",
+            taskId,
             format,
             humanNote,
             unusedAi,

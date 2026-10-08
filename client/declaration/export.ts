@@ -68,6 +68,8 @@ export async function exportDeclaration(
     events = await source.events(options.taskId);
     artifacts = await source.artifacts(options.taskId);
   } catch (error) {
+    // 已是可读降级（如版本不兼容/记录解析失败）：保留具体归因，避免误导为「库损坏可重建」
+    if (error instanceof ComplianceDataError) throw error;
     throw new ComplianceDataError(
       "本地留痕库不可用（可能已损坏）：请检查数据目录并在「设置」中重建留痕库后重试。声明不会在留痕缺失时伪造条目。",
       error,

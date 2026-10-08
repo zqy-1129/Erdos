@@ -24,16 +24,24 @@ export function CompliancePage(props: { stores: AppStores }): ReactNode {
   const [busy, setBusy] = useState(false);
 
   const doExport = async () => {
+    // 新一轮导出先清旧结果：失败/校验拦截时不得残留上次声明预览（避免误以为已重新生成）
+    setResult(null);
+    setError(null);
+    // 任务门禁：声明依据引擎留痕（audit_trail/artifact_index）按任务生成，无任务即无留痕可声明
+    const taskId = props.stores.engine.getState().taskId;
+    if (!taskId) {
+      setError("暂无任务：请先在工作台运行任务，再生成声明（声明依据任务留痕逐条生成）。");
+      return;
+    }
     if (!humanNote.trim()) {
       setError("人工修改说明为必填项（2026 国赛规定），请填写后导出。");
       return;
     }
     setBusy(true);
-    setError(null);
     try {
       const value = await props.stores.bridge.invoke<ComplianceExportResult>(
         BRIDGE_CHANNELS.complianceExport,
-        { format, unusedAi, humanNote },
+        { format, unusedAi, humanNote, taskId },
       );
       setResult(value);
     } catch (reason) {
@@ -99,7 +107,9 @@ export function CompliancePage(props: { stores: AppStores }): ReactNode {
             </>
           ) : null}
           <p className="muted">
-            声明满足 2026 国赛新规：含工具清单、参与度与产物哈希；提交前请人工复核。
+            {unusedAi
+              ? "未使用 AI 版本：声明不含工具清单、参与度与产物哈希；提交前请人工复核。"
+              : "声明满足 2026 国赛新规：含工具清单、参与度与产物哈希；提交前请人工复核。"}
           </p>
         </div>
       ) : null}

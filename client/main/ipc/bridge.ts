@@ -5,7 +5,8 @@
  * 见 main/ipc/cloud-auth.ts、cloud-business.ts）：cloud 模式走契约接口；demo 模式为
  * 开发期演示回退；unconfigured（生产未配置）fail-closed 报错，不冒充成功。
  * billing:export 经注入的落盘回调（原生保存对话框 + 写盘，见 main/save-export.ts）落盘。
- * 其余通道（内容库/历史）暂为演示数据（后续批次逐步接入）。
+ * keys:usage（F-002 用量估算）与 compliance:export（SP3-6 声明）经引擎留痕库读取接线
+ * （见 main/engine-trail.ts）；其余通道（内容库/历史）暂为演示数据（后续批次逐步接入）。
  *
  * keys → KeyVault（safeStorage 加密），telemetry → TelemetrySdk（白名单 + 隐私过滤）。
  * 明文 Key / 令牌永不出主进程。
@@ -31,6 +32,12 @@ import {
 } from "./cloud-business.ts";
 import type { EntitlementStateStore } from "../entitlement/service.ts";
 import type { FetchLike } from "../cloud/http.ts";
+import {
+  complianceExportViewFromEngineTrail,
+  readUsageEvents,
+  type ComplianceExportView,
+} from "../engine-trail.ts";
+import { estimateUsage } from "../../shared/usage.ts";
 
 const STAGES = ["analysis", "modeling", "solving", "writing"];
 
@@ -81,6 +88,11 @@ export interface BridgeBackendOptions {
    * 未接线时云端导出报错（fail-closed），演示模式不受影响。
    */
   saveExport?: ExportSaver | null;
+  /**
+   * 引擎留痕库路径（engine home 下 audit.db；F-002 用量估算与 SP3-6 声明数据源）。
+   * 未接线时：用量返回空估算、声明导出报错（fail-closed）。
+   */
+  engineTrailDbPath?: string | null;
 }
 
 export class BridgeBackend {
@@ -97,6 +109,8 @@ export class BridgeBackend {
   private readonly onSessionInvalidated: (() => void) | null;
   /** 导出落盘回调（未接线时云端导出 fail-closed 报错）。 */
   private readonly saveExport: ExportSaver | null;
+  /** 引擎留痕库路径（未接线时用量空估算、声明导出报错）。 */
+  private readonly engineTrailDbPath: string | null;
   private sessionUsername: string | null = null;
   private activeKeyId: string | null = null;
   /** 引擎探测函数（FE-KEYIN/W12 接线：EngineHost.reloadKey → provider_test）。 */
@@ -114,6 +128,7 @@ export class BridgeBackend {
 
     this.onSessionInvalidated = options.onSessionInvalidated ?? null;
     this.saveExport = options.saveExport ?? null;
+    this.engineTrailDbPath = options.engineTrailDbPath ?? null;
     const auth = options.auth ?? { runtime: { mode: "demo" } as AuthRuntime };
     if (auth.runtime.mode === "cloud" && (auth.fingerprint ?? "").trim()) {
       const cloudAuth = new CloudAuthBridge({
@@ -175,7 +190,7 @@ export class BridgeBackend {
       case BRIDGE_CHANNELS.keysDelete:
         return this.keysDelete(body);
       case BRIDGE_CHANNELS.keysUsage:
-        return { modelCalls: 0, models: [], totalTokens: 0, estimatedCostCents: null, ratedCalls: 0 };
+        return this.keysUsage();
       case BRIDGE_CHANNELS.billingOverview:
         return this.billingOverview();
       case BRIDGE_CHANNELS.billingLedger:
@@ -420,12 +435,45 @@ export class BridgeBackend {
     }));
   }
 
-  private complianceExport(body: Record<string, unknown>): { content: string; filename: string; artifactHashes: string[] } {
-    const format = String(body["format"] ?? "md");
+  /**
+   * 本地用量估算（keys:usage / F-002）：引擎留痕 model_call 事件 → estimateUsage。
+   * 留痕库不存在（引擎未运行）→ 空估算（0 是事实）；读取失败抛出（不把未知冒充为 0）。
+   */
+  private keysUsage(): {
+    modelCalls: number;
+    models: string[];
+    totalTokens: number;
+    estimatedCostCents: number | null;
+    ratedCalls: number;
+  } {
+    const events = this.engineTrailDbPath ? readUsageEvents(this.engineTrailDbPath) : [];
+    const estimate = estimateUsage(events);
     return {
-      content: `（演示模式）AI 工具使用声明\n任务：demo-task\n格式：${format}`,
-      filename: `AI工具使用声明_demo-task.${format === "docx" ? "docx" : format === "latex" ? "tex" : "md"}`,
-      artifactHashes: [],
+      modelCalls: estimate.modelCalls,
+      models: estimate.models,
+      totalTokens: estimate.totalTokens,
+      estimatedCostCents: estimate.estimatedCostCents,
+      ratedCalls: estimate.ratedCalls,
     };
+  }
+
+  /**
+   * 合规声明导出（compliance:export / SP3-6 收尾）：引擎留痕（audit_trail + artifact_index）
+   * → 汇总 → 三格式预览；真实数据源接线后声明条目与留痕一一对应（缺失/损坏/版本不兼容
+   * 经可读降级提示，绝不伪造）。视图映射（格式白名单/docx 预览策略/哈希裁剪）见
+   * main/engine-trail.ts 的 complianceExportViewFromEngineTrail。
+   */
+  private async complianceExport(
+    body: Record<string, unknown>,
+  ): Promise<ComplianceExportView> {
+    if (!this.engineTrailDbPath) {
+      throw new Error("本地留痕库未接线（engineTrailDbPath）：无法生成声明");
+    }
+    return complianceExportViewFromEngineTrail(this.engineTrailDbPath, {
+      taskId: String(body["taskId"] ?? ""),
+      format: String(body["format"] ?? "md"),
+      humanNote: String(body["humanNote"] ?? ""),
+      unusedAi: Boolean(body["unusedAi"]),
+    });
   }
 }
