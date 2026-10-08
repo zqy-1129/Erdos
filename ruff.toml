@@ -1,0 +1,14 @@
+# 仓库根 ruff 配置：给 engine/ 之外的 Python（scripts/ 等）提供与引擎一致的规则口径。
+# ruff 按文件就近取配置：engine/ 与 server/ 各自 pyproject.toml 内的 [tool.ruff] 优先，不受本文件影响。
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[lint.isort]
+known-first-party = ["engine"]
+
+[lint.per-file-ignores]
+# 驱动脚本要先 sys.path.insert(REPO_ROOT) 才能 import engine，E402 是该引导方式的必然结果
+"scripts/*" = ["E402"]
