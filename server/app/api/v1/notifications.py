@@ -1,6 +1,7 @@
 """通知与调度接口（SP2-7）：验证码发送（限流）+ 调度任务触发。
 
 验证码限流 60s/次 + 日 10 次；调度任务（月赠/到期冻结/对账）需 admin 角色，幂等批次。
+三个任务本体在 app/infra/scheduler_tasks.py，与后台循环（infra/scheduler_loop.py）共用同一实现。
 """
 
 from typing import Annotated
@@ -15,13 +16,9 @@ from app.core.config import Settings
 from app.core.envelope import Envelope, ok
 from app.core.logging import request_id_var
 from app.domain.notification.service import NotificationService
-from app.domain.scheduler.service import SchedulerService, reconcile_alert
+from app.infra import scheduler_tasks
 from app.infra.auth import Principal
 from app.repository.notification import SQLAlchemyNotificationLogRepository
-from app.repository.scheduler import (
-    SQLAlchemyAccountLedgerSource,
-    SQLAlchemySchedulerRunRepository,
-)
 from app.repository.uow import UnitOfWork
 
 router = APIRouter(tags=["notifications"])
@@ -75,26 +72,6 @@ class SchedulerView(BaseModel):
     result: str
 
 
-def _scheduler_service(request: Request, session: AsyncSession) -> SchedulerService:
-    from app.domain.scheduler.service import SchedulerService as Svc
-    from app.infra.scheduler_runners import (
-        SQLAlchemyExpireSubscriptionRunner,
-        SQLAlchemyMonthlyGrantRunner,
-    )
-
-    settings: Settings = request.app.state.settings
-    monthly_grant = SQLAlchemyMonthlyGrantRunner(
-        session, settings.subscription_monthly_grant_points
-    )
-    expire_sub = SQLAlchemyExpireSubscriptionRunner(session)
-    return Svc(
-        SQLAlchemySchedulerRunRepository(session),
-        SQLAlchemyAccountLedgerSource(session),
-        monthly_grant,
-        expire_sub,
-    )
-
-
 @router.post(
     "/scheduler/monthly-grant",
     response_model=Envelope[SchedulerView],
@@ -105,8 +82,11 @@ async def trigger_monthly_grant(
     principal: admin_dep,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[SchedulerView]:
-    async with UnitOfWork(session_factory) as uow:
-        result = await _scheduler_service(request, uow.session).run_monthly_grant(utc_now())
+    """手动触发月赠（与后台循环同一实现，批次键幂等）。"""
+    settings: Settings = request.app.state.settings
+    result = await scheduler_tasks.run_monthly_grant_task(
+        session_factory, settings, utc_now()
+    )
     return ok(SchedulerView(result=result), request_id_var.get())
 
 
@@ -120,8 +100,11 @@ async def trigger_expire_subscriptions(
     principal: admin_dep,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[SchedulerView]:
-    async with UnitOfWork(session_factory) as uow:
-        result = await _scheduler_service(request, uow.session).run_expire_subscriptions(utc_now())
+    """手动触发到期冻结（与后台循环同一实现，批次键幂等）。"""
+    settings: Settings = request.app.state.settings
+    result = await scheduler_tasks.run_expire_subscriptions_task(
+        session_factory, settings, utc_now()
+    )
     return ok(SchedulerView(result=result), request_id_var.get())
 
 
@@ -135,23 +118,16 @@ async def trigger_reconcile(
     principal: admin_dep,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[dict]:
-    """触发每日对账：差异全量发现，并在事务外经 AlertOutlet 外发 P2 告警。
-
-    对账本身只读；告警落库开自己的事务，因此必须在对账事务提交后再发——
-    嵌在同一事务里会让 SQLite 单写锁自堵（database is locked）。
-    """
-    now = utc_now()
-    async with UnitOfWork(session_factory) as uow:
-        result = await _scheduler_service(request, uow.session).run_reconcile(now)
-        view = {
-            "alerted": result.alerted,
-            "differences": [
-                {"user_id": d.user_id, "balance": d.balance, "ledger_net": d.ledger_net}
-                for d in result.differences
-            ],
-        }
-
-    alert = reconcile_alert(result)
-    if alert is not None:
-        await request.app.state.alert_outlet.emit(alert, now)
+    """手动触发对账（与后台循环同一实现）：差异全量发现 + 事务提交后外发 P2 告警。"""
+    settings: Settings = request.app.state.settings
+    result = await scheduler_tasks.run_reconcile_task(
+        session_factory, settings, request.app.state.alert_outlet, utc_now()
+    )
+    view = {
+        "alerted": result.alerted,
+        "differences": [
+            {"user_id": d.user_id, "balance": d.balance, "ledger_net": d.ledger_net}
+            for d in result.differences
+        ],
+    }
     return ok(view, request_id_var.get())

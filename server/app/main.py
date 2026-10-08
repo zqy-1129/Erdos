@@ -58,6 +58,7 @@ from app.infra.payment_reconcile import OrderReconciler, run_order_reconcile_loo
 from app.infra.presence_aggregator import MinuteAggregator
 from app.infra.redis_state import build_code_limiter, build_lockout, build_redis_client
 from app.infra.sampling import run_monitoring_loop
+from app.infra.scheduler_loop import run_scheduler_loop
 
 
 def _default_introspector(
@@ -108,6 +109,9 @@ def create_app(
         # 支付查单兜底扫描（EC-N7/DEC-022）：周期为 0 时循环自行退出，兜底只剩轮询与管理端
         if config.order_reconcile_interval_seconds > 0:
             tasks.append(asyncio.create_task(run_order_reconcile_loop(app)))
+        # 三大调度任务的自动触发（月赠/到期冻结/对账；关闭时仅剩管理端手动触发）
+        if config.scheduler_enabled:
+            tasks.append(asyncio.create_task(run_scheduler_loop(app)))
         try:
             yield
         finally:

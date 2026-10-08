@@ -100,6 +100,10 @@ class Settings(BaseSettings):
     verification_resend_seconds: int = 60  # 验证码重发间隔（PRD：60s/次）
     verification_daily_limit: int = 10  # 验证码每日限额（PRD：每日 10 次）
     renewal_remind_days: int = 3  # 续费提醒提前天数（PRD：到期前 3 天）
+    # 调度器后台循环（月赠/到期冻结/对账的自动触发；周期口径取自《服务端架构》调度器表）
+    scheduler_enabled: bool = True  # false 时三大任务只剩管理端手动触发
+    scheduler_tick_seconds: int = 60  # 轮询到点的间隔
+    scheduler_tz_offset_hours: int = 8  # 东八区（无夏令时，固定偏移即可）
 
     # Redis（SP2-7 多实例迁移）：跨进程防爆破/验证码限流
     redis_url: str | None = None  # 如 redis://127.0.0.1:6379/0；未配置时回退进程内实现
