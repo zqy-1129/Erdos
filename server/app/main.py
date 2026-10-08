@@ -53,6 +53,8 @@ from app.infra.message_bus import MessageBus
 from app.infra.metrics import metrics_response
 from app.infra.monitoring import MonitoringCollector, set_collector
 from app.infra.notification_sender import LogNotificationSender
+from app.infra.payment_channels import build_payment_channels
+from app.infra.payment_reconcile import OrderReconciler, run_order_reconcile_loop
 from app.infra.presence_aggregator import MinuteAggregator
 from app.infra.redis_state import build_code_limiter, build_lockout, build_redis_client
 from app.infra.sampling import run_monitoring_loop
@@ -96,15 +98,20 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        task = asyncio.create_task(run_monitoring_loop(app))
-        # 在线分钟桶聚合后台落库（SP2-8 优化项 1：消除心跳单行漏斗）
-        agg_task = asyncio.create_task(
-            app.state.minute_aggregator.run_loop(config.presence_aggregate_interval_seconds)
-        )
+        tasks: list[asyncio.Task[None]] = [
+            asyncio.create_task(run_monitoring_loop(app)),
+            # 在线分钟桶聚合后台落库（SP2-8 优化项 1：消除心跳单行漏斗）
+            asyncio.create_task(
+                app.state.minute_aggregator.run_loop(config.presence_aggregate_interval_seconds)
+            ),
+        ]
+        # 支付查单兜底扫描（EC-N7/DEC-022）：周期为 0 时循环自行退出，兜底只剩轮询与管理端
+        if config.order_reconcile_interval_seconds > 0:
+            tasks.append(asyncio.create_task(run_order_reconcile_loop(app)))
         try:
             yield
         finally:
-            for t in (task, agg_task):
+            for t in tasks:
                 t.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await t
@@ -143,6 +150,15 @@ def create_app(
         session_factory,
         app.state.event_broker,
         AlertWebhookDispatcher.from_settings(config),
+    )
+    # SP2-5 查单兜底（EC-N7/DEC-022）：渠道注册表 + 编排器；mock 渠道仅 dev/test 注册
+    app.state.payment_channels = build_payment_channels(config)
+    app.state.order_reconciler = OrderReconciler(
+        session_factory,
+        app.state.payment_channels,
+        config,
+        app.state.license_signer,
+        app.state.alert_outlet,
     )
     # Redis 跨进程状态（SP2-7 多实例迁移）：配置 ERDOS_REDIS_URL 时防爆破/验证码限流
     # 自动切换；未配置或 redis 包缺失回退进程内实现（可用性优先）。

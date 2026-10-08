@@ -768,8 +768,11 @@ paths:
     get:
       tags: [billing]
       operationId: getOrder
-      summary: 订单查询（客户端轮询兜底补账）
-      description: 过期未支付订单查询时自动关单。
+      summary: 订单查询（客户端轮询即触发查单兜底补账）
+      description: |
+        PRD DF-003 异常处理 / EC-N7：回调丢失时由本接口触发服务端向渠道查单，T+5 分钟起补账。
+        同一订单按 order_query_window_minutes（默认 5 分钟）去重，轮询再密也只查渠道一次。
+        关单只在渠道明确回答"未收款"且已过支付时限时发生；查询失败（UNKNOWN）不改订单状态。
       security:
         - BearerAuth: []
       parameters:
@@ -779,12 +782,31 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: 订单详情
+          description: 订单详情（补账/关单后的最新状态）
           content:
             application/json:
               schema: { $ref: "#/components/schemas/EnvelopeOrderView" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/billing/orders/reconcile:
+    post:
+      tags: [billing]
+      operationId: reconcileOrders
+      summary: 查单兜底批量扫描（admin）
+      description: |
+        后台循环之外的应急/验收入口：扫描已到查单时点的 created 订单，逐单查单并按三态处置。
+        返回动作计数；"渠道已收款但订单已关单/金额不符"计入 differences 并落审计台账 + P2 告警。
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: 扫描汇总（scanned/settled/closed/differences/pending/throttled/unavailable）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvelopeReconcileSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /v1/billing/orders/{order_id}/refund:
     post:
@@ -1241,7 +1263,9 @@ paths:
       tags: [notifications]
       operationId: triggerReconcileTask
       summary: 触发每日对账任务（admin，幂等批次）
-      description: 余额 vs 流水净额差异检测，非零差异触发告警（P2）。
+      description: |
+        余额 vs 流水净额差异检测；非零差异在对账事务提交后经告警出口外发 P2
+        （告警事件落 dashboard_events，可在 /v1/admin/dashboard/events?types=monitor.alert 回查）。
       security:
         - BearerAuth: []
       responses:
@@ -2336,6 +2360,27 @@ components:
         - type: object
           properties:
             data: { $ref: "#/components/schemas/ReconcileView" }
+
+    ReconcileSummary:
+      type: object
+      description: 一轮查单兜底扫描的动作计数（动作语义见 /v1/billing/orders/reconcile）
+      required:
+        [scanned, settled, closed, differences, pending, throttled, unavailable]
+      properties:
+        scanned: { type: integer, description: 本轮扫到的 created 订单数 }
+        settled: { type: integer, description: 渠道确认收款且已补账入账 }
+        closed: { type: integer, description: 渠道确认未收款且已过时限而关单 }
+        differences: { type: integer, description: 资金差异数（已落审计台账并告警）}
+        pending: { type: integer, description: 本轮不动作（未到时点/未过期/已终态）}
+        throttled: { type: integer, description: 查单窗口内已查过，跳过 }
+        unavailable: { type: integer, description: 渠道未注册或查单失败（不改状态）}
+
+    EnvelopeReconcileSummary:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/ReconcileSummary" }
 
     # ---- 行为分析（SP4-2）与遥测（SP4-1）----
     FunnelView:

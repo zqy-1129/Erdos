@@ -88,6 +88,13 @@ class Settings(BaseSettings):
     refund_grace_days: int = 7  # 订阅退款宽限期（PRD F-005：7 天内未用可退）
     subscription_monthly_grant_points: int = 400  # 订阅月赠额度（PRD：400 分/月）
     payment_callback_secret: str = ""  # 支付回调 HMAC 验签共享密钥（空=未配置，回调端点 fail-closed 拒绝）
+    # 查单兜底（PRD DF-003 / EC-N7 / DEC-022）：回调丢失时服务端向渠道确认收款
+    order_query_after_minutes: int = 5  # T+N 分钟后开始查单（PRD：T+5 分钟兜底补账）
+    order_query_window_minutes: int = 5  # 同一订单的查单去重窗口（轮询打爆渠道的防护）
+    order_reconcile_interval_seconds: int = 300  # 后台扫描周期；0=关闭（只靠客户端轮询与管理端触发）
+    order_reconcile_batch_size: int = 50  # 单次扫描订单上限
+    order_closed_recheck_hours: int = 24  # 已关单订单的收款复核间隔（回调也丢了时的最后一道兜底）
+    order_closed_recheck_days: int = 7  # 复核只回溯这么久的关单（防陈旧 closed 订单挤掉待补账的新单）
 
     # 通知与调度域（SP2-7）：验证码限流与续费提醒
     verification_resend_seconds: int = 60  # 验证码重发间隔（PRD：60s/次）

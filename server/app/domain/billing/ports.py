@@ -34,6 +34,26 @@ class SubscriptionStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class ChannelQueryStatus(StrEnum):
+    """渠道查单结果三态（EC-N7 兜底补账的判定输入）。"""
+
+    PAID = "paid"  # 渠道确认已收款（驱动内部已完成验签）
+    NOT_PAID = "not_paid"  # 渠道明确未收款——只有这个状态才允许关单
+    UNKNOWN = "unknown"  # 查询失败或渠道未接入：既不关单也不入账（fail-closed）
+
+
+class ReconcileAction(StrEnum):
+    """一次查单兜底对订单做的事，供调度汇总与压测断言用。"""
+
+    SETTLED = "settled"  # 渠道已收款，本次补账入账
+    CLOSED = "closed"  # 渠道确认未收款且已过支付时限，关单
+    DIFFERENCE = "difference"  # 已收款但订单终态/金额不符——落差异台账并告警，绝不静默
+    PENDING = "pending"  # 本次不动：未到查单时点、已终态、或渠道确认未收款且未过期
+    THROTTLED = "throttled"  # 同一订单在本查单窗口内已查过（轮询去重）
+    UNAVAILABLE = "unavailable"  # 渠道未注册或查单失败（不据此改变订单状态）
+    NOT_FOUND = "not_found"  # 订单不存在
+
+
 # 订单终态集合
 _TERMINAL_ORDER_STATUSES = frozenset(
     {OrderStatus.PAID, OrderStatus.CLOSED, OrderStatus.REFUNDED}
@@ -102,6 +122,36 @@ class CallbackRecord:
     processed: bool
 
 
+@dataclass(frozen=True, slots=True)
+class ChannelPayment:
+    """渠道确认的收款凭据：真实驱动须先完成渠道侧验签再返回本结构。"""
+
+    payment_no: str
+    amount_cents: int
+
+
+@dataclass(frozen=True, slots=True)
+class ChannelQueryResult:
+    """一次查单结果；UNKNOWN 必须带 reason（诊断码或渠道回包摘要，不含密钥）。"""
+
+    status: ChannelQueryStatus
+    payment: ChannelPayment | None = None
+    reason: str = ""
+
+
+class PaymentChannel(Protocol):
+    """支付渠道查询端口（DEC-022 查单兜底）。
+
+    只管"查"，不管"入账"——入账一律走 payment_no 幂等回调链，避免两套发放逻辑。
+    """
+
+    name: str
+
+    async def query_order(self, order_id: str) -> ChannelQueryResult:
+        """查询订单在渠道侧的收款状态。"""
+        ...
+
+
 class ProductRepository(Protocol):
     """商品仓储端口。"""
 
@@ -137,6 +187,22 @@ class OrderRepository(Protocol):
         self, order_id: str, from_status: str, to_status: str, now: datetime
     ) -> OrderRecord | None:
         """订单状态原子迁移；不满足前置状态返回 None。"""
+        ...
+
+    async def list_reconcilable(
+        self,
+        *,
+        created_before: datetime,
+        closed_before: datetime,
+        closed_after: datetime,
+        limit: int,
+    ) -> list[OrderRecord]:
+        """列出待查单兜底的订单（最旧优先，上限 limit）。
+
+        两类：created_at <= created_before 的未支付订单（到点查单补账/关单），
+        以及 closed_before >= updated_at >= closed_after 的已关单订单（收款复核）。
+        复核窗口必须有下界：否则历史关单单会因"最旧优先"永远占满批次，新单补账被饿死。
+        """
         ...
 
 
@@ -203,7 +269,8 @@ class CallbackResult:
     """回调处理结果。"""
 
     order: OrderRecord
-    applied: bool  # True=本次入账；False=重复回调幂等跳过
+    applied: bool  # True=本次入账；False=重复回调/终态订单幂等跳过
+    difference: str | None = None  # 非空=需要落差异台账并告警的资金异常短句
 
 
 @dataclass(frozen=True, slots=True)
