@@ -34,6 +34,7 @@ from app.domain.account.reset import PasswordResetService
 from app.domain.account.service import PasswordPolicy
 from app.infra.alert_outlet import BrokerAlertOutlet
 from app.infra.alert_webhook import AlertWebhookDispatcher
+from app.infra.audit_recorder import AuditRecorder
 from app.infra.auth import (
     BcryptPasswordHasher,
     DevCredentialVerifier,
@@ -124,11 +125,17 @@ def create_app(
                 await app.state.minute_aggregator.flush_and_prune()
             await engine.dispose()
 
+    # 交互式文档与 OpenAPI 端点只在 dev/test 暴露：生产公开 /docs + /openapi.json 等于
+    # 把全部接口面、参数与错误码结构送给探测方（安全加固项，SP5-2 口径）。
+    docs_enabled = config.env in ("dev", "test")
     app = FastAPI(
         title="Erdos 云端服务端",
         version=__version__,
         description="Erdos 服务端（SP2-1 骨架）：统一信封、网关与数据访问层",
         lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
     )
     app.state.settings = config
     app.state.engine = engine
@@ -149,12 +156,14 @@ def create_app(
     # SP2-7 通知与调度：消息总线 + 通知发送器（dev 日志渠道）+ 验证码限流器（进程级）
     app.state.message_bus = MessageBus()
     app.state.notification_sender = LogNotificationSender()
-    # 业务告警出口（对账差异/资金差异等）：告警事件落库 + 看板 SSE + Webhook 外发，静默窗口去重
+    # 业务告警出口（对账差异/资金差异/审计写入失败等）：告警事件落库 + 看板 SSE + Webhook 外发，静默窗口去重
     app.state.alert_outlet = BrokerAlertOutlet(
         session_factory,
         app.state.event_broker,
         AlertWebhookDispatcher.from_settings(config),
     )
+    # 关键操作审计埋点（登录/购买/权益变更/许可签发/离线对账/管理员操作）
+    app.state.audit_recorder = AuditRecorder(session_factory)
     # SP2-5 查单兜底（EC-N7/DEC-022）：渠道注册表 + 编排器；mock 渠道仅 dev/test 注册
     app.state.payment_channels = build_payment_channels(config)
     app.state.order_reconciler = OrderReconciler(
@@ -189,8 +198,9 @@ def create_app(
         daily_limit=config.account_reset_daily_limit,
     )
     if config.env not in ("dev", "test") and not config.auth_enforce:
-        get_logger("erdos.main").warning(
-            "auth_enforce=False 与生产环境不匹配：外网部署必须置为 True（SP2-2 红线）"
+        raise RuntimeError(
+            f"env={config.env} 必须开启鉴权：auth_enforce=False 会让所有 /v1 接口匿名可达"
+            "（公开白名单只在 enforce=True 下才有意义）。请设 ERDOS_AUTH_ENFORCE=true。"
         )
     app.state.monitoring = collector  # 运行监测采集器（中间件/引擎钩子共享）
     app.state.monitoring_last = None  # 最新采样（overview 缓存；采样器启动前为 None）

@@ -32,6 +32,34 @@ from app.infra.metrics import (
 )
 from app.infra.rate_limit import RateLimiter, SlidingWindowRateLimiter, client_ip_key
 
+# 《服务端架构》§接入层：公开接口白名单——注册/登录/令牌/找回、支付回调（自带 HMAC 验签）、
+# 公钥发布（客户端离线验签要用）、商品目录、验证码（自带限流）、健康检查与指标抓取。
+#
+# 这份名单此前只写在文档里：开启 auth_enforce（生产要求 True）后中间件无差别拦掉所有无凭证
+# 请求，等于把注册、支付回调与 /v1/auth/jwks 一起挡死——两种配置都不安全。
+# 现在它是唯一事实源，tests/api/test_authz_matrix.py 逐条比对策略表，防漂移。
+PUBLIC_PATHS: frozenset[str] = frozenset(
+    {
+        "/v1/health",
+        "/v1/auth/register",
+        "/v1/auth/login",
+        "/v1/auth/refresh",
+        "/v1/auth/logout",
+        "/v1/auth/password/reset/request",
+        "/v1/auth/password/reset/confirm",
+        "/v1/auth/jwks",
+        "/v1/billing/products",
+        "/v1/billing/callbacks/payment",
+        "/v1/notifications/verification-code",
+        "/metrics",
+    }
+)
+
+
+def is_public_path(path: str) -> bool:
+    """该请求路径是否属于公开白名单（enforce 下允许无凭证）。"""
+    return path in PUBLIC_PATHS
+
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-]{7,63}$")
 
 
@@ -173,7 +201,7 @@ class RateLimitMiddleware:
 class AuthPassthroughMiddleware:
     """鉴权透传：解析 Bearer -> scope state 中的 principal。
 
-    开启 enforce 时，缺失凭证直接以 401 信封拒绝（SP2-1 默认关闭）。
+    开启 enforce 时，除公开白名单外一律以 401 信封拒绝（SP2-1/SP2-2 红线）。
     """
 
     def __init__(
@@ -196,7 +224,11 @@ class AuthPassthroughMiddleware:
         if scheme.lower() == "bearer" and token:
             principal = await self._introspector.introspect(token)
             scope.setdefault("state", {})["principal"] = principal
-        if self._enforce and not scope.get("state", {}).get("principal"):
+        if (
+            self._enforce
+            and not scope.get("state", {}).get("principal")
+            and not is_public_path(scope.get("path", ""))
+        ):
             await _send_envelope_json(send, 401, fail(UNAUTHENTICATED, request_id_var.get()))
             return
         await self._app(scope, receive, send)

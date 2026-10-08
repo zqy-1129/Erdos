@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.deps import get_session_factory, require_roles
+from app.api.deps import get_session_factory, record_audit, require_roles
 from app.core.clock import utc_now
 from app.core.config import Settings
 from app.core.envelope import Envelope, ok
@@ -84,8 +84,17 @@ async def trigger_monthly_grant(
 ) -> Envelope[SchedulerView]:
     """手动触发月赠（与后台循环同一实现，批次键幂等）。"""
     settings: Settings = request.app.state.settings
-    result = await scheduler_tasks.run_monthly_grant_task(
-        session_factory, settings, utc_now()
+    now = utc_now()
+    result = await scheduler_tasks.run_monthly_grant_task(session_factory, settings, now)
+    await record_audit(
+        request,
+        action="admin.scheduler_trigger",
+        actor_type="admin",
+        actor_id=principal.subject,
+        resource_type="scheduler",
+        resource_id="monthly_grant",
+        detail={"result": result},
+        now=now,
     )
     return ok(SchedulerView(result=result), request_id_var.get())
 
@@ -102,8 +111,19 @@ async def trigger_expire_subscriptions(
 ) -> Envelope[SchedulerView]:
     """手动触发到期冻结（与后台循环同一实现，批次键幂等）。"""
     settings: Settings = request.app.state.settings
+    now = utc_now()
     result = await scheduler_tasks.run_expire_subscriptions_task(
-        session_factory, settings, utc_now()
+        session_factory, settings, now
+    )
+    await record_audit(
+        request,
+        action="admin.scheduler_trigger",
+        actor_type="admin",
+        actor_id=principal.subject,
+        resource_type="scheduler",
+        resource_id="expire_subscriptions",
+        detail={"result": result},
+        now=now,
     )
     return ok(SchedulerView(result=result), request_id_var.get())
 
@@ -120,8 +140,9 @@ async def trigger_reconcile(
 ) -> Envelope[dict]:
     """手动触发对账（与后台循环同一实现）：差异全量发现 + 事务提交后外发 P2 告警。"""
     settings: Settings = request.app.state.settings
+    now = utc_now()
     result = await scheduler_tasks.run_reconcile_task(
-        session_factory, settings, request.app.state.alert_outlet, utc_now()
+        session_factory, settings, request.app.state.alert_outlet, now
     )
     view = {
         "alerted": result.alerted,
@@ -130,4 +151,14 @@ async def trigger_reconcile(
             for d in result.differences
         ],
     }
+    await record_audit(
+        request,
+        action="admin.scheduler_trigger",
+        actor_type="admin",
+        actor_id=principal.subject,
+        resource_type="scheduler",
+        resource_id="reconcile",
+        detail={"differences": len(result.differences), "alerted": result.alerted},
+        now=now,
+    )
     return ok(view, request_id_var.get())

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.deps import get_session_factory, require_principal, require_roles
+from app.api.deps import get_session_factory, record_audit, require_principal, require_roles
 from app.core.clock import utc_now
 from app.core.config import Settings
 from app.core.envelope import Envelope, ok
@@ -195,7 +195,17 @@ async def reconcile_orders(
     admin: admin_dep,
 ) -> Envelope[dict]:
     """管理端触发一轮查单兜底扫描（后台循环之外的应急/验收入口）。"""
-    summary = await request.app.state.order_reconciler.sweep(utc_now())
+    now = utc_now()
+    summary = await request.app.state.order_reconciler.sweep(now)
+    await record_audit(
+        request,
+        action="admin.order_reconcile",
+        actor_id=admin.subject,
+        actor_type="admin",
+        resource_type="billing",
+        detail=summary.as_dict(),
+        now=now,
+    )
     return ok(summary.as_dict(), request_id_var.get())
 
 
@@ -252,6 +262,24 @@ async def payment_callback(
             },
             now=now,
         )
+    if result.applied:
+        # request_key 落在订单维度：补账链路（查单/回调）任一先到位只审计一次
+        await record_audit(
+            request,
+            action="billing.order_paid",
+            actor_id=result.order.user_id,
+            actor_type="system",
+            resource_type="order",
+            resource_id=result.order.id,
+            detail={
+                "payment_no": payload.payment_no,
+                "amount_cents": result.order.price_cents,
+                "channel": result.order.channel,
+                "evidence": "signed_callback",
+            },
+            request_key=f"order-paid:{result.order.id}",
+            now=now,
+        )
     return ok(view, request_id_var.get())
 
 
@@ -269,6 +297,16 @@ async def refund(
             principal.subject, order_id, now
         )
         view = _order_view(result.order)
+    await record_audit(
+        request,
+        action="billing.refund",
+        actor_id=principal.subject,
+        resource_type="order",
+        resource_id=result.order.id,
+        detail={"amount_cents": result.order.price_cents, "channel": result.order.channel},
+        request_key=f"order-refund:{result.order.id}",
+        now=now,
+    )
     return ok(view, request_id_var.get())
 
 

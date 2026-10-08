@@ -36,6 +36,7 @@ from app.domain.billing.ports import (
 )
 from app.domain.billing.service import BillingService
 from app.domain.points.service import LicenseSigner
+from app.infra.audit_recorder import AuditRecorder
 from app.infra.billing_deps import build_billing_service
 from app.repository.audit import SQLAlchemyAuditLogRepository
 from app.repository.billing import SQLAlchemyOrderRepository
@@ -102,6 +103,7 @@ class OrderReconciler:
         self._settings = settings
         self._signer = signer
         self._alerts = alerts
+        self._audit = AuditRecorder(session_factory)
 
     # ------------------------------------------------------------------
     # 单订单查单兜底
@@ -220,6 +222,24 @@ class OrderReconciler:
                 now=now,
             )
             return ReconcileAction.DIFFERENCE
+        if outcome.applied:
+            # 购买留痕：查单补账与回调入账共用订单维度幂等键，任一先到只审计一次
+            await self._audit.record_or_alert(
+                self._alerts,
+                actor_type="system",
+                actor_id=order.user_id,
+                action="billing.order_paid",
+                resource_type="order",
+                resource_id=order.id,
+                detail={
+                    "payment_no": payment.payment_no,
+                    "amount_cents": payment.amount_cents,
+                    "channel": channel_name,
+                    "evidence": "channel_query",
+                },
+                request_key=f"order-paid:{order.id}",
+                now=now,
+            )
         return ReconcileAction.SETTLED if outcome.applied else ReconcileAction.PENDING
 
     async def _close_if_expired(

@@ -60,9 +60,14 @@ paths:
     post:
       tags: [audit]
       operationId: createAuditEvent
-      summary: 写入审计事件
+      summary: 写入审计事件（admin / operator）
       description: >
         幂等写接口：必须携带 Idempotency-Key 请求头，重复键只入账一次（40901）。
+        角色限 admin|operator：actor_type/actor_id 全部来自请求体，若允许任意登录用户写入，
+        等于任何人可冒名落审计记录，"关键操作全审计"的可信度不成立。
+        服务端自身的登录/购买/权益变更/许可签发/离线对账留痕由内部埋点写入，不走本接口。
+      security:
+        - BearerAuth: []
       parameters:
         - name: Idempotency-Key
           in: header
@@ -80,6 +85,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/EnvelopeAuditEventView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "400":
           description: 参数校验失败（BAD_REQUEST）
           content:
@@ -1314,7 +1321,12 @@ paths:
       tags: [telemetry]
       operationId: ingestTelemetryEvents
       summary: 遥测事件批量摄入
-      description: SDK 批上报（≤1000 行）；props 白名单过滤，违禁字段拒绝；不含题面/Key。
+      description: >
+        SDK 批上报（≤1000 行）；props 白名单过滤，违禁字段拒绝；不含题面/Key。
+        需登录凭证：匿名摄入等于任何人可向行为看板/漏斗注入伪造事件。
+        distinct_id 与登录主体的绑定口径待数据平台裁决（DEC-028），本处只关闭匿名写入口。
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -1327,6 +1339,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/EnvelopeIngestView" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
 components:
   securitySchemes:

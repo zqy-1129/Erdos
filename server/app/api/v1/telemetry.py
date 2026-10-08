@@ -1,6 +1,8 @@
 """遥测摄入接口（SP4-1）：/v1/telemetry/events。
 
 隐私红线：事件经 schema 校验 + props 白名单过滤，违禁字段拦截丢弃并告警。
+访问红线：需登录凭证——匿名批量摄入等于任何人可向行为看板/漏斗注入伪造事件（distinct_id
+与登录主体的绑定口径待 DE/DEC-028 定，本处先关闭匿名写入口）。
 """
 
 from typing import Annotated
@@ -9,11 +11,12 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.deps import get_session_factory
+from app.api.deps import get_session_factory, require_principal
 from app.core.envelope import Envelope, ok
 from app.core.logging import request_id_var
 from app.domain.telemetry.ports import TelemetryEvent
 from app.domain.telemetry.service import TelemetryService
+from app.infra.auth import Principal
 from app.repository.telemetry import SQLAlchemyTelemetryRepository
 from app.repository.uow import UnitOfWork
 
@@ -49,6 +52,7 @@ class IngestView(BaseModel):
 async def ingest_events(
     request: Request,
     payload: TelemetryBatchBody,
+    principal: Annotated[Principal, Depends(require_principal)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[IngestView]:
     """摄入遥测事件（批 1000 行）：schema 校验 + 白名单过滤 + 违禁拦截。"""

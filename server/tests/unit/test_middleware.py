@@ -40,19 +40,23 @@ async def test_request_id_generated_when_absent_or_invalid(client) -> None:
     assert resp2.headers["X-Request-Id"] != "bad id!", "非法格式应重新生成"
 
 
-async def test_metrics_instrumented(client) -> None:
+async def test_metrics_instrumented(admin_client) -> None:
     # path 标签取 Starlette 路由模板（不含 /v1 聚合前缀）
     get_labels = {"method": "GET", "path": "/health", "status": "200"}
     post_labels = {"method": "POST", "path": "/audit/events", "status": "200"}
     get_before = _sample_value(get_labels) or 0.0
     post_before = _sample_value(post_labels) or 0.0
 
-    await client.get("/v1/health")
-    await client.post("/v1/audit/events", json=AUDIT_PAYLOAD, headers={"Idempotency-Key": "m1"})
+    await admin_client.get("/v1/health")
+    await admin_client.post(
+        "/v1/audit/events",
+        json=AUDIT_PAYLOAD,
+        headers={"Idempotency-Key": "m1", "Authorization": "Bearer admin"},
+    )
     assert (_sample_value(get_labels) or 0.0) == get_before + 1.0
     assert (_sample_value(post_labels) or 0.0) == post_before + 1.0
 
-    resp = await client.get("/metrics")
+    resp = await admin_client.get("/metrics")
     assert resp.status_code == 200
     assert "erdos_http_requests_total" in resp.text
 
@@ -92,9 +96,14 @@ async def test_auth_enforce_rejects_missing_token(tmp_path) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=application), base_url="http://testserver"
     ) as c:
+        # 公开白名单：健康探针必须匿名可达（enforce=True 也不例外，否则 LB/K8s 探针全红）
         resp = await c.get("/v1/health")
-        assert resp.status_code == 401
-        assert resp.json()["code"] == ERROR_SPECS["UNAUTHENTICATED"].code
+        assert resp.status_code == 200, resp.json()
+
+        # 白名单外无凭证必须 401（此前实现把整张白名单漏掉了，健康检查也被拦成 401）
+        resp_guarded = await c.get("/v1/points/balance")
+        assert resp_guarded.status_code == 401
+        assert resp_guarded.json()["code"] == ERROR_SPECS["UNAUTHENTICATED"].code
 
         resp2 = await c.get("/v1/health", headers={"Authorization": "Bearer tok"})
         assert resp2.status_code == 200
@@ -109,8 +118,10 @@ async def test_rate_limit_returns_429_envelope(tmp_path) -> None:
         rate_limit_requests=1000,
     )
     from app.repository.models import Base
+    from conftest import StaticIntrospector
 
-    application = create_app(settings)
+    # /v1/audit 写入端点是 admin|operator 档；限流规则按路径前缀生效，与角色无关
+    application = create_app(settings, introspector=StaticIntrospector(("admin",)))
     async with application.state.engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -123,11 +134,13 @@ async def test_rate_limit_returns_429_envelope(tmp_path) -> None:
             resp = await c.post(
                 "/v1/audit/events",
                 json=AUDIT_PAYLOAD,
-                headers={"Idempotency-Key": f"rl-{i}"},
+                headers={"Idempotency-Key": f"rl-{i}", "Authorization": "Bearer admin"},
             )
             assert resp.status_code == 200
         resp = await c.post(
-            "/v1/audit/events", json=AUDIT_PAYLOAD, headers={"Idempotency-Key": "rl-3"}
+            "/v1/audit/events",
+            json=AUDIT_PAYLOAD,
+            headers={"Idempotency-Key": "rl-3", "Authorization": "Bearer admin"},
         )
         assert resp.status_code == 429
         body = resp.json()
