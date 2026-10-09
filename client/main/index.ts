@@ -131,6 +131,11 @@ function registerBridgeIpc(): void {
     saveExport: createExportSaver(() => mainWindow, "导出积分流水（CSV）"),
     // compliance:save 落盘：声明文件三格式（md/latex 文本 + docx 真实二进制）原生保存对话框
     saveDeclaration: createFileSaver(() => mainWindow, "导出 AI 工具使用声明"),
+    // 历史续跑（US-003）：复用既有 RPC（start_stage）；懒启动/等待就绪由 EngineHost 承接
+    engineInvoke: async (method, params) => {
+      if (!engineHost) throw new Error("引擎宿主未初始化");
+      return engineHost.invoke(method, params);
+    },
     // F-002 用量估算 / SP3-6 声明数据源：引擎留痕库（与 EngineHost home 同一约定）
     engineTrailDbPath: path.join(engineHomePath(), "audit.db"),
     // 会话失效下发：业务 401 清会话后推给渲染层（回登录页；见 app-stores.bindSessionInvalidation）

@@ -84,7 +84,7 @@ export function WorkspacePage(props: { stores: AppStores }): ReactNode {
 
   return (
     <div className="page">
-      <h2>工作台 · 示例题：嫦娥三号软着陆</h2>
+      <h2>工作台{engine.taskId === "demo-task" ? " · 示例题：嫦娥三号软着陆" : ""}</h2>
       <StageProgress engine={props.stores.engine} onAnswerGate={onAnswerGate} />
     </div>
   );
