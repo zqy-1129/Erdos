@@ -30,6 +30,8 @@ export const BRIDGE_CHANNELS = {
   historyResume: "history:resume",
   // 合规导出
   complianceExport: "compliance:export",
+  /** 声明文件保存（md/latex 文本 + docx 真实二进制，经原生保存对话框落盘）。 */
+  complianceSave: "compliance:save",
   // 权益（断网态 UI 数据源）
   entitlementStatus: "entitlement:status",
   // 遥测（白名单 + 脱敏前置）

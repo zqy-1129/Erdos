@@ -231,4 +231,76 @@ describe("AppShell 路由走查", () => {
     expect(await screen.findByText(/模拟网络错误/)).toBeTruthy();
     expect(screen.queryByText(/预览正文（旧）/)).toBeNull();
   });
+
+  it("合规保存：无任务本地拦截（不调通道）；成功展示保存路径；取消静默清空旧文案；失败可读", async () => {
+    // 同一 results 引用：后续步骤改桩验证「旧成功文案被清空」「失败不冒充成功」（非全新渲染的假阳性）
+    const calls: FakeBridgeCall[] = [];
+    const failChannels = new Set<string>();
+    const results: Record<string, unknown> = {
+      ...baseResults(),
+      [BRIDGE_CHANNELS.complianceSave]: {
+        filename: "AI工具使用声明_t-3.docx",
+        savedPath: "/home/demo/AI工具使用声明_t-3.docx",
+        canceled: false,
+      },
+    };
+    const bridge = fakeBridge({ results, calls, failChannels });
+    const stores = createStores(bridge);
+    act(() => {
+      stores.session.setState({ status: "signed-in", username: "demo" });
+    });
+    render(<App stores={stores} />);
+    goto("/compliance");
+    const note = await screen.findByRole("textbox");
+    fireEvent.change(note, { target: { value: "图由本人核验。" } });
+
+    // 无任务：声明依据任务留痕，页面先行拦截（不发起桥调用）
+    await act(async () => {
+      screen.getByRole("button", { name: "保存文件" }).click();
+    });
+    expect(screen.getByText(/暂无任务/)).toBeTruthy();
+    expect(calls.some((call) => call.channel === BRIDGE_CHANNELS.complianceSave)).toBe(false);
+
+    // 有任务：保存成功 → 展示保存路径（格式/说明随页面状态透传）
+    act(() => {
+      stores.engine.setState({ taskId: "t-3" });
+    });
+    await act(async () => {
+      screen.getByRole("button", { name: "保存文件" }).click();
+    });
+    const saveCall = calls.find((call) => call.channel === BRIDGE_CHANNELS.complianceSave);
+    expect(saveCall?.payload).toMatchObject({ taskId: "t-3", format: "md", unusedAi: false, humanNote: "图由本人核验。" });
+    expect(await screen.findByText(/已保存至 .*AI工具使用声明_t-3\.docx/)).toBeTruthy();
+
+    // 输入变更（说明/格式）：旧「已保存至」清除，避免过期指引误认为当前输入已保存
+    fireEvent.change(note, { target: { value: "图由本人核验。v2" } });
+    expect(screen.queryByText(/已保存至|已生成/)).toBeNull();
+
+    // 用户取消：先恢复一次成功提示，再验证取消时清空且静默（非失败）
+    await act(async () => {
+      screen.getByRole("button", { name: "保存文件" }).click();
+    });
+    expect(await screen.findByText(/已保存至 .*AI工具使用声明_t-3\.docx/)).toBeTruthy();
+    results[BRIDGE_CHANNELS.complianceSave] = { filename: "AI工具使用声明_t-3.md", savedPath: null, canceled: true };
+    await act(async () => {
+      screen.getByRole("button", { name: "保存文件" }).click();
+    });
+    expect(screen.queryByText(/已保存至|已生成/)).toBeNull();
+    expect(document.querySelector(".form-error")).toBeNull();
+
+    // 无路径回显（演示/未给路径）：savedPath 为 null 且未取消 → 展示将保存的文件名（不冒充已保存）
+    results[BRIDGE_CHANNELS.complianceSave] = { filename: "AI工具使用声明_t-3.md", savedPath: null, canceled: false };
+    await act(async () => {
+      screen.getByRole("button", { name: "保存文件" }).click();
+    });
+    expect(await screen.findByText(/已生成 AI工具使用声明_t-3\.md/)).toBeTruthy();
+
+    // 桥失败：可读错误且不冒充成功（fail-closed）
+    failChannels.add(BRIDGE_CHANNELS.complianceSave);
+    await act(async () => {
+      screen.getByRole("button", { name: "保存文件" }).click();
+    });
+    expect(await screen.findByText(/模拟网络错误/)).toBeTruthy();
+    expect(screen.queryByText(/已保存至|已生成/)).toBeNull();
+  });
 });

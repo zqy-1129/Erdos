@@ -13,8 +13,15 @@
  * 本模块不依赖 electron（node:test 可加载）。
  */
 import { existsSync } from "node:fs";
+import { basename } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { ComplianceDataError, exportDeclaration, type ExportOptions } from "../declaration/export.ts";
+import {
+  ComplianceDataError,
+  DOCX_PREVIEW_SUFFIX,
+  exportDeclaration,
+  isDeclarationFormat,
+  type ExportOptions,
+} from "../declaration/export.ts";
 import type { ArtifactEntry, ExportedDeclaration, TrailEvent, TrailSource } from "../declaration/types.ts";
 import type { UsageEvent } from "../shared/usage.ts";
 
@@ -148,7 +155,7 @@ export async function exportDeclarationFromEngineTrail(
   if (!options.taskId.trim()) {
     throw new Error("暂无任务：请先在工作台运行任务后再生成声明（无任务无留痕可声明）");
   }
-  if (options.format !== "md" && options.format !== "latex" && options.format !== "docx") {
+  if (!isDeclarationFormat(options.format)) {
     throw new Error(`不支持的导出格式：${String(options.format)}`);
   }
   return exportDeclaration(createEngineTrailSource(dbPath), options);
@@ -171,15 +178,16 @@ export interface ComplianceExportOptions {
 
 /**
  * 声明导出 → 桥视图（格式白名单校验 + docx 预览策略 + 未使用 AI 不回传产物哈希）。
- * docx 为二进制：页面仅预览同源 Markdown，文件名为 .docx（明确标注未生成二进制文件；
- * 二进制文书落盘登记后续批次）。任何留痕读取失败经 ComplianceDataError 抛出（降级提示）。
+ * docx 为二进制：本页仅以同源 Markdown 预览并统一标注，文件名为 .docx；
+ * 真实二进制落盘见 complianceSaveFromEngineTrail（本批已接线）。
+ * 任何留痕读取失败经 ComplianceDataError 抛出（降级提示）。
  */
 export async function complianceExportViewFromEngineTrail(
   dbPath: string,
   options: ComplianceExportOptions,
 ): Promise<ComplianceExportView> {
   const { taskId, humanNote, unusedAi } = options;
-  if (options.format !== "md" && options.format !== "latex" && options.format !== "docx") {
+  if (!isDeclarationFormat(options.format)) {
     throw new Error(`不支持的导出格式：${options.format}`);
   }
   const previewFormat: "md" | "latex" | "docx" = options.format === "docx" ? "md" : options.format;
@@ -191,11 +199,77 @@ export async function complianceExportViewFromEngineTrail(
   });
   const content = String(exported.content);
   return {
-    content:
-      options.format === "docx"
-        ? `${content}\n\n（Word 为二进制格式：本页仅预览同源 Markdown，尚未生成二进制文书。）`
-        : content,
+    content: options.format === "docx" ? `${content}\n\n${DOCX_PREVIEW_SUFFIX}` : content,
     filename: options.format === "docx" ? exported.filename.replace(/\.md$/, ".docx") : exported.filename,
     artifactHashes: unusedAi ? [] : exported.data.artifactHashes.map((entry) => entry.sha256),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 声明文件真实落盘（SP3-6 收尾第二批：md/latex 文本 + docx 二进制）
+// ---------------------------------------------------------------------------
+
+/** 声明格式 → 保存对话框滤镜（原生保存对话框文件类型）。 */
+const SAVE_FILTERS: Record<"md" | "latex" | "docx", { filterName: string; extensions: string[] }> = {
+  md: { filterName: "Markdown 文件", extensions: ["md"] },
+  latex: { filterName: "LaTeX 文件", extensions: ["tex"] },
+  docx: { filterName: "Word 文档", extensions: ["docx"] },
+};
+
+/** 文件保存端口（主进程接线为原生保存对话框 + 写盘，见 main/save-export.ts；测试注入桩）。 */
+export type DeclarationFileSaver = (request: {
+  suggestedName: string;
+  /** 文本（md/latex）或二进制（docx）。 */
+  content: string | Uint8Array;
+  filterName: string;
+  extensions: string[];
+}) => Promise<{ canceled: boolean; path: string | null }>;
+
+/** 声明保存视图（渲染层 ComplianceSaveResult 同形）。 */
+export interface ComplianceSaveView {
+  /** 实际文件名（取消或未写盘时为建议文件名）。 */
+  filename: string;
+  /** 实际保存路径（用户取消为 null）。 */
+  savedPath: string | null;
+  canceled: boolean;
+}
+
+/**
+ * 保存声明文件（SP3-6 收尾第二批）：三格式真实落盘——md/latex 为文本、
+ * docx 为真实 zip 二进制（declaration/render.ts 的 renderDocx，非预览占位）；
+ * 经注入保存器走原生保存对话框。用户取消 → canceled（不写盘、不视为失败）；
+ * 写盘失败归一为「导出保存失败：…」可读错误；留痕缺失/损坏仍经 ComplianceDataError 降级。
+ */
+export async function complianceSaveFromEngineTrail(
+  dbPath: string,
+  options: ComplianceExportOptions,
+  save: DeclarationFileSaver,
+): Promise<ComplianceSaveView> {
+  if (!isDeclarationFormat(options.format)) {
+    throw new Error(`不支持的导出格式：${options.format}`);
+  }
+  // 真实格式导出（docx 内容为二进制）；taskId/人工说明门禁同预览路径（exportDeclarationFromEngineTrail）
+  const exported = await exportDeclarationFromEngineTrail(dbPath, {
+    taskId: options.taskId,
+    format: options.format,
+    humanNote: options.humanNote,
+    unusedAi: options.unusedAi,
+  });
+  let result: { canceled: boolean; path: string | null };
+  try {
+    result = await save({
+      suggestedName: exported.filename,
+      content: exported.content,
+      ...SAVE_FILTERS[options.format],
+    });
+  } catch (error) {
+    // 落盘失败（磁盘/权限/对话框异常）归一为可读前缀（渲染层直接展示）
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`导出保存失败：${reason}`, { cause: error });
+  }
+  return {
+    filename: result.path ? basename(result.path) : exported.filename,
+    savedPath: result.path,
+    canceled: result.canceled,
   };
 }

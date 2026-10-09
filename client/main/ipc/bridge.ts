@@ -35,8 +35,11 @@ import type { OfflineLedger } from "../entitlement/offline-ledger.ts";
 import type { FetchLike } from "../cloud/http.ts";
 import {
   complianceExportViewFromEngineTrail,
+  complianceSaveFromEngineTrail,
   readUsageEvents,
   type ComplianceExportView,
+  type ComplianceSaveView,
+  type DeclarationFileSaver,
 } from "../engine-trail.ts";
 import { estimateUsage } from "../../shared/usage.ts";
 
@@ -96,6 +99,12 @@ export interface BridgeBackendOptions {
    * 未接线时：用量返回空估算、声明导出报错（fail-closed）。
    */
   engineTrailDbPath?: string | null;
+  /**
+   * 声明文件保存器（compliance:save 接线：原生保存对话框 + 写盘；
+   * md/latex 文本与 docx 真实二进制，见 main/save-export.ts）。
+   * 未接线时声明保存报错（fail-closed）。
+   */
+  saveDeclaration?: DeclarationFileSaver | null;
 }
 
 export class BridgeBackend {
@@ -114,6 +123,8 @@ export class BridgeBackend {
   private readonly saveExport: ExportSaver | null;
   /** 引擎留痕库路径（未接线时用量空估算、声明导出报错）。 */
   private readonly engineTrailDbPath: string | null;
+  /** 声明文件保存器（未接线时声明保存 fail-closed 报错）。 */
+  private readonly saveDeclaration: DeclarationFileSaver | null;
   private sessionUsername: string | null = null;
   private activeKeyId: string | null = null;
   /** 引擎探测函数（FE-KEYIN/W12 接线：EngineHost.reloadKey → provider_test）。 */
@@ -132,6 +143,7 @@ export class BridgeBackend {
     this.onSessionInvalidated = options.onSessionInvalidated ?? null;
     this.saveExport = options.saveExport ?? null;
     this.engineTrailDbPath = options.engineTrailDbPath ?? null;
+    this.saveDeclaration = options.saveDeclaration ?? null;
     const auth = options.auth ?? { runtime: { mode: "demo" } as AuthRuntime };
     if (auth.runtime.mode === "cloud" && (auth.fingerprint ?? "").trim()) {
       const cloudAuth = new CloudAuthBridge({
@@ -209,6 +221,8 @@ export class BridgeBackend {
         return { taskId: String(body["taskId"] ?? ""), resumable: true };
       case BRIDGE_CHANNELS.complianceExport:
         return this.complianceExport(body);
+      case BRIDGE_CHANNELS.complianceSave:
+        return this.complianceSave(body);
       case BRIDGE_CHANNELS.entitlementStatus:
         return this.entitlementStatus();
       default:
@@ -479,5 +493,29 @@ export class BridgeBackend {
       humanNote: String(body["humanNote"] ?? ""),
       unusedAi: Boolean(body["unusedAi"]),
     });
+  }
+
+  /**
+   * 声明文件保存（compliance:save / SP3-6 收尾第二批）：三格式真实落盘——
+   * md/latex 文本、docx 真实二进制（非预览占位），经注入保存器走原生保存对话框；
+   * 用户取消静默、写盘失败归一可读、未接线 fail-closed（不冒充已保存）。
+   */
+  private async complianceSave(body: Record<string, unknown>): Promise<ComplianceSaveView> {
+    if (!this.engineTrailDbPath) {
+      throw new Error("本地留痕库未接线（engineTrailDbPath）：无法导出声明文件");
+    }
+    if (!this.saveDeclaration) {
+      throw new Error("导出保存不可用：未接线文件保存（saveDeclaration）");
+    }
+    return complianceSaveFromEngineTrail(
+      this.engineTrailDbPath,
+      {
+        taskId: String(body["taskId"] ?? ""),
+        format: String(body["format"] ?? "md"),
+        humanNote: String(body["humanNote"] ?? ""),
+        unusedAi: Boolean(body["unusedAi"]),
+      },
+      this.saveDeclaration,
+    );
   }
 }
