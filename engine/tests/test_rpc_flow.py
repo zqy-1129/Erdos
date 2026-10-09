@@ -466,10 +466,58 @@ async def test_paused_reason_falls_back_to_events_replay(tmp_path) -> None:
         server.shutdown()
 
 
+async def test_run_regression_cli_rubric_channel_end_to_end(tmp_path) -> None:
+    """验收命令本身可跑通：`run_regression.py --gate rubric` 驱动引擎进程 + rubric 评审。
+
+    库层 rubric 全链由上一个用例覆盖，本用例把「脚本 → AcceptanceRunner → RpcTaskFlow →
+    引擎子进程 → mock 厂商 → 评委 HTTP → 证据落盘」整条链钉住（QA 实跑的正是这条）。
+    """
+    import subprocess
+
+    server = _MockVendorServer(0, 0, judge_score=0.9)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    repo_root = Path(__file__).resolve().parents[2]
+    evidence = tmp_path / "evidence"
+    try:
+        base_url = f"http://127.0.0.1:{server.server_address[1]}/v1"
+        proc = subprocess.run(  # noqa: S603 - 固定解释器与脚本，测试受控输入
+            [
+                sys.executable, str(repo_root / "scripts" / "run_regression.py"),
+                "--driver", "rpc", "--api-key", "sk-test-vendor-key", "--base-url", base_url,
+                "--model", "mock-model", "--gate", "rubric", "--per-category", "1",
+                "--no-kill-resume", "--stage-timeout", "120",
+                "--work-root", str(tmp_path / "work"), "--evidence", str(evidence),
+            ],
+            cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=600,
+        )
+    finally:
+        server.shutdown()
+
+    assert proc.returncode == 0, f"stdout={proc.stdout[-3000:]} stderr={proc.stderr[-3000:]}"
+    assert "门禁=rubric" in proc.stdout
+    assert "rubric 评审" in proc.stdout  # 评委消耗计数行（成本不隐藏）
+    assert "[决策门] GO" in proc.stdout
+
+    import json as _json_local
+
+    summary = _json_local.loads((evidence / "summary.json").read_text(encoding="utf-8"))
+    assert summary["gate_mode"] == "rubric"
+    assert summary["success_rate_real_key"] == 1.0
+    # 4 题 × 4 阶段各一次评委调用；评委 token 如实入账（自动评审成本不隐藏）
+    assert summary["judge_usage"]["calls"] == 16
+    assert summary["judge_usage"]["prompt_tokens"] > 0
+
+    markdown = (evidence / "report.md").read_text(encoding="utf-8")
+    assert "真实 Key 判定通道" in markdown  # 标题按通道落笔（DEC-024 分通道统计）
+    assert "rubric 评审明细" in markdown
+    assert "0.90/0.70" in markdown
+
+
 async def test_run_regression_gate_policy_builds_real_judge(tmp_path) -> None:
     """驱动脚本的 --gate rubric 装配：真实适配器 + 真实 HTTP + 4 份阶段 rubric。
 
-    只测策略装配与裁决，不拉起引擎（引擎侧 rubric 全链见上一个用例）。
+    只测策略装配与裁决，不拉起引擎（引擎侧与脚本级全链见前两个用例）。
     """
     import argparse
     import importlib.util
