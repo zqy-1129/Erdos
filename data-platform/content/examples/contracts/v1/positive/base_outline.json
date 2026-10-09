@@ -1,0 +1,21 @@
+{
+  "outline_id": "cumcm-outline",
+  "competition_id": "cumcm",
+  "version": 1,
+  "schema_version": 1,
+  "sections": [
+    {
+      "section_type": "abstract",
+      "title": "摘要",
+      "repeat": "once",
+      "optional": false
+    },
+    {
+      "section_type": "model",
+      "title": "子问题建模与求解",
+      "repeat": "per_subproblem",
+      "optional": false
+    }
+  ],
+  "is_fixture": true
+}

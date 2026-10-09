@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/figure_style.schema.json",
+  "title": "Erdos figure_style v1 draft",
+  "type": "object",
+  "properties": {
+    "style_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "competition_id": {
+      "$ref": "_common.json#/definitions/competitionId"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "schema_version": {
+      "$ref": "_common.json#/definitions/schemaVersionInt"
+    },
+    "fonts": {
+      "type": "object",
+      "properties": {
+        "family": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "axis_label_size": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "colors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "line_width": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "caption_style": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "numbering": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "output_format": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "png",
+          "pdf",
+          "svg",
+          "eps"
+        ]
+      }
+    },
+    "review_status": {
+      "$ref": "_common.json#/definitions/reviewStatus"
+    },
+    "is_fixture": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional metadata only; cannot override defined fields."
+    },
+    "dimensions": {
+      "type": "object",
+      "required": [
+        "width",
+        "height",
+        "unit"
+      ],
+      "properties": {
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "inch",
+            "mm"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "style_id",
+    "competition_id",
+    "version",
+    "schema_version"
+  ],
+  "additionalProperties": false
+}

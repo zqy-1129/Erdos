@@ -1,0 +1,616 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "CUMCM local content API additive extension",
+    "version": "3.0.0",
+    "description": "Implemented loopback integration adapter. Existing business server routes/JWT/membership integration remain BE work. Request purpose never grants audit privileges."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:18789"
+    }
+  ],
+  "security": [
+    {
+      "LocalBearer": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Process/model initialized; cloud_deployed=false, not a database readiness certificate"
+          }
+        }
+      }
+    },
+    "/v1/content/competitions/cumcm/bootstrap": {
+      "get": {
+        "description": "Omit release_id only at task start to resolve the active competition release. Pin the returned release_id and manifest for all later retrieval/download calls.",
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Business response envelope; data is bootstrap, including format_profiles and versioned rendering_profiles with canonical SHA256",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Business response envelope; data is null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Business response envelope; data is null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Business response envelope; data is null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/content/retrieve": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetrieveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Business response envelope; data is ContextCapsule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Business response envelope; data is null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Business response envelope; data is null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Business response envelope; data is null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Business response envelope; data is null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/content/assets/{asset_id}": {
+      "get": {
+        "parameters": [
+          {
+            "name": "release_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^asset-[0-9a-f]{64}$"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Real S3 object bytes, SHA verified before response",
+            "headers": {
+              "X-Content-SHA256": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Asset-Version": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Business response envelope; data is null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Business response envelope; data is null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Business response envelope; data is null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Business response envelope; data is null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "LocalBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "Envelope": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "request_id",
+          "timestamp"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {},
+          "request_id": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RetrieveRequest": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "competition_id": {
+            "enum": [
+              "cumcm"
+            ]
+          },
+          "release_id": {
+            "type": "string",
+            "pattern": "^cumcm-2010-2025-[a-z0-9-]+$"
+          },
+          "historical_year_range": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+              "type": "integer",
+              "minimum": 2010,
+              "maximum": 2025
+            }
+          },
+          "subproblem": {
+            "type": "object",
+            "properties": {
+              "subproblem_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "goal": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8000
+              },
+              "problem_types": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "optimization",
+                    "prediction",
+                    "evaluation",
+                    "statistical_analysis",
+                    "mechanism",
+                    "simulation",
+                    "unknown"
+                  ]
+                }
+              },
+              "constraints": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "deliverables": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "method_tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "data_tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "domain_tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "dependency_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "current_results": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            },
+            "required": [
+              "goal"
+            ],
+            "additionalProperties": false
+          },
+          "stage": {
+            "enum": [
+              "analysis",
+              "assumptions",
+              "symbols",
+              "model",
+              "algorithm",
+              "results",
+              "validation",
+              "sensitivity",
+              "discussion",
+              "abstract"
+            ]
+          },
+          "language": {
+            "enum": [
+              "zh"
+            ]
+          },
+          "top_k": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "token_budget": {
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 16000
+          },
+          "usage_purpose": {
+            "enum": [
+              "consumer",
+              "internal_audit",
+              "third_party_model"
+            ]
+          }
+        },
+        "required": [
+          "competition_id",
+          "release_id",
+          "subproblem",
+          "stage"
+        ],
+        "additionalProperties": false
+      },
+      "ContextCapsule": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "competition_id": {
+            "enum": [
+              "cumcm"
+            ]
+          },
+          "release_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "manifest_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "stage": {
+            "enum": [
+              "analysis",
+              "assumptions",
+              "symbols",
+              "model",
+              "algorithm",
+              "results",
+              "validation",
+              "sensitivity",
+              "discussion",
+              "abstract"
+            ]
+          },
+          "subproblem_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "no_reference",
+              "internal_candidates",
+              "recipe_only"
+            ]
+          },
+          "historical_references": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "unit_id",
+                "source_sha256",
+                "source_ref",
+                "page",
+                "text"
+              ],
+              "properties": {
+                "source_ref": {
+                  "type": "object",
+                  "properties": {
+                    "asset_id": {
+                      "type": "string",
+                      "pattern": "^asset-[0-9a-f]{64}$"
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "page": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "asset_id",
+                    "version",
+                    "sha256",
+                    "page"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "writing_recipes": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "figure_recipes": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "internal_candidates": {
+            "type": "boolean"
+          },
+          "budget": {
+            "type": "object",
+            "properties": {
+              "limit": {
+                "type": "integer",
+                "minimum": 256
+              },
+              "actual": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "tokenizer": {
+                "type": "string",
+                "minLength": 1
+              },
+              "includes_response_json": {
+                "enum": [
+                  true
+                ]
+              }
+            },
+            "required": [
+              "limit",
+              "actual",
+              "tokenizer",
+              "includes_response_json"
+            ],
+            "additionalProperties": false
+          },
+          "source_text_is_instruction": {
+            "enum": [
+              false
+            ]
+          },
+          "result_numbers": {
+            "enum": [
+              "current_task_computation_only"
+            ]
+          }
+        },
+        "required": [
+          "request_id",
+          "competition_id",
+          "release_id",
+          "manifest_sha256",
+          "stage",
+          "subproblem_id",
+          "status",
+          "historical_references",
+          "writing_recipes",
+          "figure_recipes",
+          "missing",
+          "internal_candidates",
+          "budget",
+          "source_text_is_instruction",
+          "result_numbers"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "x-error-codes": {
+    "BAD_REQUEST": 40001,
+    "UNAUTHENTICATED": 40101,
+    "PERMISSION_DENIED": 40301,
+    "NOT_FOUND": 40401,
+    "DB_UNAVAILABLE": 50301
+  },
+  "x-frozen-business-contract": "D:/Erdos/contracts/openapi.yaml (unchanged)"
+}

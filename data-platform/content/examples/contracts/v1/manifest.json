@@ -1,0 +1,238 @@
+{
+  "$fixture": true,
+  "generated_by": "DE（阶段02 数据契约夹具）",
+  "note": "本目录所有示例均为开发夹具（is_fixture），不写入真实 pack、不冒充真实案例/奖项。关系演示使用的 cumcm-2024-B 等稳定 ID 为演示占位，仅用于契约校验。",
+  "positive": {
+    "source_file.json": {
+      "schema": "source_file",
+      "purpose": "正常逐文件记录"
+    },
+    "source_file_failed.json": {
+      "schema": "source_file",
+      "purpose": "failed + entry_kind=unknown + null 元数据"
+    },
+    "problem_profile.json": {
+      "schema": "problem_profile",
+      "purpose": "多子问题混合题型（优化+预测）+ null 置信度"
+    },
+    "case_profile.json": {
+      "schema": "case_profile",
+      "purpose": "单篇论文结构/写法/篇幅/图表画像"
+    },
+    "case_profile_unknown_unauthorized.json": {
+      "schema": "case_profile",
+      "purpose": "未知元数据 + 未授权（license 全 false）"
+    },
+    "template_family.json": {
+      "schema": "template_family",
+      "purpose": "一个模板体系两种格式输出（latex+docx）"
+    },
+    "asset.json": {
+      "schema": "asset",
+      "purpose": "论文资源对象（license_status=internal_only）"
+    },
+    "release_manifest.json": {
+      "schema": "release_manifest",
+      "purpose": "staging 发布清单"
+    },
+    "writing_profile.json": {
+      "schema": "writing_profile",
+      "purpose": "同赛事同题型统计画像（sample_count+来源清单+缺失回退）"
+    },
+    "figure_style.json": {
+      "schema": "figure_style",
+      "purpose": "图表样式"
+    },
+    "figure_spec.json": {
+      "schema": "figure_spec",
+      "purpose": "图表规格（画什么）"
+    },
+    "bundle_ok.json": {
+      "schema": "bundle",
+      "purpose": "一题多论文跨引用闭环正例"
+    },
+    "task_context.json": {
+      "schema": "task_context",
+      "purpose": "开发夹具；闭环示例见 bundle_ok.json"
+    },
+    "ruleset.json": {
+      "schema": "ruleset",
+      "purpose": "开发夹具；闭环示例见 bundle_ok.json"
+    },
+    "base_outline.json": {
+      "schema": "base_outline",
+      "purpose": "开发夹具；闭环示例见 bundle_ok.json"
+    },
+    "table_style.json": {
+      "schema": "table_style",
+      "purpose": "开发夹具；闭环示例见 bundle_ok.json"
+    },
+    "bundle_unresolved_staging.json": {
+      "schema": "bundle",
+      "purpose": "未解析父题仅 staging；未知元数据和授权"
+    },
+    "bundle_published_authorized.json": {
+      "schema": "bundle",
+      "purpose": "许可范围明确的发布夹具；规则未核验时仍标 unverified"
+    },
+    "bundle_incremental_removal.json": {
+      "schema": "bundle",
+      "purpose": "增量继承依赖，精确下架旧索引，保留模板依赖闭环"
+    }
+  },
+  "negative": {
+    "schema_conf_out_of_range.json": {
+      "kind": "schema",
+      "schema": "problem_profile",
+      "expected_error": "maximum",
+      "note": "置信度越界 confidence=1.5"
+    },
+    "schema_bad_sha256.json": {
+      "kind": "schema",
+      "schema": "asset",
+      "expected_error": "0-9a-f",
+      "note": "hash 非法（非 64 hex）"
+    },
+    "schema_path_traversal.json": {
+      "kind": "schema",
+      "schema": "asset",
+      "expected_error": "oss_key",
+      "note": "路径穿越（盘符绝对路径）"
+    },
+    "schema_missing_required.json": {
+      "kind": "schema",
+      "schema": "problem_profile",
+      "expected_error": "is a required property",
+      "note": "缺失必填 problem_types"
+    },
+    "schema_bad_competition_id.json": {
+      "kind": "schema",
+      "schema": "problem_profile",
+      "expected_error": "is not one of",
+      "note": "赛事 ID 不在十九注册值"
+    },
+    "schema_bad_status_enum.json": {
+      "kind": "schema",
+      "schema": "source_file",
+      "expected_error": "is not one of",
+      "note": "状态枚举非法"
+    },
+    "bundle_parent_missing.json": {
+      "kind": "bundle",
+      "expected_error": "父题不存在"
+    },
+    "bundle_duplicate_id.json": {
+      "kind": "bundle",
+      "expected_error": "重复ID"
+    },
+    "bundle_competition_mismatch.json": {
+      "kind": "bundle",
+      "expected_error": "赛事不匹配"
+    },
+    "bundle_published_without_license.json": {
+      "kind": "bundle",
+      "expected_error": "未授权发布"
+    },
+    "bundle_release_missing_asset.json": {
+      "kind": "bundle",
+      "expected_error": "资源依赖缺失"
+    },
+    "bundle_source_hash_mismatch.json": {
+      "kind": "bundle",
+      "expected_error": "源哈希不一致"
+    },
+    "bundle_unknown_submethod.json": {
+      "kind": "bundle",
+      "expected_error": "[TAXONOMY_REF]"
+    },
+    "bundle_unknown_data_domain.json": {
+      "kind": "bundle",
+      "expected_error": "[TAXONOMY_REF]"
+    },
+    "bundle_asset_competition.json": {
+      "kind": "bundle",
+      "expected_error": "[COMPETITION_MISMATCH]"
+    },
+    "bundle_layout_version.json": {
+      "kind": "bundle",
+      "expected_error": "[ASSET_LOCK]"
+    },
+    "bundle_missing_style.json": {
+      "kind": "bundle",
+      "expected_error": "[ASSET_REF]"
+    },
+    "bundle_release_dependency.json": {
+      "kind": "bundle",
+      "expected_error": "[RELEASE_DEPENDENCY]"
+    },
+    "bundle_scope_denied.json": {
+      "kind": "bundle",
+      "expected_error": "[LICENSE_SCOPE]"
+    },
+    "bundle_sample_count.json": {
+      "kind": "bundle",
+      "expected_error": "[SAMPLE_COUNT]"
+    },
+    "bundle_profile_version.json": {
+      "kind": "bundle",
+      "expected_error": "[PROFILE_LOCK]"
+    },
+    "bundle_unresolved_published.json": {
+      "kind": "bundle",
+      "expected_error": "[UNRESOLVED_PARENT]"
+    },
+    "bundle_rules_claim.json": {
+      "kind": "bundle",
+      "expected_error": "[RULES_UNVERIFIED]"
+    },
+    "bundle_evidence_hash.json": {
+      "kind": "bundle",
+      "expected_error": "[EVIDENCE_HASH]"
+    },
+    "bundle_bad_subproblem_ref.json": {
+      "kind": "bundle",
+      "expected_error": "[SUBPROBLEM_REF]"
+    },
+    "bundle_task_lock.json": {
+      "kind": "bundle",
+      "expected_error": "[ASSET_LOCK]"
+    },
+    "bundle_dependency_cycle.json": {
+      "kind": "bundle",
+      "expected_error": "[RELEASE_CYCLE]"
+    },
+    "schema_signed_url.json": {
+      "kind": "schema",
+      "schema": "asset",
+      "expected_error": "oss_key"
+    },
+    "bundle_format_mismatch.json": {
+      "kind": "bundle",
+      "expected_error": "[ASSET_FORMAT]"
+    },
+    "bundle_fact_without_evidence.json": {
+      "kind": "bundle",
+      "expected_error": "[EVIDENCE_REQUIRED]"
+    },
+    "bundle_unknown_scope.json": {
+      "kind": "bundle",
+      "expected_error": "[LICENSE_SCOPE]"
+    },
+    "bundle_label_provenance.json": {
+      "kind": "bundle",
+      "expected_error": "[LABEL_PROVENANCE]"
+    },
+    "bundle_local_resource_missing.json": {
+      "kind": "bundle",
+      "expected_error": "[LOCAL_RESOURCE_MISSING]"
+    },
+    "bundle_removal_wrong_base.json": {
+      "kind": "bundle",
+      "expected_error": "[REMOVAL_STATE]"
+    },
+    "bundle_model_permission_denied.json": {
+      "kind": "bundle",
+      "expected_error": "[LICENSE_SCOPE]"
+    }
+  }
+}

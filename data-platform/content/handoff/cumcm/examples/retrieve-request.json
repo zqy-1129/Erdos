@@ -1,0 +1,21 @@
+{
+  "request_id": "example-retrieve-001",
+  "competition_id": "cumcm",
+  "historical_year_range": [2010, 2025],
+  "release_id": "cumcm-2010-2025-v1",
+  "subproblem": {
+    "subproblem_id": "example-task:q1",
+    "goal": "在给定设备与加工时间约束下建立调度模型",
+    "constraints": ["同一设备不能同时处理两个作业"],
+    "deliverables": ["调度方案", "目标值及可行性验证"],
+    "problem_types": ["optimization"],
+    "method_tags": [],
+    "data_tags": [],
+    "domain_tags": []
+  },
+  "stage": "model",
+  "language": "zh",
+  "top_k": 5,
+  "token_budget": 4000,
+  "usage_purpose": "consumer"
+}

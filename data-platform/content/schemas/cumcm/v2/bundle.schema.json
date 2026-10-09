@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/cumcm/v2/bundle.schema.json",
+  "title": "Erdos cumcm v2 交付 bundle（新实体集合）",
+  "type": "object",
+  "properties": {
+    "release_id": {"type": "string"},
+    "schema_version": {"type": "integer"},
+    "editions": {"type": "array", "items": {"type": "object"}},
+    "problems": {"type": "array", "items": {"type": "object"}},
+    "subproblems": {"type": "array", "items": {"type": "object"}},
+    "papers": {"type": "array", "items": {"type": "object"}},
+    "paper_problem_links": {"type": "array", "items": {"type": "object"}},
+    "assets": {"type": "array", "items": {"type": "object"}},
+    "blocks": {"type": "array", "items": {"type": "object"}},
+    "block_subproblem_links": {"type": "array", "items": {"type": "object"}},
+    "retrieval_units": {"type": "array", "items": {"type": "object"}},
+    "writing_recipes": {"type": "array", "items": {"type": "object"}},
+    "figure_recipes": {"type": "array", "items": {"type": "object"}},
+    "template_families": {"type": "array", "items": {"type": "object"}},
+    "releases": {"type": "array", "items": {"type": "object"}},
+    "is_fixture": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

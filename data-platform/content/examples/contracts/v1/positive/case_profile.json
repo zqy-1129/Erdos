@@ -1,0 +1,97 @@
+{
+  "case_id": "cumcm-2024-B-case-001",
+  "problem_id": "cumcm-2024-B",
+  "competition_id": "cumcm",
+  "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "extractor_version": "v0.1",
+  "schema_version": 1,
+  "profile_version": 1,
+  "review_status": "pending_review",
+  "license": {
+    "internal_analysis": true,
+    "distribute_original": false,
+    "distribute_profile": false,
+    "send_to_third_party_model": false
+  },
+  "structure": [
+    {
+      "section_title": "问题重述",
+      "section_type": "restatement",
+      "level": 1,
+      "subproblem_ref": null,
+      "page_range": [
+        1,
+        2
+      ],
+      "page_evidence": "第1页",
+      "evidence": {
+        "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "locator_type": "page",
+        "start": 1,
+        "end": 2
+      }
+    }
+  ],
+  "writing": [
+    {
+      "section": "restatement",
+      "purpose": "复述题意",
+      "organization": "先背景后问题",
+      "evidence": {
+        "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "locator_type": "page",
+        "start": 1,
+        "end": 2
+      },
+      "kind": "fact",
+      "confidence": 0.8,
+      "method_description": null
+    }
+  ],
+  "length": {
+    "zh_chars": 3500,
+    "en_words": null,
+    "statistical_basis": "估算",
+    "missing": [],
+    "zh_parts": {
+      "body": 3000,
+      "abstract": 200,
+      "toc": 0,
+      "appendix": 300
+    },
+    "en_parts": {
+      "body": null,
+      "abstract": null,
+      "toc": null,
+      "appendix": null
+    },
+    "section_ratios": []
+  },
+  "figures": [
+    {
+      "figure_id": "cumcm-2024-B-case-001-fig1",
+      "type": "line",
+      "purpose": "结果对比",
+      "variables": "时间 vs 产量",
+      "caption_style": null,
+      "page": 5,
+      "confidence": 0.8,
+      "evidence": {
+        "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "locator_type": "page",
+        "start": 5,
+        "end": 5
+      },
+      "result_scope": "historical_reference"
+    }
+  ],
+  "last_updated": "2026-10-04T00:00:00Z",
+  "resolution_status": "resolved",
+  "publication_status": "staging",
+  "source_asset_ref": null,
+  "license_evidence": {
+    "record_id": "fixture-internal-review",
+    "relative_path": "fixtures/authorization.json"
+  },
+  "is_fixture": true
+}

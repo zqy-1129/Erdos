@@ -1,0 +1,18 @@
+{
+  "relative_path": "problems/01_fa/ghost.txt",
+  "size": null,
+  "mtime_ns": null,
+  "extension": ".txt",
+  "sha256": null,
+  "competition_ids": [],
+  "scope": "competition",
+  "source_root": "problems",
+  "resource_type_hint": "题目或附件",
+  "recognition_basis": "来源根 problems / 目录 01_fa → fa",
+  "recognition_status": "未识别",
+  "hash_source": "none",
+  "status": "failed",
+  "entry_kind": "unknown",
+  "note": "stat 失败",
+  "is_fixture": true
+}

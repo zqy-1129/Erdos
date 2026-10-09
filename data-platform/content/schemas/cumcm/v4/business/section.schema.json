@@ -1,0 +1,90 @@
+{
+  "type": "object",
+  "properties": {
+    "section_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "case_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "parent_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "level": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "start_block": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "end_block": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "block_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      }
+    },
+    "recognized_chars": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "stage": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "subproblem_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      }
+    },
+    "semantic_status": {
+      "enum": [
+        "candidate",
+        "source_checked",
+        "verified",
+        "rejected",
+        "abstained"
+      ]
+    }
+  },
+  "required": [
+    "section_id",
+    "case_id",
+    "parent_id",
+    "level",
+    "title",
+    "start_block",
+    "end_block",
+    "block_ids",
+    "recognized_chars",
+    "stage",
+    "subproblem_refs",
+    "semantic_status"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -1,0 +1,77 @@
+{
+  "type": "object",
+  "properties": {
+    "source_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "year": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 2010,
+      "maximum": 2025
+    },
+    "role": {
+      "enum": [
+        "problem",
+        "paper",
+        "attachment",
+        "template"
+      ]
+    },
+    "asset_ref": {
+      "type": "object",
+      "properties": {
+        "asset_id": {
+          "type": "string",
+          "pattern": "^asset-[0-9a-f]{64}$"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "asset_id",
+        "version",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "media_type": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "original_occurrences": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+      }
+    }
+  },
+  "required": [
+    "source_id",
+    "sha256",
+    "year",
+    "role",
+    "asset_ref",
+    "media_type",
+    "original_occurrences"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

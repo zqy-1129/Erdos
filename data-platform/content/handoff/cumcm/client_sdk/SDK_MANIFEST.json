@@ -1,0 +1,142 @@
+{
+  "release_id": "cumcm-2010-2025-codex-v3",
+  "manifest_sha256": "7cb13aba466baeffda3cb67731a4b106b2e6122d45dac15fd690ec3e6f37ac08",
+  "scope": "integration code/contracts only; authorized corpus installed separately",
+  "files": [
+    {
+      "path": "BACKUP.md",
+      "sha256": "1975450abec57a0bcb2d7ffd05e9c25ae72cd78e3f0718b7fe3d9ca2db339c45",
+      "size": 1948
+    },
+    {
+      "path": "README.md",
+      "sha256": "0ec26993e424d4ceb6082139ed68013fcd4d75a1e69f40f41ca46b0854566e95",
+      "size": 10903
+    },
+    {
+      "path": "local_ai_sdk.py",
+      "sha256": "5baa3d623e9a2eb674fd53638dd18856df5f061ea5c777384da45e8346aa857d",
+      "size": 3145
+    },
+    {
+      "path": "offline_sdk.py",
+      "sha256": "b1e978a93ee33739ab1e965eb699cd2576ca0b00e335e58decafd3d3d4ae2900",
+      "size": 11599
+    },
+    {
+      "path": "offline_smoke.py",
+      "sha256": "8b406b5be41b32eb6e6c626a165b5233824aedcf2a6b924919b3c5b69ed5844b",
+      "size": 702
+    },
+    {
+      "path": "online_sdk.py",
+      "sha256": "0602dd8920f73a582edf24a120055cdf887085c7034fc1d5624d86d1b1c85a23",
+      "size": 3674
+    },
+    {
+      "path": "schemas/v3/asset_ref.schema.json",
+      "sha256": "e8d8a289245233ce66d2fb52f7bc4a409ed5df8e2aedd4d001fe91da4ea21942",
+      "size": 516
+    },
+    {
+      "path": "schemas/v3/context_capsule.schema.json",
+      "sha256": "85345e2e7f6ee3b6dde40d5184e051ce6204b9e27b9ee08056e5bef7745590da",
+      "size": 3432
+    },
+    {
+      "path": "schemas/v3/document_node.schema.json",
+      "sha256": "4c53d6d35e325f9dbc107c1f157e5e8051ca5e8e42191ddf7d96a0c08c3bec0d",
+      "size": 2228
+    },
+    {
+      "path": "schemas/v3/manifest.schema.json",
+      "sha256": "fb9a5aa585613054c4235bf97d9e5974d931a66430770b7bf16d29368f434b80",
+      "size": 1007
+    },
+    {
+      "path": "schemas/v3/result_card.schema.json",
+      "sha256": "0ae31696fe8bb90a1e15429303beebb2678d4b83fc71ddd0ef5a3ce553cef30a",
+      "size": 4000
+    },
+    {
+      "path": "schemas/v3/retrieve_request.schema.json",
+      "sha256": "ed2f500b737aa9b0971e3eb01db8c232a6fd5078546a2b8d78fa4672661b89c9",
+      "size": 3061
+    },
+    {
+      "path": "schemas/v3/seal.schema.json",
+      "sha256": "3520ca04c347b32c3d5da09c2d72388fcf0597bf6ea3cccaf2a22a4090b7fc80",
+      "size": 429
+    },
+    {
+      "path": "schemas/v4/business/block.schema.json",
+      "sha256": "95ab5b755ed3bf675c7da8a2c82895398f938151221e2db0377aafc51ea1774f",
+      "size": 1265
+    },
+    {
+      "path": "schemas/v4/business/formula_region.schema.json",
+      "sha256": "760a71d58121e5f3d0f26c8c332b1f6efe1e1cd88cac224cc7630772d66e2f3f",
+      "size": 4004
+    },
+    {
+      "path": "schemas/v4/business/legacy_case.schema.json",
+      "sha256": "6edba3817608a77b1a2f2159ac8a224b0b9ebcb91ae821d378639528e0eb460a",
+      "size": 1085
+    },
+    {
+      "path": "schemas/v4/business/legacy_problem.schema.json",
+      "sha256": "a23abab0882a908eae4e197a48a32935ddf8083bc83acfdb7fa0df57ad12f270",
+      "size": 2178
+    },
+    {
+      "path": "schemas/v4/business/legacy_template.schema.json",
+      "sha256": "690439933c8cc5f713a5d93da38924cf027a712b3a3565c72828db6839ce38e6",
+      "size": 942
+    },
+    {
+      "path": "schemas/v4/business/paper.schema.json",
+      "sha256": "54350b1a1381b949ead47000c933f2ae056c5a79fe77b2a577d531faea1b9c61",
+      "size": 1712
+    },
+    {
+      "path": "schemas/v4/business/problem.schema.json",
+      "sha256": "3a1c52621e47086d42bbd72c994744831a0a0d508bdc4505b3d58ec456567ad6",
+      "size": 2171
+    },
+    {
+      "path": "schemas/v4/business/review.schema.json",
+      "sha256": "91ed73f7fff57880d03714728cd0dfd5aec16dfa10d101e66d0a400f99255fe6",
+      "size": 1358
+    },
+    {
+      "path": "schemas/v4/business/section.schema.json",
+      "sha256": "39023b44576d1961eac09ff4f22c122cda959aedc21a27eeb41df84f7b5a8db7",
+      "size": 1623
+    },
+    {
+      "path": "schemas/v4/business/source.schema.json",
+      "sha256": "a1020eccd04ed7dc34473aeacf52ed1288b83edf19a19625406b1ef61b30c9e8",
+      "size": 1439
+    },
+    {
+      "path": "schemas/v4/business/subproblem.schema.json",
+      "sha256": "04b578657f0914e3d71c4bab08c299f79cc947edba133068601b9f1fc8977ef9",
+      "size": 1972
+    },
+    {
+      "path": "schemas/v4/business/visual.schema.json",
+      "sha256": "a007de75ee959cf16a246d52c50bf353a136548c3d541950e8495e70e9b7f389",
+      "size": 2227
+    },
+    {
+      "path": "schemas/v4/local_retrieve_request.schema.json",
+      "sha256": "ff47f8ae46dc13e46e34c0de1e081101defa644e6c42287a9839507b7729bb48",
+      "size": 3166
+    },
+    {
+      "path": "schemas/v4/source_components_request.schema.json",
+      "sha256": "3f31077a3a83666a90122debf2a304c479779214965bc2c7ca9a9e156ce7032c",
+      "size": 582
+    }
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/asset.schema.json",
+  "title": "Erdos asset v1 draft",
+  "type": "object",
+  "properties": {
+    "asset_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "problem",
+        "attachment",
+        "case_paper",
+        "case_profile",
+        "template_layout",
+        "template_outline",
+        "writing_policy",
+        "figure_style",
+        "table_style",
+        "writing_profile",
+        "index",
+        "ruleset"
+      ]
+    },
+    "competition_id": {
+      "$ref": "_common.json#/definitions/competitionId"
+    },
+    "owner_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "oss_key": {
+      "$ref": "_common.json#/definitions/ossKey"
+    },
+    "sha256": {
+      "$ref": "_common.json#/definitions/sha256"
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "media_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "license_status": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "internal_only",
+        "audited",
+        "distributable"
+      ]
+    },
+    "license": {
+      "$ref": "_common.json#/definitions/licenseScope"
+    },
+    "license_evidence": {
+      "$ref": "_common.json#/definitions/licenseEvidence"
+    },
+    "schema_version": {
+      "$ref": "_common.json#/definitions/schemaVersionInt"
+    },
+    "is_fixture": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional metadata only; cannot override defined fields."
+    },
+    "format": {
+      "type": "string",
+      "enum": [
+        "latex",
+        "docx"
+      ]
+    }
+  },
+  "required": [
+    "asset_id",
+    "role",
+    "competition_id",
+    "owner_id",
+    "version",
+    "oss_key",
+    "sha256",
+    "size_bytes",
+    "media_type",
+    "license_status",
+    "license",
+    "license_evidence",
+    "schema_version"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "role": {
+            "const": "template_layout"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "format"
+        ]
+      }
+    }
+  ]
+}

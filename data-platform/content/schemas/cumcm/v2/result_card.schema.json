@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/cumcm/v2/result_card.schema.json",
+  "title": "Erdos cumcm v2 结果卡（result_card，供引擎求解结果登记，不含通用解题）",
+  "type": "object",
+  "required": ["result_card_id", "task_id", "subproblem_id", "stage", "input_refs", "method", "outputs", "status", "verdeps"],
+  "properties": {
+    "result_card_id": {"type": "string"},
+    "task_id": {"type": "string"},
+    "subproblem_id": {"type": "string"},
+    "stage": {"type": "string"},
+    "input_refs": {"type": "array", "items": {"type": "object"}},
+    "method": {"type": "object"},
+    "outputs": {"type": "array", "items": {"type": "object"}},
+    "metrics": {"type": "array", "items": {"type": "object"}},
+    "figure_refs": {"type": "array", "items": {"type": "string"}},
+    "table_refs": {"type": "array", "items": {"type": "string"}},
+    "status": {"type": "string", "enum": ["planned", "running", "succeeded", "failed", "reviewed"]},
+    "error": {"type": ["string", "null"]},
+    "limitations": {"type": "array", "items": {"type": "string"}},
+    "verdeps": {"type": "object"},
+    "schema_version": {"type": "integer"}
+  },
+  "additionalProperties": false
+}

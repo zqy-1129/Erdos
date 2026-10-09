@@ -1,0 +1,56 @@
+{
+  "family_id": "cumcm-default",
+  "competition_id": "cumcm",
+  "family_version": 1,
+  "schema_version": 1,
+  "publication_status": "staging",
+  "ruleset_id": "cumcm-2026",
+  "ruleset_version": 1,
+  "ruleset_status": "pending_verification",
+  "ruleset_ref": {
+    "asset_id": "cumcm-rules",
+    "version": 1,
+    "sha256": "02cd1e8408dd6e726b60e8cc9e4a88cb943f7a9a1d0bb92be4c10db5881db724"
+  },
+  "language": "zh",
+  "layout_refs": [
+    {
+      "format": "latex",
+      "asset_ref": {
+        "asset_id": "cumcm-layout-latex",
+        "version": 1,
+        "sha256": "5c59c76c9f0fc02c0f8794069ca2dbd82b5f449e52f2e48bba1d5b09c33d6ef1"
+      }
+    },
+    {
+      "format": "docx",
+      "asset_ref": {
+        "asset_id": "cumcm-layout-docx",
+        "version": 1,
+        "sha256": "ce0893c1ebdd158469767b0c037e784fcbe7ff06b2ffd27761685ceec972078a"
+      }
+    }
+  ],
+  "base_outline_ref": {
+    "asset_id": "cumcm-outline",
+    "version": 1,
+    "sha256": "735e623bf288b29cf96ea3e269a3d3a7169fdab96bc397ae5214b6dd2ff87176"
+  },
+  "writing_policy_ref": {
+    "asset_id": "cumcm-policy",
+    "version": 1,
+    "sha256": "2171172da7c6e162fb55afe0c178b1f41f9b652322007cdb03df5925a034279d"
+  },
+  "figure_style_ref": {
+    "asset_id": "cumcm-figure",
+    "version": 1,
+    "sha256": "7676476536c298b5946e6d855f01ea21acd58f17aaadd7deb64ea9d45e5054f8"
+  },
+  "table_style_ref": {
+    "asset_id": "cumcm-table",
+    "version": 1,
+    "sha256": "2ca054dce33a9adf3c59e5d4fe8105aa93c36b9f82250c20a9de31b7217049e5"
+  },
+  "review_status": "pending_review",
+  "is_fixture": true
+}

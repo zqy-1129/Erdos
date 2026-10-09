@@ -1,0 +1,119 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/bundle.schema.json",
+  "title": "Erdos bundle v1 draft",
+  "type": "object",
+  "properties": {
+    "problems": {
+      "type": "array",
+      "items": {
+        "$ref": "problem_profile.schema.json"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "$ref": "case_profile.schema.json"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "$ref": "asset.schema.json"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "families": {
+      "type": "array",
+      "items": {
+        "$ref": "template_family.schema.json"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "rulesets": {
+      "type": "array",
+      "items": {
+        "$ref": "ruleset.schema.json"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "outlines": {
+      "type": "array",
+      "items": {
+        "$ref": "base_outline.schema.json"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "writing_profiles": {
+      "type": "array",
+      "items": {
+        "$ref": "writing_profile.schema.json"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "figure_styles": {
+      "type": "array",
+      "items": {
+        "$ref": "figure_style.schema.json"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "table_styles": {
+      "type": "array",
+      "items": {
+        "$ref": "table_style.schema.json"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "figure_specs": {
+      "type": "array",
+      "items": {
+        "$ref": "figure_spec.schema.json"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "task_contexts": {
+      "type": "array",
+      "items": {
+        "$ref": "task_context.schema.json"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "releases": {
+      "type": "array",
+      "items": {
+        "$ref": "release_manifest.schema.json"
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "release": {
+      "$ref": "release_manifest.schema.json"
+    },
+    "$fixture": {
+      "const": true
+    },
+    "is_fixture": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional metadata only; cannot override defined fields."
+    }
+  },
+  "required": [],
+  "additionalProperties": false
+}

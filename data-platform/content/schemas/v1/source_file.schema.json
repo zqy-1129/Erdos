@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/source_file.schema.json",
+  "title": "Erdos 源文件盘点记录 Schema v1",
+  "description": "校验第一阶段 source_files.jsonl 逐文件记录，含 failed/pending/unstable、null 元数据与 entry_kind=unknown。资源类型提示只是弱提示，不构成题目/论文身份确认。",
+  "type": "object",
+  "required": [
+    "relative_path",
+    "extension",
+    "status",
+    "competition_ids",
+    "scope",
+    "source_root",
+    "resource_type_hint",
+    "recognition_basis",
+    "recognition_status",
+    "hash_source",
+    "size",
+    "mtime_ns",
+    "sha256"
+  ],
+  "properties": {
+    "relative_path": {
+      "$ref": "_common.json#/definitions/relPath"
+    },
+    "size": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "mtime_ns": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "extension": {
+      "type": "string"
+    },
+    "sha256": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "_common.json#/definitions/sha256"
+        }
+      ]
+    },
+    "competition_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "_common.json#/definitions/competitionId"
+      }
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "competition",
+        "shared",
+        "unattributed"
+      ]
+    },
+    "source_root": {
+      "type": "string",
+      "enum": [
+        "problems",
+        "papers_pending_auth",
+        "templates",
+        "CPMCM",
+        "__uncovered__"
+      ]
+    },
+    "resource_type_hint": {
+      "type": "string",
+      "enum": [
+        "题目或附件",
+        "论文或题目",
+        "模板/格式资源",
+        "研赛题目候选",
+        "研赛优秀论文候选",
+        "研赛来源",
+        "未归属"
+      ]
+    },
+    "recognition_basis": {
+      "type": "string"
+    },
+    "recognition_status": {
+      "type": "string",
+      "enum": [
+        "待核验",
+        "空文件不可用",
+        "未识别"
+      ]
+    },
+    "hash_source": {
+      "type": "string",
+      "enum": [
+        "full",
+        "cached",
+        "none"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "empty",
+        "pending",
+        "failed",
+        "unstable"
+      ]
+    },
+    "entry_kind": {
+      "type": "string",
+      "enum": [
+        "file",
+        "dir",
+        "unknown"
+      ]
+    },
+    "note": {
+      "type": "string"
+    },
+    "is_fixture": {
+      "const": true
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ok"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "size": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "mtime_ns": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "$ref": "_common.json#/definitions/sha256"
+          },
+          "hash_source": {
+            "type": "string",
+            "enum": [
+              "full",
+              "cached"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "empty"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "size": {
+            "const": 0
+          },
+          "sha256": {
+            "const": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "failed",
+              "unstable",
+              "pending"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "sha256": {
+            "type": "null"
+          },
+          "hash_source": {
+            "const": "none"
+          }
+        }
+      }
+    }
+  ]
+}
