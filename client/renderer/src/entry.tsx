@@ -76,6 +76,8 @@ if (typeof document !== "undefined") {
     const stores = createStores(createBridge());
     createRoot(rootElement).render(<App stores={stores} />);
     bootTimer.mark("first-render"); // 首屏挂载完成
+    // 冷启动基线输出（控制台可见：compat-check 采数经 ELECTRON_ENABLE_LOGGING 透传；SP3-7 计量同源）
+    console.log(`[boot] first-render=${bootTimer.appReadyMs() ?? "?"}ms`);
     // 冷启动/崩溃基线（演示环境控制台可见；设置页展示）
     (globalThis as { __erdosBoot?: BootTimer; __erdosCrash?: CrashGuard }).__erdosBoot = bootTimer;
     (globalThis as { __erdosCrash?: CrashGuard }).__erdosCrash = crashGuard;

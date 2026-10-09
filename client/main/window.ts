@@ -41,7 +41,11 @@ export function createMainWindow(options: WindowOptions): BrowserWindow {
     },
   });
 
-  win.once("ready-to-show", () => win.show());
+  // 冷启动采样模式（compat-check，ERDOS_BOOT_PROBE=1）：保持隐藏——仅采集渲染首屏耗时，采样期间不闪窗；
+  // 正常启动（未设置该变量）行为不变。
+  win.once("ready-to-show", () => {
+    if (process.env.ERDOS_BOOT_PROBE !== "1") win.show();
+  });
 
   // 导航拦截：渲染层内禁止任意跳转，外部链接一律交给系统浏览器
   win.webContents.setWindowOpenHandler(({ url }) => {
