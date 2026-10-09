@@ -65,10 +65,6 @@ class SloBurn:
     availability: float
     severity: Severity | None
 
-    @property
-    def breached(self) -> bool:
-        return self.severity is not None
-
 
 def coverage_of(observed_minutes: int, window_days: int = SLO_WINDOW_DAYS) -> float:
     """窗口内观测覆盖率：无监测数据的时段不能被当作"一切正常"。"""
