@@ -3,7 +3,7 @@
 覆盖：
 - 未配置 URL：整条链路关闭（无 HTTP 调用、dispatch 空操作）；
 - 投递成功 / 指数退避重试 / 耗尽失败（旁路语义：失败不外抛）；
-- payload 形状（severity 对应 triggered/recovered）；
+- payload 形状（severity 对应 triggered/recovered，level 带 SLO 档位供值班分级）。
 - sampling._run_once 接线：状态转换既投影看板事件又旁路外发。
 """
 
@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.core.config import Settings
+from app.domain.alerts.severity import Severity
 from app.domain.monitoring.ports import AlertTransition
 from app.infra import sampling
 from app.infra.alert_webhook import AlertWebhookDispatcher
@@ -78,6 +79,15 @@ class TestDispatcherBehavior:
         assert payload["threshold"] == 500.0
         assert payload["message"] == transition("triggered").message
         assert payload["occurred_at"] == "2026-10-03T08:00:00+00:00"
+        assert payload["level"] is None, "未传档位时显式为 null，而不是缺键让接收端猜"
+
+    async def test_payload_carries_slo_tier_for_oncall_routing(self) -> None:
+        """三档分级必须走到外发最后一公里：只有 warning/info 时值班机器人无法按档呼叫。"""
+        send = RecordingSend()
+        dispatcher = make_dispatcher(send)
+        assert await dispatcher.send(transition("triggered"), Severity.P0) is True
+        assert send.calls[0][1]["level"] == "P0"
+        assert send.calls[0][1]["severity"] == "warning", "旧字段口径保持兼容"
 
     async def test_recovered_severity_info(self) -> None:
         send = RecordingSend()

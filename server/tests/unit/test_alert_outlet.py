@@ -22,13 +22,15 @@ from app.repository.uow import UnitOfWork
 
 
 class RecordingWebhook:
-    """外发桩：记录状态转换，不发网络。"""
+    """外发桩：记录状态转换与档位，不发网络。"""
 
     def __init__(self) -> None:
         self.transitions: list[AlertTransition] = []
+        self.levels: list[object] = []
 
-    def dispatch(self, transition: AlertTransition) -> None:
+    def dispatch(self, transition: AlertTransition, level: object = None) -> None:
         self.transitions.append(transition)
+        self.levels.append(level)
 
 
 def _alert(value: float = 3.0, severity: Severity = Severity.P2) -> BusinessAlert:
@@ -69,10 +71,12 @@ async def test_emit_publishes_dashboard_event_and_webhook(session_factory) -> No
     payload = events[0]["payload"]
     assert payload["metric"] == "reconcile_diff"
     assert payload["level"] == "P2"
+    assert payload["channel"] == "message", "值班载荷要带目标通道，否则分级停在服务端内部"
     assert "3 个账户" in payload["message"], "值班文案要能直接读懂，不是裸指标名"
     assert events[0]["severity"] == "warning"
     # Webhook 载荷复用监测告警口径，且带业务短句而不是 "reconcile_diff 3.00 超过阈值"
     assert len(webhook.transitions) == 1
+    assert webhook.levels == [Severity.P2], "档位必须走到外发最后一公里，接收端才能按页呼叫"
     assert "3 个账户" in webhook.transitions[0].message
 
     # 告警事件独立事务落库（值班可回查，不只在 SSE 里一闪而过）
@@ -125,6 +129,28 @@ async def test_p0_maps_to_critical_event_severity(session_factory) -> None:
     events = await _payloads(broker)
     assert events[0]["severity"] == "critical"
     assert events[0]["payload"]["level"] == "P0"
+
+
+async def test_each_tier_carries_its_oncall_channel(session_factory) -> None:
+    """P0→飞书、P1→邮件、P2→消息：分级判定要出现在看板载荷里，值班才看得见档与通道。"""
+    broker, webhook = EventBroker(), RecordingWebhook()
+    outlet = BrokerAlertOutlet(session_factory, broker, webhook)
+    now = datetime.now(UTC)
+
+    tiers = [(Severity.P0, "feishu"), (Severity.P1, "email"), (Severity.P2, "message")]
+    for index, (severity, _) in enumerate(tiers):
+        await outlet.emit(
+            BusinessAlert(key=f"tier_{index}", severity=severity, message="分级验收", value=1.0),
+            now,
+        )
+
+    payloads = [event["payload"] for event in await _payloads(broker)]
+    assert [(p["level"], p["channel"]) for p in payloads] == [
+        ("P0", "feishu"),
+        ("P1", "email"),
+        ("P2", "message"),
+    ]
+    assert webhook.levels == [Severity.P0, Severity.P1, Severity.P2]
 
 
 async def test_missing_webhook_config_still_publishes_event(session_factory) -> None:

@@ -114,20 +114,30 @@ class SilenceManager:
 
 
 class AlertRouter:
-    """值班路由：按级别路由到飞书/邮件/消息通道，静默去重。"""
+    """值班路由：按级别定通道 + 静默去重。
+
+    只保留**有界**计数（每通道一个整数）：这是长驻进程里的对象，早期版本用
+    ``list[tuple[Alert, Channel]]`` 记录路由历史，7×24 跑下来必然无界增长。
+    审计与看板已有落库通道，路由历史不该由内存列表承担。
+    """
 
     def __init__(self, silence: SilenceManager | None = None) -> None:
         self._silence = silence or SilenceManager()
-        self._routed: list[tuple[Alert, Channel]] = []
+        self._counts: dict[Channel, int] = {channel: 0 for channel in Channel}
+
+    @staticmethod
+    def channel_for(severity: Severity) -> Channel:
+        """级别 → 通道（纯映射，不去重：恢复通知与自带状态机的调用方走这里）。"""
+        return SEVERITY_CHANNEL[severity]
 
     def route(self, alert: Alert, now: datetime) -> Channel | None:
         """路由一条告警；静默窗口内去重返回 None。"""
         if not self._silence.should_send(alert, now):
             return None
-        channel = SEVERITY_CHANNEL[alert.severity]
-        self._routed.append((alert, channel))
+        channel = self.channel_for(alert.severity)
+        self._counts[channel] += 1
         return channel
 
     @property
-    def routed(self) -> list[tuple[Alert, Channel]]:
-        return self._routed
+    def routed_counts(self) -> dict[Channel, int]:
+        return dict(self._counts)

@@ -79,7 +79,7 @@ class RecordingWebhook:
     def __init__(self) -> None:
         self.transitions: list[object] = []
 
-    def dispatch(self, transition) -> None:
+    def dispatch(self, transition, level=None) -> None:
         self.transitions.append(transition)
 
 
