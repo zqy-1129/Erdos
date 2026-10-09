@@ -21,6 +21,7 @@ function baseResults(): Record<string, unknown> {
     [BRIDGE_CHANNELS.billingLedger]: [],
     [BRIDGE_CHANNELS.contentList]: [],
     [BRIDGE_CHANNELS.historyList]: [],
+    [BRIDGE_CHANNELS.trailRecentTasks]: [],
     [BRIDGE_CHANNELS.entitlementStatus]: { status: "ready", balance: 93, graceDeadlineMs: Date.now() + 72 * 3600 * 1000 },
   };
 }
@@ -176,7 +177,7 @@ describe("AppShell 路由走查", () => {
     await act(async () => {
       screen.getByRole("button", { name: "生成声明" }).click();
     });
-    expect(screen.getByText(/暂无任务/)).toBeTruthy();
+    expect(screen.getByText(/暂无任务：请先/)).toBeTruthy();
     expect(calls.some((call) => call.channel === BRIDGE_CHANNELS.complianceExport)).toBe(false);
 
     // 有任务（引擎事件已归约出 taskId）：携带任务号调用并渲染预览
@@ -258,7 +259,7 @@ describe("AppShell 路由走查", () => {
     await act(async () => {
       screen.getByRole("button", { name: "保存文件" }).click();
     });
-    expect(screen.getByText(/暂无任务/)).toBeTruthy();
+    expect(screen.getByText(/暂无任务：请先/)).toBeTruthy();
     expect(calls.some((call) => call.channel === BRIDGE_CHANNELS.complianceSave)).toBe(false);
 
     // 有任务：保存成功 → 展示保存路径（格式/说明随页面状态透传）
@@ -302,5 +303,152 @@ describe("AppShell 路由走查", () => {
     });
     expect(await screen.findByText(/模拟网络错误/)).toBeTruthy();
     expect(screen.queryByText(/已保存至|已生成/)).toBeNull();
+  });
+
+  it("合规任务来源：无会话任务时选最近留痕历史任务（重启后导出/保存携带所选任务号）", async () => {
+    const calls: FakeBridgeCall[] = [];
+    const bridge = fakeBridge({
+      results: {
+        ...baseResults(),
+        [BRIDGE_CHANNELS.trailRecentTasks]: [
+          { taskId: "t-9", lastTs: "2026-10-08T02:00:00+00:00", eventCount: 5 },
+        ],
+        [BRIDGE_CHANNELS.complianceExport]: {
+          content: "预览（历史任务 t-9）",
+          filename: "AI工具使用声明_t-9.md",
+          artifactHashes: [],
+        },
+        [BRIDGE_CHANNELS.complianceSave]: {
+          filename: "AI工具使用声明_t-9.md",
+          savedPath: "/home/demo/AI工具使用声明_t-9.md",
+          canceled: false,
+        },
+      },
+      calls,
+    });
+    const stores = createStores(bridge);
+    act(() => {
+      stores.session.setState({ status: "signed-in", username: "demo" });
+    });
+    render(<App stores={stores} />);
+    goto("/compliance");
+    const note = await screen.findByRole("textbox");
+    fireEvent.change(note, { target: { value: "历史任务说明。" } });
+
+    // 重启后（无会话任务）：默认未选任务 → 本地拦截（不猜测任务、不发起桥调用）
+    await act(async () => {
+      screen.getByRole("button", { name: "生成声明" }).click();
+    });
+    expect(screen.getByText(/暂无任务：请先/)).toBeTruthy();
+    expect(calls.some((call) => call.channel === BRIDGE_CHANNELS.complianceExport)).toBe(false);
+
+    // 从「任务来源」选择最近留痕任务 → 导出/保存均携带所选任务号
+    const picker = screen.getByRole("combobox", { name: "任务来源" });
+    expect(await screen.findByRole("option", { name: /5 条留痕/ })).toBeTruthy();
+    fireEvent.change(picker, { target: { value: "t-9" } });
+    await act(async () => {
+      screen.getByRole("button", { name: "生成声明" }).click();
+    });
+    const exportCall = calls.find((call) => call.channel === BRIDGE_CHANNELS.complianceExport);
+    expect(exportCall?.payload).toMatchObject({ taskId: "t-9", format: "md", unusedAi: false, humanNote: "历史任务说明。" });
+    expect(await screen.findByText(/AI工具使用声明_t-9\.md/)).toBeTruthy();
+
+    await act(async () => {
+      screen.getByRole("button", { name: "保存文件" }).click();
+    });
+    const saveCall = calls.find((call) => call.channel === BRIDGE_CHANNELS.complianceSave);
+    expect(saveCall?.payload).toMatchObject({ taskId: "t-9", format: "md", humanNote: "历史任务说明。" });
+    expect(await screen.findByText(/已保存至 .*AI工具使用声明_t-9\.md/)).toBeTruthy();
+
+    // 任务来源变更：旧预览与保存提示清除（避免「预览的是 A、保存的是 B」与过期提示）
+    fireEvent.change(picker, { target: { value: "" } });
+    expect(screen.queryByText(/预览（历史任务 t-9）/)).toBeNull();
+    expect(screen.queryByText(/已保存至|已生成/)).toBeNull();
+  });
+
+  it("合规任务来源：会话任务与历史任务并存时显式选择优先（会话任务不重复列出）", async () => {
+    const calls: FakeBridgeCall[] = [];
+    const bridge = fakeBridge({
+      results: {
+        ...baseResults(),
+        [BRIDGE_CHANNELS.trailRecentTasks]: [
+          { taskId: "t-1", lastTs: "2026-10-08T03:00:00+00:00", eventCount: 9 },
+          { taskId: "t-9", lastTs: "2026-10-08T02:00:00+00:00", eventCount: 5 },
+        ],
+        [BRIDGE_CHANNELS.complianceExport]: {
+          content: "预览（任务）",
+          filename: "AI工具使用声明_x.md",
+          artifactHashes: [],
+        },
+      },
+      calls,
+    });
+    const stores = createStores(bridge);
+    act(() => {
+      stores.session.setState({ status: "signed-in", username: "demo" });
+      stores.engine.setState({ taskId: "t-1" });
+    });
+    render(<App stores={stores} />);
+    goto("/compliance");
+    const picker = screen.getByRole("combobox", { name: "任务来源" });
+    expect(await screen.findByRole("option", { name: /t-9（最近活动/ })).toBeTruthy();
+    expect(screen.getAllByRole("option", { name: /t-1/ }).length).toBe(1); // 会话任务仅「当前任务」一项（去重）
+
+    // 默认取会话任务 → 导出携带 t-1
+    const note = await screen.findByRole("textbox");
+    fireEvent.change(note, { target: { value: "说明。" } });
+    await act(async () => {
+      screen.getByRole("button", { name: "生成声明" }).click();
+    });
+    expect(calls.find((call) => call.channel === BRIDGE_CHANNELS.complianceExport)?.payload).toMatchObject({
+      taskId: "t-1",
+    });
+
+    // 显式选择历史任务 → 导出切换为 t-9（显式选择优先于会话任务）
+    fireEvent.change(picker, { target: { value: "t-9" } });
+    await act(async () => {
+      screen.getByRole("button", { name: "生成声明" }).click();
+    });
+    const exportCalls = calls.filter((call) => call.channel === BRIDGE_CHANNELS.complianceExport);
+    expect(exportCalls[1]?.payload).toMatchObject({ taskId: "t-9" });
+  });
+
+  it("合规任务来源：最近任务读取失败 → 可读提示且会话任务流程不受阻（非阻断）", async () => {
+    const calls: FakeBridgeCall[] = [];
+    const bridge = fakeBridge({
+      results: {
+        ...baseResults(),
+        [BRIDGE_CHANNELS.complianceExport]: {
+          content: "预览（会话任务）",
+          filename: "AI工具使用声明_t-1.md",
+          artifactHashes: [],
+        },
+      },
+      failChannels: new Set([BRIDGE_CHANNELS.trailRecentTasks]),
+      calls,
+    });
+    const stores = createStores(bridge);
+    act(() => {
+      stores.session.setState({ status: "signed-in", username: "demo" });
+    });
+    render(<App stores={stores} />);
+    goto("/compliance");
+
+    // 无会话任务：占位项受失败态约束（不误报「未发现任务」）+ 可读错误提示
+    expect(await screen.findByRole("option", { name: "最近任务读取失败（见下方提示）" })).toBeTruthy();
+    expect(screen.getByText(/最近任务读取失败：/)).toBeTruthy();
+
+    // 会话任务流程不受列表失败影响
+    act(() => {
+      stores.engine.setState({ taskId: "t-1" });
+    });
+    const note = await screen.findByRole("textbox");
+    fireEvent.change(note, { target: { value: "会话任务说明。" } });
+    await act(async () => {
+      screen.getByRole("button", { name: "生成声明" }).click();
+    });
+    const exportCall = calls.find((call) => call.channel === BRIDGE_CHANNELS.complianceExport);
+    expect(exportCall?.payload).toMatchObject({ taskId: "t-1" });
+    expect(await screen.findByText(/AI工具使用声明_t-1\.md/)).toBeTruthy();
   });
 });

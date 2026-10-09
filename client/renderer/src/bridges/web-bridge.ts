@@ -364,6 +364,14 @@ export class WebDemoBridge implements ErdosBridge {
           return { filename: exported.filename, savedPath: null, canceled: false };
         })().then((value) => value as T);
       }
+      case BRIDGE_CHANNELS.trailRecentTasks: {
+        // 演示留痕最近任务（由 DEMO_TRAIL 派生，避免与演示数据漂移；空账号无记录）
+        return (async () => {
+          const events = await DEMO_TRAIL.events("demo-task");
+          const lastTs = events.reduce((latest, event) => (event.ts > latest ? event.ts : latest), "");
+          return (empty ? [] : [{ taskId: "demo-task", lastTs, eventCount: events.length }]) as T;
+        })();
+      }
       case "engine:start_stage": {
         this.startDemoTask(String(body["task_id"] ?? "demo-task"));
         return Promise.resolve({
