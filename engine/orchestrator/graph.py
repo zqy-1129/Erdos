@@ -33,6 +33,13 @@ class StageStatus(StrEnum):
     DONE = "done"
 
 
+# 检查点阶段状态两态（SP1-7 断点恢复门禁语义）：
+#   EXECUTED = 阶段执行完成落库（门禁未决）；GATE_PASSED = 门禁通过（升级落库）。
+# 恢复时区分二者：门禁未决阶段恢复后重挂门禁（阶段不重放），未经门禁不推进。
+CHECKPOINT_EXECUTED = "stage_done"
+CHECKPOINT_GATE_PASSED = StageStatus.DONE.value
+
+
 class CheckpointStore(Protocol):
     """检查点存储端口（SP1-2）：阶段粒度，同步落库。"""
 
@@ -127,8 +134,12 @@ def build_orchestrator_graph(runner: StageRunner):
             index = int(state.get("stage_index", 0))
             if STAGES[index] != stage:
                 raise RuntimeError(f"阶段顺序约束：期望 {STAGES[index]}，实际 {stage}")
-            data = await runner(str(state.get("task_id", "")), stage)
             results = dict(state.get("results") or {})
+            if stage in results:
+                # 恢复重挂门禁路径：阶段产物已在检查点（门禁未决崩溃后恢复），
+                # 跳过执行不重放副作用（DEC-005），图继续推进到门禁 interrupt。
+                return {"results": results}
+            data = await runner(str(state.get("task_id", "")), stage)
             results[stage] = {"status": StageStatus.DONE.value, "step": 0, "data": data}
             return {"results": results}
 
@@ -247,13 +258,23 @@ class StageOrchestrator:
         if decision not in ("pass", "reject"):
             raise ValueError("decision 必须为 pass 或 reject")
         if not self._gate_waiting:
-            # 无挂起门禁（如未 run 先答）：直接驱动状态（SP1-1 骨架兼容路径）
+            # 无挂起门禁：
+            # - 骨架模式（默认 runner）保持 SP1-1 兼容直接驱动；
+            # - 真实模式（注入 runner）下重复/过期应答按 EC-U4 防御：当前阶段
+            #   未执行时 pass 不得越门禁推进（防重复 pass 把未执行阶段标记通过）。
+            current = self._state.stages.get(self._state.current_stage)
+            if self._runner is not _default_stage_runner and decision == "pass" and current is None:
+                raise ValueError(
+                    f"门禁冲突：{self._state.current_stage} 无挂起门禁且未执行"
+                    "（重复/过期应答？请先经 start_stage 执行并等待门禁挂起）"
+                )
             self._state.gate_decision = decision
             if decision == "reject":
                 self._state.stages.pop(self._state.current_stage, None)
                 if self._checkpoint is not None:
                     self._checkpoint.delete_stage(self._task_id, self._state.current_stage)
                 return {"action": "retry_stage", "stage": self._state.current_stage}
+            self._persist_gate_passed(self._state.current_stage)
             if self._state.current_index >= len(STAGES) - 1:
                 return {"action": "complete", "stage": self._state.current_stage}
             self._state.current_stage = STAGES[self._state.current_index + 1]
@@ -270,6 +291,9 @@ class StageOrchestrator:
             if self._checkpoint is not None:
                 self._checkpoint.delete_stage(self._task_id, gate_stage)
             return {"action": "retry_stage", "stage": gate_stage}
+        # 门禁通过：检查点由「执行完成（门禁未决）」升级为「门禁通过」，
+        # 崩溃恢复据此区分已审/未审阶段（未经门禁不推进）。
+        self._persist_gate_passed(gate_stage)
         if gate_stage == STAGES[-1]:
             # 最后阶段的门禁通过 → 任务完成
             return {"action": "complete", "stage": self._state.current_stage}
@@ -279,9 +303,21 @@ class StageOrchestrator:
     # 恢复（从 SQLite 检查点，不重算已完成阶段）
     # ------------------------------------------------------------------
     @classmethod
-    def restore(cls, task_id: str, checkpoint: CheckpointStore) -> "StageOrchestrator":
-        """从检查点恢复编排器：已完成阶段全部还原，当前阶段 = 最后完成阶段的下一个。"""
-        orchestrator = cls(task_id, checkpoint)
+    def restore(
+        cls,
+        task_id: str,
+        checkpoint: CheckpointStore,
+        runner: StageRunner | None = None,
+    ) -> "StageOrchestrator":
+        """从检查点恢复编排器：已落库阶段全部还原，按门禁状态定位当前阶段。
+
+        - 最后落库记录为「门禁通过」→ 当前阶段 = 其下一个（不重算已完成阶段）；
+        - 最后落库记录为「执行完成（门禁未决）」→ 当前阶段 = 该阶段本身：
+          run_current_stage 经阶段节点跳过守卫重挂门禁（不重放副作用，DEC-005）。
+        runner 必须随恢复注入（生产路径与 SP1-7 断点恢复演练共用）：
+        恢复的编排器还要执行剩余阶段，丢 runner 会静默退化为骨架空产出。
+        """
+        orchestrator = cls(task_id, checkpoint, runner=runner)
         completed = checkpoint.completed_stages(task_id)
         seed_results: dict[str, dict[str, Any]] = {}
         for record in completed:
@@ -294,15 +330,21 @@ class StageOrchestrator:
                 "data": record.data,
             }
         if completed:
-            last_stage = completed[-1].stage
-            idx = STAGES.index(last_stage)
-            orchestrator._state.current_stage = STAGES[min(idx + 1, len(STAGES) - 1)]
+            last = completed[-1]
+            if last.status == CHECKPOINT_EXECUTED:
+                # 门禁未决崩溃：恢复到该阶段本身，重挂门禁
+                orchestrator._state.current_stage = last.stage
+            else:
+                idx = STAGES.index(last.stage)
+                orchestrator._state.current_stage = STAGES[min(idx + 1, len(STAGES) - 1)]
         orchestrator._seed = {
             "task_id": task_id,
             "stage_index": orchestrator._state.current_index,
             "results": seed_results,
         }
-        orchestrator._seeded = True
+        # _seeded 保持 False：首次 run_current_stage 经 _ensure_seeded 注入种子，
+        # 图从恢复定位的阶段继续（新实例的 InMemorySaver 为空，不能靠 checkpointer 续状态）。
+        orchestrator._seeded = False
         return orchestrator
 
     # ------------------------------------------------------------------
@@ -335,10 +377,21 @@ class StageOrchestrator:
         self._state.gate_decision = graph_state.get("gate_decision")
 
     def _persist_current(self, data: dict) -> None:
-        """阶段完成落检查点（敏感键脱敏：不落 Key 明文）。"""
+        """阶段执行完成落检查点（状态=门禁未决；门禁通过时升级，敏感键脱敏不落 Key 明文）。"""
         if self._checkpoint is None:
             return
         safe = redact_sensitive(data)
         self._checkpoint.save_stage(
-            self._task_id, self._state.current_stage, StageStatus.DONE.value, 0, safe
+            self._task_id, self._state.current_stage, CHECKPOINT_EXECUTED, 0, safe
+        )
+
+    def _persist_gate_passed(self, stage: str) -> None:
+        """门禁通过：该阶段检查点状态升级为「门禁通过」（未经门禁不推进的恢复依据）。"""
+        if self._checkpoint is None:
+            return
+        result = self._state.stages.get(stage)
+        if result is None:
+            return
+        self._checkpoint.save_stage(
+            self._task_id, stage, CHECKPOINT_GATE_PASSED, 0, redact_sensitive(result.data)
         )

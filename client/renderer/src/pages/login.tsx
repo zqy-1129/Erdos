@@ -2,10 +2,10 @@
  * 登录页（SP3-4 / US-001 注册体验）：登录与注册（注册即登录）双动作，
  * 全部经桥（auth:login / auth:register）；错误态展示可读原因。
  */
+/// <reference types="vite/client" />
 
 import { useState, type FormEvent, type ReactNode } from "react";
-import { BRIDGE_CHANNELS } from "../bridges/bridge.ts";
-import { loginAction, type AppStores } from "../state/app-stores.ts";
+import { loginAction, registerAction, type AppStores } from "../state/app-stores.ts";
 import { useStore } from "../storage/store.ts";
 
 export function LoginPage(props: { stores: AppStores }): ReactNode {
@@ -18,8 +18,7 @@ export function LoginPage(props: { stores: AppStores }): ReactNode {
     setBusy(true);
     try {
       if (mode === "register") {
-        await props.stores.bridge.invoke(BRIDGE_CHANNELS.authRegister, { username, password });
-        props.stores.session.setState({ status: "signed-in", username, error: null });
+        await registerAction(props.stores, username, password);
       } else {
         await loginAction(props.stores, username, password);
       }
@@ -71,9 +70,15 @@ export function LoginPage(props: { stores: AppStores }): ReactNode {
             注册并登录
           </button>
         </div>
-        <p className="login-hint">
-          联调提示：账号 demo-empty 演示空态、demo-error 演示异常态（开发模式）。
-        </p>
+        {/* 禁用态原因可见（试用反馈：注册按钮灰置无提示，用户不知因密码不足 8 位） */}
+        {username !== "" && password !== "" && password.length < 8 ? (
+          <p className="login-hint">注册要求：密码至少 8 位，且同时包含字母与数字（例如 Test1234）。</p>
+        ) : null}
+        {import.meta.env.DEV ? (
+          <p className="login-hint">
+            联调提示：账号 demo-empty 演示空态、demo-error 演示异常态（开发模式）。
+          </p>
+        ) : null}
       </form>
     </div>
   );

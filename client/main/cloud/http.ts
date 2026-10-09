@@ -52,6 +52,23 @@ export class CloudHttpClient {
     return this.request<T>(path, { method: "GET" });
   }
 
+  /**
+   * GET 裸文本（非信封响应；如积分流水 CSV 导出）。
+   * 401/403 走统一清会话回调；4xx/5xx 按 HTTP 错误抛出（裸文本不含业务错误码可解）。
+   */
+  async getRaw(path: string): Promise<string> {
+    return this.request(
+      path,
+      { method: "GET", headers: { accept: "text/csv, text/plain;q=0.9, */*;q=0.8" } },
+      (text, status) => {
+        if (status >= 400) {
+          throw new CloudApiError(null, status, `云端请求失败（HTTP ${status}）`);
+        }
+        return text;
+      },
+    );
+  }
+
   /** POST：JSON 请求体，信封解包返回 data。 */
   async post<T = unknown>(path: string, body: unknown): Promise<T> {
     return this.request<T>(path, {
@@ -61,7 +78,15 @@ export class CloudHttpClient {
     });
   }
 
-  private async request<T>(path: string, init: RequestInit): Promise<T> {
+  /**
+   * 请求主流程（重试/鉴权/信封或裸文本解析）。
+   * parse 缺省按统一信封解包（业务错误码归一）；裸文本通道注入自定义 parse。
+   */
+  private async request<T>(
+    path: string,
+    init: RequestInit,
+    parse?: (text: string, status: number) => T,
+  ): Promise<T> {
     const attempts = this.maxRetries + 1;
     let lastError: unknown = null;
     for (let attempt = 0; attempt < attempts; attempt++) {
@@ -93,8 +118,7 @@ export class CloudHttpClient {
           // 5xx：可重试（服务端幂等语义兜底）
           throw new CloudApiError(null, response.status, `云端暂时不可用（HTTP ${response.status}）`);
         }
-        const body = parseJson(text, response.status);
-        return unwrapEnvelope<T>(body, response.status);
+        return parse ? parse(text, response.status) : unwrapEnvelope<T>(parseJson(text, response.status), response.status);
       } catch (error) {
         lastError = error;
         if (error instanceof CloudApiError && error.httpStatus < 500) {

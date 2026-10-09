@@ -22,7 +22,7 @@ jobs:
         run: ruff check engine
       - name: Mypy
         run: mypy --config-file engine/pyproject.toml engine
-      - name: Pytest (coverage >= 70%)
+      - name: Pytest (coverage >= 80%)
         run: |
           set -o pipefail
           cd engine && pytest --tb=short 2>&1 | tee pytest.log

@@ -38,6 +38,18 @@ const EXT: Record<DeclarationFormat, string> = {
   docx: "docx",
 };
 
+/** 运行时格式白名单校验（桥 payload 为原始字符串，须校验后才可调用类型化导出）。 */
+const DECLARATION_FORMATS = ["md", "latex", "docx"] as const;
+
+/** 声明格式白名单校验（主进程桥与演示桥共用，避免多处硬编码漂移）。 */
+export function isDeclarationFormat(value: string): value is DeclarationFormat {
+  return (DECLARATION_FORMATS as readonly string[]).includes(value);
+}
+
+/** docx 为二进制：预览页以同源 Markdown 展示时的统一标注（主进程桥与演示桥共用文案）。 */
+export const DOCX_PREVIEW_SUFFIX =
+  "（Word 为二进制格式：本页仅以同源 Markdown 预览；保存文件将生成真正的 .docx 文档。）";
+
 export interface ExportOptions {
   taskId: string;
   format: DeclarationFormat;
@@ -68,6 +80,8 @@ export async function exportDeclaration(
     events = await source.events(options.taskId);
     artifacts = await source.artifacts(options.taskId);
   } catch (error) {
+    // 已是可读降级（如版本不兼容/记录解析失败）：保留具体归因，避免误导为「库损坏可重建」
+    if (error instanceof ComplianceDataError) throw error;
     throw new ComplianceDataError(
       "本地留痕库不可用（可能已损坏）：请检查数据目录并在「设置」中重建留痕库后重试。声明不会在留痕缺失时伪造条目。",
       error,

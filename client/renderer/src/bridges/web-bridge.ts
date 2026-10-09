@@ -12,6 +12,7 @@ import type {
   BillingLedgerRow,
   BillingOverview,
   ComplianceExportResult,
+  ComplianceSaveResult,
   ContentItem,
   EntitlementView,
   ErdosBridge,
@@ -20,7 +21,7 @@ import type {
 } from "./bridge.ts";
 import { BRIDGE_CHANNELS } from "./bridge.ts";
 import type { EngineEvent, StageName } from "../../../shared/ipc.ts";
-import { exportDeclaration } from "../../../declaration/export.ts";
+import { DOCX_PREVIEW_SUFFIX, exportDeclaration, isDeclarationFormat } from "../../../declaration/export.ts";
 import type { TrailSource } from "../../../declaration/types.ts";
 import { estimateUsage } from "../../../shared/usage.ts";
 import type { UsageEstimateView } from "./bridge.ts";
@@ -117,6 +118,72 @@ export class DemoTaskSimulator {
         });
         return;
       }
+      // 工具调用（solving）：成功/失败各一对，演示时间线（FE-TOOLUI W12）
+      if (stage === "solving" && step % 52 === 20) {
+        this.emit({
+          trace_id: `demo-${step}`,
+          event: "tool.call",
+          task_id: taskId,
+          stage: "solving",
+          call_id: `call-${step}`,
+          tool: "execute_code",
+          args_summary: "python 求解脚本（已脱敏摘要）",
+          timestamp: ts,
+        });
+        return;
+      }
+      if (stage === "solving" && step % 52 === 25) {
+        this.emit({
+          trace_id: `demo-${step}`,
+          event: "tool.result",
+          task_id: taskId,
+          call_id: `call-${step - 5}`,
+          tool: "execute_code",
+          ok: true,
+          duration_ms: 240,
+          result_ref: "out/result.json",
+          timestamp: ts,
+        });
+        return;
+      }
+      if (stage === "solving" && step % 52 === 33) {
+        this.emit({
+          trace_id: `demo-${step}`,
+          event: "tool.call",
+          task_id: taskId,
+          stage: "solving",
+          call_id: `call-${step}`,
+          tool: "plot_figure",
+          args_summary: "结果可视化（已脱敏摘要）",
+          timestamp: ts,
+        });
+        return;
+      }
+      if (stage === "solving" && step % 52 === 38) {
+        this.emit({
+          trace_id: `demo-${step}`,
+          event: "tool.result",
+          task_id: taskId,
+          call_id: `call-${step - 5}`,
+          tool: "plot_figure",
+          ok: false,
+          duration_ms: 120,
+          error: "沙箱执行失败：依赖缺失",
+          timestamp: ts,
+        });
+        return;
+      }
+      // 模型 token 流（writing）：允许丢帧，仅展示
+      if (stage === "writing" && step % 3 === 0) {
+        this.emit({
+          trace_id: `demo-${step}`,
+          event: "model.delta",
+          task_id: taskId,
+          delta: `（流式输出片段 ${step}）`,
+          timestamp: ts,
+        });
+        return;
+      }
       this.emit({
         trace_id: `demo-${step}`,
         event: "stage.progress",
@@ -160,8 +227,10 @@ export class WebDemoBridge implements ErdosBridge {
     }
     const empty = username === "demo-empty" || demoSession()?.username === "demo-empty";
     switch (channel) {
-      case BRIDGE_CHANNELS.authLogin:
+      case BRIDGE_CHANNELS.authLogin: {
+        saveSession(String(username)); // 演示会话写 localStorage：与真实桥的会话恢复语义对齐
         return Promise.resolve({ username: String(username), expiresInMs: 900_000 } as T);
+      }
       case BRIDGE_CHANNELS.authRegister: {
         saveSession(String(username));
         return Promise.resolve({ username: String(username), expiresInMs: 900_000 } as T);
@@ -169,13 +238,22 @@ export class WebDemoBridge implements ErdosBridge {
       case BRIDGE_CHANNELS.authLogout:
         saveSession(null);
         return Promise.resolve({} as T);
+      case BRIDGE_CHANNELS.authSession: {
+        // 演示桥对齐真实桥的会话恢复语义（localStorage 中的演示会话）
+        const restored = demoSession();
+        return Promise.resolve((restored ? { username: restored.username, expiresInMs: 900_000 } : null) as T);
+      }
       case BRIDGE_CHANNELS.keysList:
         return Promise.resolve((empty ? [] : [
           { id: "k1", alias: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", masked: "sk-****7f2a", status: "ok" },
         ]) as T);
       case BRIDGE_CHANNELS.keysSave:
         return Promise.resolve({} as T);
+      case BRIDGE_CHANNELS.keysDelete:
+        return Promise.resolve({ ok: true, requeue: false } as T);
       case BRIDGE_CHANNELS.keysTest: {
+        // dev 演示替身（仅浏览器直跑/UI 验收；preview/production 由 bridge-factory 强制真实桥）：
+        // 按关键字模拟分类结果，**不代表真实连通**——真实探测走主进程 provider_test（key-probe.ts）。
         const key = String(body["key"] ?? "");
         const result: KeyTestResult = !key
           ? { ok: false, reason: "invalid", detail: "Key 不能为空" }
@@ -221,7 +299,7 @@ export class WebDemoBridge implements ErdosBridge {
         return Promise.resolve(rows as T);
       }
       case BRIDGE_CHANNELS.billingExport:
-        return Promise.resolve({ filename: "erdos-ledger-demo.csv" } as T);
+        return Promise.resolve({ filename: "erdos-ledger-demo.csv", savedPath: null, canceled: false } as T);
       case BRIDGE_CHANNELS.contentList:
         return Promise.resolve((empty ? [] : DEMO_CONTENT) as T);
       case BRIDGE_CHANNELS.historyList:
@@ -229,25 +307,31 @@ export class WebDemoBridge implements ErdosBridge {
       case BRIDGE_CHANNELS.historyResume:
         return Promise.resolve({ taskId: String(body["taskId"]), resumable: true } as T);
       case BRIDGE_CHANNELS.complianceExport: {
-        const rawFormat = String(body["format"] ?? "md");
-        const format: "md" | "latex" | "docx" =
-          rawFormat === "latex" ? "latex" : rawFormat === "docx" ? "docx" : "md";
+        // 格式白名单与真实桥同口径（共享校验）；任务号由页面携带（空任务号同样拦截）
+        const format = String(body["format"] ?? "md");
+        if (!isDeclarationFormat(format)) {
+          return Promise.reject(new Error(`不支持的导出格式：${format}`)) as Promise<T>;
+        }
         const unusedAi = Boolean(body["unusedAi"]);
         const humanNote = String(body["humanNote"] ?? "");
+        const taskId = String(body["taskId"] ?? "");
+        if (!taskId) {
+          return Promise.reject(new Error("暂无任务：请先在工作台运行任务后再生成声明")) as Promise<T>;
+        }
         return (async (): Promise<ComplianceExportResult> => {
           if (format === "docx") {
             // Word 为二进制：演示环境生成 docx（校验数据链路）并以 md 文本预览展示
-            await exportDeclaration(DEMO_TRAIL, { taskId: "demo-task", format: "docx", humanNote, unusedAi });
-            const md = await exportDeclaration(DEMO_TRAIL, { taskId: "demo-task", format: "md", humanNote, unusedAi });
+            await exportDeclaration(DEMO_TRAIL, { taskId, format: "docx", humanNote, unusedAi });
+            const md = await exportDeclaration(DEMO_TRAIL, { taskId, format: "md", humanNote, unusedAi });
             return {
-              content: `${String(md.content)}\n\n（Word 版本已按同一留痕生成；演示环境等效于下载预览。）`,
-              filename: "AI工具使用声明_demo-task.docx",
+              content: `${String(md.content)}\n\n${DOCX_PREVIEW_SUFFIX}（演示模式不写盘。）`,
+              filename: `AI工具使用声明_${taskId}.docx`,
               // 未使用 AI 声明不引用产物支撑材料
               artifactHashes: unusedAi ? [] : md.data.artifactHashes.map((artifact) => artifact.sha256),
             };
           }
           const exported = await exportDeclaration(DEMO_TRAIL, {
-            taskId: "demo-task",
+            taskId,
             format,
             humanNote,
             unusedAi,
@@ -258,6 +342,35 @@ export class WebDemoBridge implements ErdosBridge {
             artifactHashes: unusedAi ? [] : exported.data.artifactHashes.map((artifact) => artifact.sha256),
           };
         })().then((value) => value as T);
+      }
+      case BRIDGE_CHANNELS.complianceSave: {
+        // 演示模式不写盘（与 billing:export 演示口径一致）：回显将保存的文件名，savedPath 为 null。
+        // 门禁与真实桥同口径：格式白名单（共享校验）、空任务号拦截、人工说明经 exportDeclaration 的 checkNote（同文案）。
+        const format = String(body["format"] ?? "md");
+        if (!isDeclarationFormat(format)) {
+          return Promise.reject(new Error(`不支持的导出格式：${format}`)) as Promise<T>;
+        }
+        const taskId = String(body["taskId"] ?? "");
+        if (!taskId) {
+          return Promise.reject(new Error("暂无任务：请先在工作台运行任务后再生成声明")) as Promise<T>;
+        }
+        return (async (): Promise<ComplianceSaveResult> => {
+          const exported = await exportDeclaration(DEMO_TRAIL, {
+            taskId,
+            format,
+            humanNote: String(body["humanNote"] ?? ""),
+            unusedAi: Boolean(body["unusedAi"]),
+          });
+          return { filename: exported.filename, savedPath: null, canceled: false };
+        })().then((value) => value as T);
+      }
+      case BRIDGE_CHANNELS.trailRecentTasks: {
+        // 演示留痕最近任务（由 DEMO_TRAIL 派生，避免与演示数据漂移；空账号无记录）
+        return (async () => {
+          const events = await DEMO_TRAIL.events("demo-task");
+          const lastTs = events.reduce((latest, event) => (event.ts > latest ? event.ts : latest), "");
+          return (empty ? [] : [{ taskId: "demo-task", lastTs, eventCount: events.length }]) as T;
+        })();
       }
       case "engine:start_stage": {
         this.startDemoTask(String(body["task_id"] ?? "demo-task"));
@@ -272,6 +385,7 @@ export class WebDemoBridge implements ErdosBridge {
           status: "ready",
           balance: 93,
           graceDeadlineMs: Date.now() + 72 * 3600 * 1000,
+          stale: false,
         };
         return Promise.resolve(view as T);
       }

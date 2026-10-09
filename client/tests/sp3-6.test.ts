@@ -10,7 +10,7 @@ import { describe, it } from "node:test";
 import { exportDeclaration, ComplianceDataError } from "../declaration/export.ts";
 import { summarizeTrail } from "../declaration/summary.ts";
 import type { ArtifactEntry, TrailEvent, TrailSource } from "../declaration/types.ts";
-import type { ComplianceExportResult } from "../renderer/src/bridges/bridge.ts";
+import type { ComplianceExportResult, ComplianceSaveResult, RecentTask } from "../renderer/src/bridges/bridge.ts";
 
 const SHA_A = "a".repeat(64);
 const SHA_B = "b".repeat(64);
@@ -194,11 +194,12 @@ describe("必填与降级红线", () => {
 });
 
 describe("渲染层桥接入（web-bridge 合规通道）", () => {
-  it("页面调用合规通道：真实模板生成 + 演示留痕数据闭环", async () => {
+  it("页面调用合规通道：真实模板生成 + 演示留痕数据闭环（任务号必填）", async () => {
     const { WebDemoBridge } = await import("../renderer/src/bridges/web-bridge.ts");
     const { BRIDGE_CHANNELS } = await import("../renderer/src/bridges/bridge.ts");
     const bridge = new WebDemoBridge();
     const result = await bridge.invoke<ComplianceExportResult>(BRIDGE_CHANNELS.complianceExport, {
+      taskId: "demo-task",
       format: "md",
       unusedAi: false,
       humanNote: "图表由本人核验。",
@@ -206,10 +207,12 @@ describe("渲染层桥接入（web-bridge 合规通道）", () => {
     assert.ok(result.content.includes("AI 工具使用声明"));
     assert.ok(result.content.includes("deepseek-chat"));
     assert.ok(result.filename.endsWith(".md"));
+    assert.ok(result.filename.includes("demo-task"), "文件名应含任务号（与主进程桥同口径）");
     assert.deepEqual(result.artifactHashes, ["9f".repeat(32)]);
 
     // 未用 AI 模板走同一通道
     const unused = await bridge.invoke<ComplianceExportResult>(BRIDGE_CHANNELS.complianceExport, {
+      taskId: "demo-task",
       format: "md",
       unusedAi: true,
       humanNote: "无 AI 使用。",
@@ -220,8 +223,70 @@ describe("渲染层桥接入（web-bridge 合规通道）", () => {
 
     // 人工说明缺失：桥抛可读必填错误（页面 ErrorState 消费）
     await assert.rejects(
-      () => bridge.invoke(BRIDGE_CHANNELS.complianceExport, { format: "md", unusedAi: false, humanNote: " " }),
+      () =>
+        bridge.invoke(BRIDGE_CHANNELS.complianceExport, {
+          taskId: "demo-task",
+          format: "md",
+          unusedAi: false,
+          humanNote: " ",
+        }),
       /人工修改说明为必填项/,
     );
+
+    // 任务号缺失：与主进程桥同口径拦截（演示桥不得掩盖空任务路径）
+    await assert.rejects(
+      () => bridge.invoke(BRIDGE_CHANNELS.complianceExport, { format: "md", unusedAi: false, humanNote: "说明" }),
+      /暂无任务/,
+    );
+
+    // 格式白名单（共享校验）：不支持格式拒绝，与真实桥同口径（非静默降级）
+    await assert.rejects(
+      () => bridge.invoke(BRIDGE_CHANNELS.complianceExport, { taskId: "demo-task", format: "pdf", unusedAi: false, humanNote: "说明" }),
+      /不支持的导出格式：pdf/,
+    );
+  });
+
+  it("保存通道（演示不写盘）：三格式文件名后缀正确、savedPath 为 null；空任务/空说明/非法格式平价拦截", async () => {
+    const { WebDemoBridge } = await import("../renderer/src/bridges/web-bridge.ts");
+    const { BRIDGE_CHANNELS } = await import("../renderer/src/bridges/bridge.ts");
+    const bridge = new WebDemoBridge();
+    const base = { taskId: "demo-task", unusedAi: false, humanNote: "图表由本人核验。" };
+
+    const md = await bridge.invoke<ComplianceSaveResult>(BRIDGE_CHANNELS.complianceSave, { ...base, format: "md" });
+    assert.equal(md.filename, "AI工具使用声明_demo-task.md");
+    assert.equal(md.savedPath, null, "演示模式不写盘：savedPath 为 null（与 billing:export 演示口径一致）");
+    assert.equal(md.canceled, false);
+
+    const latex = await bridge.invoke<ComplianceSaveResult>(BRIDGE_CHANNELS.complianceSave, { ...base, format: "latex" });
+    assert.equal(latex.filename, "AI工具使用声明_demo-task.tex", "latex 扩展名映射 .tex");
+
+    const docx = await bridge.invoke<ComplianceSaveResult>(BRIDGE_CHANNELS.complianceSave, { ...base, format: "docx" });
+    assert.equal(docx.filename, "AI工具使用声明_demo-task.docx");
+
+    // 门禁平价（与真实桥同文案）：任务号缺失、人工说明空、格式白名单
+    await assert.rejects(
+      () => bridge.invoke(BRIDGE_CHANNELS.complianceSave, { format: "md", unusedAi: false, humanNote: "说明" }),
+      /暂无任务/,
+    );
+    await assert.rejects(
+      () => bridge.invoke(BRIDGE_CHANNELS.complianceSave, { ...base, humanNote: " " }),
+      /人工修改说明为必填项/,
+    );
+    await assert.rejects(
+      () => bridge.invoke(BRIDGE_CHANNELS.complianceSave, { ...base, format: "pdf" }),
+      /不支持的导出格式：pdf/,
+    );
+  });
+
+  it("最近任务通道（演示）：返回演示留痕任务；空账号为空集", async () => {
+    const { WebDemoBridge } = await import("../renderer/src/bridges/web-bridge.ts");
+    const { BRIDGE_CHANNELS } = await import("../renderer/src/bridges/bridge.ts");
+    const bridge = new WebDemoBridge();
+
+    const tasks = await bridge.invoke<RecentTask[]>(BRIDGE_CHANNELS.trailRecentTasks);
+    assert.deepEqual(tasks, [{ taskId: "demo-task", lastTs: "2026-10-02T08:20:00Z", eventCount: 4 }], "与演示留痕同源");
+
+    const empty = await bridge.invoke<RecentTask[]>(BRIDGE_CHANNELS.trailRecentTasks, { username: "demo-empty" });
+    assert.deepEqual(empty, [], "空账号演示：无留痕任务");
   });
 });

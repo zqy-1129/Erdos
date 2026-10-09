@@ -44,3 +44,20 @@ def validate_artifact_path(work_dir: Path, rel_path: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+SANDBOX_SCRIPT_NAME = "_sandbox_script.py"
+
+
+def scan_artifacts(work_dir: Path) -> list[str]:
+    """扫描工作目录产物（排除沙箱脚本自身），返回相对路径（subprocess/docker 共用）。"""
+    artifacts: list[str] = []
+    for p in work_dir.rglob("*"):
+        if p.is_file() and p.name != SANDBOX_SCRIPT_NAME:
+            artifacts.append(str(p.relative_to(work_dir)))
+    return artifacts
+
+
+class SandboxUnavailableError(RuntimeError):
+    """降级红线：要求 Docker 但环境不可用（DEC-006——不静默退化为不安全执行）。"""
+

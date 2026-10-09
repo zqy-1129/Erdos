@@ -187,10 +187,12 @@ describe("Key 连通测试向导状态机", () => {
     assert.equal(state.error, "网络不可达");
   });
 
-  it("reasonLabel 覆盖四类失败分类", () => {
+  it("reasonLabel 覆盖四类失败分类与未检测态", () => {
     assert.equal(reasonLabel("unauthorized"), "鉴权失败（401）");
     assert.equal(reasonLabel("network"), "网络不可达");
     assert.equal(reasonLabel("balance"), "账户余额不足");
     assert.equal(reasonLabel("none"), "连通成功");
+    // keysTest 真实化（W12）：无引擎环境不得显示「连通成功」
+    assert.equal(reasonLabel("unverified"), "已保存（未检测连通）");
   });
 });

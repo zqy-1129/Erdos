@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://erdos.local/contracts/engine-rpc.schema.json",
   "title": "Erdos Agent 引擎 JSON-RPC 2.0 契约（SP1-1 引擎运行时与 IPC 骨架）",
-  "description": "定义引擎 6 个 RPC 方法与 3 个 NDJSON 事件。通信走 stdio 管道，每行一个 JSON（NDJSON）。",
+  "description": "定义引擎 10 个 RPC 方法与 6 个 NDJSON 事件（v1：6 方法 + 3 事件；v2 增量 CT-V2：tool.call/tool.result/model.delta 事件与 initialize/provider_test/events_replay/task_create 方法）。通信走 stdio 管道，每行一个 JSON（NDJSON）。",
   "definitions": {
     "rpcId": { "type": ["string", "number", "null"] },
     "traceId": { "type": "string", "minLength": 1, "maxLength": 64 },
@@ -81,6 +81,98 @@
         }
       },
       "result": { "type": "object", "required": ["task_id", "gate", "decision"], "properties": { "task_id": { "type": "string" }, "gate": { "$ref": "#/definitions/gateName" }, "decision": { "type": "string" } } }
+    },
+    "initialize": {
+      "summary": "初始化握手（CT-V2：协议版本协商 + 引擎版本/工具模式/隔离模式上报；版本不匹配拒发任务）",
+      "params": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "client_protocol_version": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["protocol_version", "engine_version", "compatible"],
+        "properties": {
+          "protocol_version": { "type": "integer", "minimum": 1 },
+          "engine_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "compatible": { "type": "boolean" },
+          "capabilities": {
+            "type": "object",
+            "properties": {
+              "tool_mode": { "type": "string", "enum": ["tool_loop", "stage_level"] },
+              "isolation_mode": { "type": "string", "enum": ["docker", "subprocess", "unknown"] }
+            }
+          }
+        }
+      }
+    },
+    "provider_test": {
+      "summary": "Key 连通性/端点能力探测（CT-V2；使用引擎已注入的 Key，Key 不经本方法传递）",
+      "params": {
+        "type": "object",
+        "required": ["base_url", "model"],
+        "additionalProperties": false,
+        "properties": {
+          "base_url": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "model": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "provider": { "type": "string", "maxLength": 64 }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["ok", "models_endpoint", "tool_mode"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "models_endpoint": { "type": "boolean" },
+          "tool_mode": { "type": "string", "enum": ["tool_loop", "stage_level"] },
+          "probe_source": { "type": "string", "maxLength": 32 }
+        }
+      }
+    },
+    "events_replay": {
+      "summary": "事件补发（CT-V2：seq > after_seq 增量回放；UI 断线重连后终态事件恢复）",
+      "params": {
+        "type": "object",
+        "required": ["after_seq"],
+        "additionalProperties": false,
+        "properties": {
+          "after_seq": { "type": "integer", "minimum": 0 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 1000 },
+          "task_id": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["events", "last_seq"],
+        "properties": {
+          "events": { "type": "array", "items": { "type": "object" } },
+          "last_seq": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "task_create": {
+      "summary": "登记任务题面（CT-V2/开发文档 §6.2 目标命令；题面仅引擎内存持有，本地不外发；start_stage 前必须调用）",
+      "params": {
+        "type": "object",
+        "required": ["task_id", "title", "problem_text"],
+        "additionalProperties": false,
+        "properties": {
+          "task_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "problem_text": { "type": "string", "minLength": 1, "maxLength": 60000, "description": "题面全文（纯文本；数据以文本形式内嵌，文件通道后续增量）" },
+          "notes": { "type": "string", "maxLength": 2000 }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": ["task_id", "status"],
+        "properties": {
+          "task_id": { "type": "string" },
+          "status": { "type": "string", "const": "created" }
+        }
+      }
     }
   },
   "events": {
@@ -117,6 +209,47 @@
         "task_id": { "type": "string" },
         "gate": { "$ref": "#/definitions/gateName" },
         "reason": { "type": "string", "maxLength": 1024 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "tool.call": {
+      "summary": "工具调用开始事件（CT-V2 增量；args_summary 须经脱敏词表，禁止题面正文/Key）",
+      "required": ["trace_id", "event", "task_id", "stage", "call_id", "tool", "args_summary", "timestamp"],
+      "properties": {
+        "trace_id": { "$ref": "#/definitions/traceId" },
+        "event": { "const": "tool.call" },
+        "task_id": { "type": "string" },
+        "stage": { "$ref": "#/definitions/stageName" },
+        "call_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "tool": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "args_summary": { "type": "string", "maxLength": 512 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "tool.result": {
+      "summary": "工具调用结束事件（CT-V2 增量；result_ref 为产物引用，error 为模型可读结构化错误）",
+      "required": ["trace_id", "event", "task_id", "call_id", "tool", "ok", "duration_ms", "timestamp"],
+      "properties": {
+        "trace_id": { "$ref": "#/definitions/traceId" },
+        "event": { "const": "tool.result" },
+        "task_id": { "type": "string" },
+        "call_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "tool": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "ok": { "type": "boolean" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "result_ref": { "type": "string", "maxLength": 256 },
+        "error": { "type": "string", "maxLength": 1024 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "model.delta": {
+      "summary": "token 增量流事件（CT-V2 W15；允许丢帧、不进入 events_replay 补发，终态以 stage.progress/artifact.ready 为准）",
+      "required": ["trace_id", "event", "task_id", "delta", "timestamp"],
+      "properties": {
+        "trace_id": { "$ref": "#/definitions/traceId" },
+        "event": { "const": "model.delta" },
+        "task_id": { "type": "string" },
+        "delta": { "type": "string", "maxLength": 512 },
         "timestamp": { "type": "string", "format": "date-time" }
       }
     }

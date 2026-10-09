@@ -20,4 +20,21 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // scripts/*.mjs 由 node 直接运行（构建/扫描脚本），声明 Node 运行时全局
+    files: ["**/*.mjs"],
+    languageOptions: {
+      globals: {
+        console: "readonly",
+        process: "readonly",
+        Buffer: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
+        fetch: "readonly", // Node 22 原生（预检脚本探测服务端健康）
+        AbortController: "readonly",
+      },
+    },
+  },
 );

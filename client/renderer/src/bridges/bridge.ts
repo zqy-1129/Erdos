@@ -13,33 +13,8 @@ export interface ErdosBridge {
   subscribe(channel: string, handler: (payload: unknown) => void): () => void;
 }
 
-/** 业务通道白名单（对齐 SP3-1 引擎白名单 + SP3-4 页面所需业务通道）。 */
-export const BRIDGE_CHANNELS = {
-  // 认证
-  authLogin: "auth:login",
-  authRegister: "auth:register",
-  authLogout: "auth:logout",
-  // Key 管家
-  keysList: "keys:list",
-  keysSave: "keys:save",
-  keysTest: "keys:test",
-  keysUsage: "keys:usage",
-  // 账单
-  billingOverview: "billing:overview",
-  billingLedger: "billing:ledger",
-  billingExport: "billing:export",
-  // 内容库
-  contentList: "content:list",
-  // 历史任务
-  historyList: "history:list",
-  historyResume: "history:resume",
-  // 合规导出
-  complianceExport: "compliance:export",
-  // 权益（断网态 UI 数据源）
-  entitlementStatus: "entitlement:status",
-  // 引擎事件转发（对齐 shared/ipc.ts 白名单）
-  engineEvent: "engine:event",
-} as const;
+/** 业务通道白名单（跨端单一来源：shared/bridge-channels.ts，此处 re-export 兼容既有 import）。 */
+export { BRIDGE_CHANNELS, type BridgeChannel } from "../../../shared/bridge-channels.ts";
 
 // ---------------------------------------------------------------------------
 // 桥视图类型（主进程归一后的简化视图；渲染层不感知云端信封）
@@ -55,6 +30,8 @@ export interface EntitlementView {
   balance: number;
   /** 宽限到期时刻（绝对 ms 时间戳；null=无快照），供断网横幅倒计时。 */
   graceDeadlineMs: number | null;
+  /** true=联网刷新失败、本次为本地快照视图（显示「同步失败」轻提示）。 */
+  stale: boolean;
 }
 
 export interface KeyItemView {
@@ -68,8 +45,11 @@ export interface KeyItemView {
 
 export interface KeyTestResult {
   ok: boolean;
-  /** 可读失败分类（US-002：401/网络/余额）。 */
-  reason: "none" | "unauthorized" | "network" | "balance" | "invalid";
+  /**
+   * 可读失败分类（US-002：401/网络/余额）；
+   * unverified = 已保存但未检测（Web/未接线环境，不冒充连通成功）。
+   */
+  reason: "none" | "unauthorized" | "network" | "balance" | "invalid" | "unverified";
   detail: string;
 }
 
@@ -97,6 +77,15 @@ export interface BillingOverview {
   pointsBalance: number;
 }
 
+/** 流水导出结果（billing:export）：真实保存路径或演示文件名；取消=用户主动放弃。 */
+export interface BillingExportView {
+  /** 建议/实际文件名（取消时为建议名）。 */
+  filename: string;
+  /** 实际保存路径（用户取消或演示模式为 null）。 */
+  savedPath: string | null;
+  canceled: boolean;
+}
+
 export interface ContentItem {
   id: string;
   kind: "template" | "case";
@@ -121,4 +110,22 @@ export interface ComplianceExportResult {
   filename: string;
   /** 产物 sha256（US-007 声明含产物哈希）。 */
   artifactHashes: string[];
+}
+
+/** 声明文件保存结果（compliance:save）：真实保存路径或演示文件名；取消=用户主动放弃。 */
+export interface ComplianceSaveResult {
+  /** 建议/实际文件名（取消时为建议名）。 */
+  filename: string;
+  /** 实际保存路径（用户取消或演示模式为 null）。 */
+  savedPath: string | null;
+  canceled: boolean;
+}
+
+/** 最近任务（trail:recent_tasks）：合规声明任务来源（本地留痕按任务汇总，重启后仍可选）。 */
+export interface RecentTask {
+  taskId: string;
+  /** 最后一次留痕时间。 */
+  lastTs: string;
+  /** 该任务留痕条数。 */
+  eventCount: number;
 }

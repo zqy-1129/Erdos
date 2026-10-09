@@ -4,12 +4,29 @@
  */
 
 import { useState, type ReactNode } from "react";
-import { BRIDGE_CHANNELS, type BillingLedgerRow, type BillingOverview } from "../bridges/bridge.ts";
+import {
+  BRIDGE_CHANNELS,
+  type BillingExportView,
+  type BillingLedgerRow,
+  type BillingOverview,
+} from "../bridges/bridge.ts";
 import { EmptyState, ErrorState, OfflineState } from "../components/states.tsx";
 import { useRemoteData } from "../components/use-remote.ts";
 import { VirtualList } from "../components/virtual-list.tsx";
 import { useStore } from "../storage/store.ts";
 import type { AppStores } from "../state/app-stores.ts";
+
+/** 流水动作标签（对齐服务端 LedgerKind；未知类型回退原文，不猜测语义）。 */
+function actionLabel(action: string): string {
+  const labels: Record<string, string> = {
+    grant: "赠分",
+    reserve: "预扣",
+    confirm: "消耗",
+    refund: "退还",
+    offline_sync: "离线补扣",
+  };
+  return labels[action] ?? action;
+}
 
 function renewNotice(subEndAt: string | null): string | null {
   if (!subEndAt) return null;
@@ -30,6 +47,7 @@ export function BillingPage(props: { stores: AppStores }): ReactNode {
   );
   const [exported, setExported] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   if (overview.error) {
     return (
@@ -52,12 +70,18 @@ export function BillingPage(props: { stores: AppStores }): ReactNode {
   const ledgerEmpty = ledger.loading ? null : ledger.error ? "ledger-error" : ledgerRows.length === 0 ? "empty" : null;
 
   const doExport = async () => {
+    // 新一轮导出先清上次结果：成功/错误/取消文案互斥，不残留（并防连点开多个保存对话框）
+    setExported(null);
     setExportError(null);
+    setExporting(true);
     try {
-      const result = await props.stores.bridge.invoke<{ filename: string }>(BRIDGE_CHANNELS.billingExport);
-      setExported(result.filename);
+      const result = await props.stores.bridge.invoke<BillingExportView>(BRIDGE_CHANNELS.billingExport);
+      if (result.canceled) return; // 用户在保存对话框中取消：静默（不提示失败）
+      setExported(result.savedPath ? `已保存至 ${result.savedPath}` : `已生成 ${result.filename}`);
     } catch (error) {
       setExportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -83,10 +107,10 @@ export function BillingPage(props: { stores: AppStores }): ReactNode {
       <div className="ledger-head">
         <h3>积分流水</h3>
         <div>
-          <button type="button" className="btn" onClick={() => void doExport()}>
+          <button type="button" className="btn" disabled={exporting} onClick={() => void doExport()}>
             导出流水（CSV）
           </button>
-          {exported ? <span className="ok-text">已生成 {exported}</span> : null}
+          {exported ? <span className="ok-text">{exported}</span> : null}
           {exportError ? <span className="form-error">{exportError}</span> : null}
         </div>
       </div>
@@ -103,7 +127,7 @@ export function BillingPage(props: { stores: AppStores }): ReactNode {
             <div className="ledger-row">
               <span className="mono">{row.ts.replace("T", " ").replace("Z", "")}</span>
               <span>{row.stage}</span>
-              <span>{row.action === "grant" ? "赠分" : "消耗"}</span>
+              <span>{actionLabel(row.action)}</span>
               <span className={row.points >= 0 ? "pos" : "neg"}>{row.points >= 0 ? `+${row.points}` : row.points}</span>
               <span className="mono">{row.taskId}</span>
             </div>

@@ -1,0 +1,130 @@
+{
+  "drill": "W6-J1024",
+  "ranAt": "2026-10-09T10:50:09.048Z",
+  "ok": true,
+  "home": "erdos-w6-drill-Wkl4tX",
+  "platform": "win32",
+  "engine": "python.exe",
+  "engineVersion": "0.1.0",
+  "gitRev": "97fdd0c",
+  "passed": 12,
+  "executed": 12,
+  "skipped": 0,
+  "protocolErrors": [],
+  "solvingMs": 1586,
+  "sandboxWarnings": [
+    "[engine] 警告：沙箱镜像未含 sha256 摘要（python:3.12-slim）；开发可接受，生产须经 ERDOS_SANDBOX_IMAGE 固定摘要",
+    "[engine] 警告：沙箱镜像未含 sha256 摘要（python:3.12-slim）；开发可接受，生产须经 ERDOS_SANDBOX_IMAGE 固定摘要"
+  ],
+  "keyChannel": {
+    "ok": true,
+    "toolMode": "tool_loop",
+    "bad": false,
+    "authSeen": true,
+    "requests": 2
+  },
+  "steps": [
+    {
+      "name": "⓪ 契约清单核对（方法三方 / 事件两侧）",
+      "ok": true,
+      "skipped": false,
+      "detail": "方法 10 个（schema/client/engine 三方一致=true）；事件 6 个（schema↔client 一致=true；引擎侧由 test_contract_alignment 守护）",
+      "ms": 2
+    },
+    {
+      "name": "① 引擎启动与握手（spawn → initialize → ready）",
+      "ok": true,
+      "skipped": false,
+      "detail": "state=ready；耗时 1232ms（EC-T6 上限 10s）",
+      "ms": 1233
+    },
+    {
+      "name": "② task_create 登记题面",
+      "ok": true,
+      "skipped": false,
+      "detail": "{\"task_id\":\"w6-drill-task\",\"status\":\"created\"}",
+      "ms": 3
+    },
+    {
+      "name": "③ 事件分流（analysis 完成；RPC 层未知事件零计数）",
+      "ok": true,
+      "skipped": false,
+      "detail": "新增 2 条；种类 stage.progress；未知 0（rpc.ts 拒绝并计数）",
+      "ms": 44
+    },
+    {
+      "name": "④ 门禁 gate_analysis 通过（answer_gate）",
+      "ok": true,
+      "skipped": false,
+      "detail": "{\"task_id\":\"w6-drill-task\",\"gate\":\"gate_analysis\",\"decision\":\"pass\",\"action\":\"next_stage\"}",
+      "ms": 5
+    },
+    {
+      "name": "⑤ kill 看门狗（强杀 → crashed → 自动重启 ready）",
+      "ok": true,
+      "skipped": false,
+      "detail": "pid 36496 → 28564；轨迹 spawning→ready→running→ready→crashed→spawning→ready",
+      "ms": 2362
+    },
+    {
+      "name": "⑥ 崩溃后无丢任务（重启后直接续跑 modeling；题面落盘并水合）",
+      "ok": true,
+      "skipped": false,
+      "detail": "progress≥1=true；gate={\"task_id\":\"w6-drill-task\",\"gate\":\"gate_modeling\",\"decision\":\"pass\",\"action\":\"next_stage\"}；题面落盘=true（title=W6 联调预演）",
+      "ms": 54
+    },
+    {
+      "name": "⑥b solving 专项（真实沙箱执行完成）",
+      "ok": true,
+      "skipped": false,
+      "detail": "耗时 1586ms；工具事件 0 条；检查点 solving:stage_done",
+      "ms": 1589
+    },
+    {
+      "name": "⑦ 退出链（stop → 无遗留进程，≤300ms）",
+      "ok": true,
+      "skipped": false,
+      "detail": "pid=28564；退出耗时 28ms（协议硬上限 300ms）",
+      "ms": 28
+    },
+    {
+      "name": "⑧ 检查点与留痕完好（checkpoints.db 阶段行 + audit.db 崩溃前后无丢失）",
+      "ok": true,
+      "skipped": false,
+      "detail": "留痕 3 条（崩溃前 1）；检查点 [analysis:done, modeling:done, solving:stage_done]",
+      "ms": 3
+    },
+    {
+      "name": "⑩ 真实 Key 通道（mock 厂商端点：首行注入 → Authorization → /models 探测）",
+      "ok": true,
+      "skipped": false,
+      "detail": "200→ok=true（tool_mode=tool_loop）；401→ok=false（不判定 Key 无效：红线口径）；鉴权头到端 ok/bad=true/true；mock 请求 2 次",
+      "ms": 1498
+    },
+    {
+      "name": "⑨ 单实例（同 userData 锁拒绝 + 不同 userData 控制组存活）",
+      "ok": true,
+      "skipped": false,
+      "detail": "第二实例 exit=0（314ms，未 boot=true）；首实例存活=true→true；控制组 boot=true 存活=true",
+      "ms": 2715
+    }
+  ],
+  "states": [
+    "spawning",
+    "ready",
+    "running",
+    "ready",
+    "crashed",
+    "spawning",
+    "ready",
+    "running",
+    "ready",
+    "running",
+    "ready",
+    "stopped"
+  ],
+  "eventCount": 6,
+  "eventsByKind": {
+    "stage.progress": 6
+  }
+}

@@ -57,10 +57,29 @@ export function KeysPage(props: { stores: AppStores }): ReactNode {
       const result = await props.stores.bridge.invoke<KeyTestResult>(BRIDGE_CHANNELS.keysTest, {
         baseUrl: wizard.baseUrl,
         key: wizard.key,
+        model: wizard.model,
       });
       dispatch({ type: "test-result", result });
     } catch (error) {
       dispatch({ type: "fail", message: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  const runDelete = async (id: string) => {
+    if (!window.confirm("确认删除该 Key？使用该 Key 的历史任务恢复时需重新配置。")) return;
+    try {
+      const result = await props.stores.bridge.invoke<{ ok: boolean; requeue: boolean }>(
+        BRIDGE_CHANNELS.keysDelete,
+        { id },
+      );
+      if (result.ok) {
+        remote.reload();
+        if (result.requeue) {
+          window.alert("已删除当前激活 Key：恢复历史任务前请先重新配置 Key。");
+        }
+      }
+    } catch (error) {
+      window.alert(`删除失败：${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -111,6 +130,7 @@ export function KeysPage(props: { stores: AppStores }): ReactNode {
               <th>Base URL</th>
               <th>Key（脱敏）</th>
               <th>连通状态</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -120,6 +140,15 @@ export function KeysPage(props: { stores: AppStores }): ReactNode {
                 <td>{item.baseUrl}</td>
                 <td className="mono">{item.masked}</td>
                 <td>{item.status === "ok" ? "✓ 正常" : item.status === "fail" ? "✗ 失败" : "未测试"}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() => void runDelete(item.id)}
+                  >
+                    删除
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -154,6 +183,14 @@ export function KeysPage(props: { stores: AppStores }): ReactNode {
                 value={wizard.key}
                 placeholder="sk-..."
                 onChange={(e) => dispatch({ type: "field", field: "key", value: e.target.value })}
+              />
+            </label>
+            <label>
+              模型名（探测用，可选）
+              <input
+                value={wizard.model}
+                placeholder="如 deepseek-chat"
+                onChange={(e) => dispatch({ type: "field", field: "model", value: e.target.value })}
               />
             </label>
             <div>

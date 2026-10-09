@@ -13,6 +13,8 @@ export interface KeyWizardState {
   alias: string;
   baseUrl: string;
   key: string;
+  /** 探测用模型名（provider_test 必填参数；缺省由主进程兜底 unknown-model）。 */
+  model: string;
   result: KeyTestResult | null;
   error: string | null;
 }
@@ -22,12 +24,13 @@ export const initialWizard: KeyWizardState = {
   alias: "",
   baseUrl: "",
   key: "",
+  model: "",
   result: null,
   error: null,
 };
 
 export type KeyWizardAction =
-  | { type: "field"; field: "alias" | "baseUrl" | "key"; value: string }
+  | { type: "field"; field: "alias" | "baseUrl" | "key" | "model"; value: string }
   | { type: "save" }
   | { type: "saved" }
   | { type: "testing" }
@@ -50,7 +53,7 @@ export function keyWizardReducer(state: KeyWizardState, action: KeyWizardAction)
     case "fail":
       return { ...state, stage: "error", error: action.message };
     case "reset":
-      return { ...state, ...initialWizard, alias: state.alias, baseUrl: state.baseUrl };
+      return { ...state, ...initialWizard, alias: state.alias, baseUrl: state.baseUrl, model: state.model };
     default:
       return state;
   }
@@ -67,6 +70,8 @@ export function reasonLabel(reason: KeyTestResult["reason"]): string {
       return "账户余额不足";
     case "invalid":
       return "输入不合法";
+    case "unverified":
+      return "已保存（未检测连通）";
     case "none":
       return "连通成功";
   }

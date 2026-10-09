@@ -37,12 +37,22 @@ export function OfflineBanner(props: {
   let tone = "info";
   let text: string | null = null;
   if (!connectivity.online) {
-    tone = "warn";
     const deadline = entitlement.graceDeadlineMs;
-    text = `已断网（本地模式可用）：快照余额 ${entitlement.balance} 分` +
-      (deadline !== null && entitlement.status === "ready"
-        ? `，离线宽限剩余 ${formatRemaining(deadline - now)}`
-        : "");
+    // 断网 ≠ 可用：宽限已超/冻结属危险态，离线时同样按 danger 提示（不得被「已断网」轻提示吞没）；
+    // 无快照（未同步）不得展示「余额 0」造成已同步的假象
+    if (entitlement.status === "grace_expired") {
+      tone = "danger";
+      text = "已断网：离线宽限已超 72 小时，请联网续期后继续（本次会话不会被静默丢弃）。";
+    } else if (entitlement.status === "frozen") {
+      tone = "danger";
+      text = "已断网：账号欠费已冻结，请联网充值续费。";
+    } else if (entitlement.status === "empty" || deadline === null) {
+      tone = "info";
+      text = "已断网：暂无本地权益快照（尚未同步）；联网后恢复余额与宽限展示。";
+    } else {
+      tone = "warn";
+      text = `已断网（本地模式可用）：快照余额 ${entitlement.balance} 分，离线宽限剩余 ${formatRemaining(deadline - now)}`;
+    }
   } else if (entitlement.status === "grace_expired") {
     tone = "danger";
     text = "离线宽限已超 72 小时：请联网续期后继续（本次会话不会被静默丢弃）。";

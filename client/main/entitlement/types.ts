@@ -25,6 +25,38 @@ export interface EntitlementSnapshot {
   issued_at: string;
 }
 
+/**
+ * 快照整体形状校验（服务端响应解析与本地落盘回读共用，防字段漂移被当真）。
+ * 仅校验形状，不做验签：签名有效性属 EntitlementService.refresh 职责。
+ */
+export function isEntitlementSnapshot(value: unknown): value is EntitlementSnapshot {
+  if (typeof value !== "object" || value === null) return false;
+  const s = value as Record<string, unknown>;
+  return (
+    isEntitlementPayload(s["payload"]) &&
+    typeof s["signature"] === "string" &&
+    typeof s["key_version"] === "string" &&
+    typeof s["issued_at"] === "string"
+  );
+}
+
+/**
+ * 载荷形状校验（服务端响应解析与本地落盘回读共用，防字段漂移被当真）。
+ * 不校验签名：验签属 EntitlementService.refresh 职责（本地载荷仅在验签通过后落盘）。
+ */
+export function isEntitlementPayload(value: unknown): value is EntitlementPayload {
+  if (typeof value !== "object" || value === null) return false;
+  const p = value as Record<string, unknown>;
+  return (
+    typeof p["subscribed"] === "boolean" &&
+    (typeof p["sub_end_at"] === "string" || p["sub_end_at"] === null) &&
+    typeof p["purchased_balance"] === "number" &&
+    typeof p["monthly_balance"] === "number" &&
+    typeof p["frozen"] === "boolean" &&
+    typeof p["issued_at"] === "string"
+  );
+}
+
 /** 客户端权益状态机。 */
 export type EntitlementStatus =
   | "empty" // 尚无有效快照

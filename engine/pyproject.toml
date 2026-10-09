@@ -14,6 +14,8 @@ dependencies = [
     # LangGraph 1.x：四阶段状态机与人工干预（SP1-2 真实落地）。
     # 版本与引擎版本绑定发布（PyInstaller 打包），禁止客户端运行时动态升级大版本。
     "langgraph==1.2.12",
+    # pydantic v2：能力矩阵/工具参数 schema 校验（EN-CAP/EN-REG）；LangGraph 传递依赖，显式声明锁定
+    "pydantic>=2,<3",
 ]
 
 [project.optional-dependencies]
@@ -62,4 +64,4 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 asyncio_default_test_loop_scope = "function"
-addopts = "-q --cov=engine --cov-report=term-missing --cov-fail-under=70"
+addopts = "-q --cov=engine --cov-report=term-missing --cov-fail-under=80"

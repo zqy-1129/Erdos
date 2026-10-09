@@ -62,9 +62,20 @@ class JsonRpcServer:
         except Exception as exc:  # noqa: BLE001 - 收敛为 internal error
             return encode_error(req.id, INTERNAL_ERROR, f"内部错误：{exc}")
 
-    async def serve(self) -> None:
-        """主循环：逐行读 stdin，写响应到 stdout，直到 stop。"""
+    async def serve(self, initial_lines: list[str] | None = None) -> None:
+        """主循环：逐行读 stdin，写响应到 stdout，直到 stop。
+
+        initial_lines：首行密钥约定下"合法 JSON-RPC 首行"的回放队列
+        （引擎先读首行判定密钥，若是请求行则在此先行执行，兼容无密钥调用方）。
+        """
         loop = asyncio.get_event_loop()
+        for line in initial_lines or []:
+            line = line.strip()
+            if not line:
+                continue
+            response = await self.handle_line(line)
+            sys.stdout.write(response + "\n")
+            sys.stdout.flush()
         while not self._stop.is_set():
             line = await loop.run_in_executor(None, sys.stdin.readline)
             if not line:  # EOF

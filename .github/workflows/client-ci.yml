@@ -8,7 +8,7 @@ on:
 
 jobs:
   quality:
-    name: type + lint + test + build
+    name: type + lint + test + build + scan
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -33,8 +33,12 @@ jobs:
       - name: ESLint
         run: npx eslint .
       - name: Unit tests (node --test)
-        run: node --test tests/contract-ipc.test.ts tests/sp3-2.test.ts tests/sp3-3.test.ts tests/sp3-4-store.test.ts tests/sp3-5.test.ts tests/sp3-5-auth.test.ts tests/sp3-5-telemetry.test.ts tests/sp3-6.test.ts tests/sp3-7-perf.test.ts tests/usage-estimator.test.ts
+        run: npm run test:unit
       - name: Component tests (vitest)
         run: npx vitest run
-      - name: Build (vite)
-        run: npx vite build
+      - name: Build (renderer + main/preload)
+        run: npm run build
+      - name: Build artifact scan (demo leak / relative paths / CSP)
+        run: node scripts/scan-demo-leak.mjs
+      - name: Engine version binding (W17 产物未就位时跳过)
+        run: npm run verify:engine-version

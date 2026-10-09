@@ -1,0 +1,43 @@
+# electron-builder 配置（FE-PKG W18 / SP5-3 FE 半部）
+# 目标：NSIS 安装包 + asar；捆绑引擎 PyInstaller onedir 产物到 resources/engine/
+# 注意：完整打包需 W17 引擎产物（resources/engine/）就位 + 安装 electron-builder 依赖；
+#       当前为配置骨架，`npm run pack` 在 W17 产物落地后启用。
+
+appId: cn.erdos.app
+productName: Erdos
+copyright: "Copyright © 2026 Erdos"
+
+directories:
+  output: release
+  buildResources: build
+
+# 仅打包主进程/preload 构建产物 + 渲染层 dist；package.json 需在（electron 入口）。
+files:
+  - dist/**/*
+  - package.json
+
+# 捆绑引擎 onedir 产物（W17 PyInstaller 输出）到安装目录 resources/engine/
+extraResources:
+  - from: resources/engine
+    to: engine
+    filter:
+      - "**/*"
+
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+# F-102 自动更新：generic provider + latest.yml；preview 渠道禁用（应用内逻辑，见 main/）
+publish:
+  provider: generic
+  url: https://updates.erdos.cn # TODO: 替换为正式更新服务器地址
