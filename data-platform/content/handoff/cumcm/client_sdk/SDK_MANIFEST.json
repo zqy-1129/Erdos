@@ -30,8 +30,8 @@
     },
     {
       "path": "online_sdk.py",
-      "sha256": "0602dd8920f73a582edf24a120055cdf887085c7034fc1d5624d86d1b1c85a23",
-      "size": 3674
+      "sha256": "a233692178e43e571f6677c4c80f85e182ae5c112fe76175c529e0190d660d1f",
+      "size": 4599
     },
     {
       "path": "schemas/v3/asset_ref.schema.json",
