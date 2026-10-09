@@ -10,7 +10,7 @@ import { describe, it } from "node:test";
 import { exportDeclaration, ComplianceDataError } from "../declaration/export.ts";
 import { summarizeTrail } from "../declaration/summary.ts";
 import type { ArtifactEntry, TrailEvent, TrailSource } from "../declaration/types.ts";
-import type { ComplianceExportResult, ComplianceSaveResult } from "../renderer/src/bridges/bridge.ts";
+import type { ComplianceExportResult, ComplianceSaveResult, RecentTask } from "../renderer/src/bridges/bridge.ts";
 
 const SHA_A = "a".repeat(64);
 const SHA_B = "b".repeat(64);
@@ -276,5 +276,17 @@ describe("渲染层桥接入（web-bridge 合规通道）", () => {
       () => bridge.invoke(BRIDGE_CHANNELS.complianceSave, { ...base, format: "pdf" }),
       /不支持的导出格式：pdf/,
     );
+  });
+
+  it("最近任务通道（演示）：返回演示留痕任务；空账号为空集", async () => {
+    const { WebDemoBridge } = await import("../renderer/src/bridges/web-bridge.ts");
+    const { BRIDGE_CHANNELS } = await import("../renderer/src/bridges/bridge.ts");
+    const bridge = new WebDemoBridge();
+
+    const tasks = await bridge.invoke<RecentTask[]>(BRIDGE_CHANNELS.trailRecentTasks);
+    assert.deepEqual(tasks, [{ taskId: "demo-task", lastTs: "2026-10-02T08:20:00Z", eventCount: 4 }], "与演示留痕同源");
+
+    const empty = await bridge.invoke<RecentTask[]>(BRIDGE_CHANNELS.trailRecentTasks, { username: "demo-empty" });
+    assert.deepEqual(empty, [], "空账号演示：无留痕任务");
   });
 });

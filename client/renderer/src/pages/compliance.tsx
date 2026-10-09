@@ -4,11 +4,19 @@
  * 参与度与产物哈希（sha256）。异常态 = 导出失败可读原因。
  * 生成声明 = 页面预览；保存文件 = 经主进程原生保存对话框真实落盘
  * （md/latex 文本、docx 真实二进制，见 compliance:save）。
+ * 任务来源 = 本次会话任务或本地留痕「最近任务」（重启后仍可对历史任务出声明）。
  */
 
 import { useState, type ReactNode } from "react";
-import { BRIDGE_CHANNELS, type ComplianceExportResult, type ComplianceSaveResult } from "../bridges/bridge.ts";
+import {
+  BRIDGE_CHANNELS,
+  type ComplianceExportResult,
+  type ComplianceSaveResult,
+  type RecentTask,
+} from "../bridges/bridge.ts";
 import { ErrorState } from "../components/states.tsx";
+import { useRemoteData } from "../components/use-remote.ts";
+import { useStore } from "../storage/store.ts";
 import type { AppStores } from "../state/app-stores.ts";
 
 const FORMATS = [
@@ -16,6 +24,11 @@ const FORMATS = [
   { value: "latex", label: "LaTeX" },
   { value: "docx", label: "Word" },
 ] as const;
+
+/** 留痕时间展示（引擎恒写 UTC ISO；截断到分钟）。 */
+function formatTs(ts: string): string {
+  return ts ? ts.slice(0, 16).replace("T", " ") : "时间未知";
+}
 
 export function CompliancePage(props: { stores: AppStores }): ReactNode {
   const [format, setFormat] = useState<string>("md");
@@ -27,15 +40,40 @@ export function CompliancePage(props: { stores: AppStores }): ReactNode {
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [pickedTaskId, setPickedTaskId] = useState<string | null>(null);
+
+  const engine = useStore(props.stores.engine);
+  const recent = useRemoteData<RecentTask[]>(() =>
+    props.stores.bridge.invoke<RecentTask[]>(BRIDGE_CHANNELS.trailRecentTasks),
+  );
+  const sessionTaskId = engine.taskId;
+  /** 最近留痕任务（会话任务已单列，去掉重复项）。 */
+  const recentTasks = (recent.data ?? []).filter((task) => task.taskId !== sessionTaskId);
+  /**
+   * 有效任务号：显式选择 > 本次会话；显式选择须仍在选项内
+   * （防列表变化后放行一个界面不可见/不可选的任务），均无则 null（门禁拦截，不猜测任务）。
+   */
+  const taskId =
+    pickedTaskId !== null && (pickedTaskId === sessionTaskId || recentTasks.some((task) => task.taskId === pickedTaskId))
+      ? pickedTaskId
+      : sessionTaskId;
+  /** 占位项文案（受加载/失败态约束，避免误报「未发现任务」）。 */
+  const taskPlaceholder = recent.loading
+    ? "正在读取本机留痕…"
+    : recent.error
+      ? "最近任务读取失败（见下方提示）"
+      : recentTasks.length > 0
+        ? "请选择任务（本机最近留痕）"
+        : "本地留痕中未发现任务";
 
   /**
    * 导出/保存共用门禁：声明依据引擎留痕（audit_trail/artifact_index）按任务生成，
-   * 无任务即无留痕可声明；人工修改说明为 2026 国赛新规必填项。
+   * 无任务即无留痕可声明（可选本次会话任务或本地留痕历史任务）；
+   * 人工修改说明为 2026 国赛新规必填项。
    */
   const checkGate = (): { taskId: string } | { reason: string } => {
-    const taskId = props.stores.engine.getState().taskId;
     if (!taskId) {
-      return { reason: "暂无任务：请先在工作台运行任务，再生成声明（声明依据任务留痕逐条生成）。" };
+      return { reason: "暂无任务：请先在工作台运行任务，或在「任务来源」中选择最近留痕任务。" };
     }
     if (!humanNote.trim()) {
       return { reason: "人工修改说明为必填项（2026 国赛规定），请填写后导出。" };
@@ -43,8 +81,12 @@ export function CompliancePage(props: { stores: AppStores }): ReactNode {
     return { taskId };
   };
 
-  /** 输入变更：已保存提示对应旧输入（格式/说明），清除以免误导（预览结果由再次生成刷新）。 */
-  const invalidateSavedNote = (): void => {
+  /**
+   * 输入变更：预览与保存提示均对应旧输入（任务/格式/说明），全部清除，
+   * 避免「预览的是 A、保存的是 B」与过期「已保存至」误导（需重新生成再复核）。
+   */
+  const invalidateOutputs = (): void => {
+    setResult(null);
     setSavedMsg(null);
     setSaveError(null);
   };
@@ -105,12 +147,35 @@ export function CompliancePage(props: { stores: AppStores }): ReactNode {
       <h2>合规导出</h2>
       <div className="form-block">
         <label>
+          任务来源（本地留痕 · 声明按所选任务生成）
+          <select
+            aria-label="任务来源"
+            value={taskId ?? ""}
+            onChange={(e) => {
+              setPickedTaskId(e.target.value === "" ? null : e.target.value);
+              invalidateOutputs();
+            }}
+          >
+            {sessionTaskId ? null : <option value="">{taskPlaceholder}</option>}
+            {sessionTaskId ? <option value={sessionTaskId}>当前任务：{sessionTaskId}（本次会话）</option> : null}
+            {recentTasks.map((task) => (
+              <option key={task.taskId} value={task.taskId}>
+                {task.taskId}（最近活动 {formatTs(task.lastTs)} · {task.eventCount} 条留痕）
+              </option>
+            ))}
+          </select>
+        </label>
+        {recent.error ? <p className="form-error">最近任务读取失败：{recent.error}</p> : null}
+        {!sessionTaskId && !recent.loading && !recent.error && recentTasks.length === 0 ? (
+          <p className="muted">本机留痕中还没有任务记录：先在工作台运行任务，留痕生成后可在此选择任务出声明。</p>
+        ) : null}
+        <label>
           导出格式
           <select
             value={format}
             onChange={(e) => {
               setFormat(e.target.value);
-              invalidateSavedNote();
+              invalidateOutputs();
             }}
           >
             {FORMATS.map((item) => (
@@ -126,7 +191,7 @@ export function CompliancePage(props: { stores: AppStores }): ReactNode {
             checked={unusedAi}
             onChange={(e) => {
               setUnusedAi(e.target.checked);
-              invalidateSavedNote();
+              invalidateOutputs();
             }}
           />
           全程未使用 AI（生成「未使用 AI」版本模板）
@@ -138,7 +203,7 @@ export function CompliancePage(props: { stores: AppStores }): ReactNode {
             value={humanNote}
             onChange={(e) => {
               setHumanNote(e.target.value);
-              invalidateSavedNote();
+              invalidateOutputs();
             }}
             placeholder="示例：数据预处理由本人手动完成；模型生成的图表经本人人工核验后使用。"
             rows={3}

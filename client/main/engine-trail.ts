@@ -144,6 +144,50 @@ export function readUsageEvents(dbPath: string): UsageEvent[] {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 最近任务（合规声明任务来源：重启后引擎视图已清空，仍可对历史任务出声明）
+// ---------------------------------------------------------------------------
+
+/** 最近任务视图（渲染层 RecentTask 同形）。 */
+export interface RecentTask {
+  taskId: string;
+  /** 最后一次留痕时间（引擎恒写 UTC ISO，同格式字符串序=时间序）。 */
+  lastTs: string;
+  /** 该任务留痕条数（选择时的完整性参考）。 */
+  eventCount: number;
+}
+
+/**
+ * 读取最近任务列表（按最后留痕时间倒序、并列按 task_id 升序确定；最多 limit 个）。
+ * 库不存在（引擎未运行/未接线）→ 空集（无记录是事实）；库存在但读取失败 → 抛出
+ * （不把「未知」冒充为「无任务」）。空 task_id 留痕行不可导出，SQL 层剔除。
+ * 复杂度 O(n)（GROUP BY 扫描留痕行；n 为本地行数，单用户规模可接受，与 readUsageEvents 同口径）。
+ */
+export function readRecentTasks(dbPath: string, limit = 20): RecentTask[] {
+  if (!existsSync(dbPath)) return [];
+  try {
+    const db = openReadOnly(dbPath);
+    try {
+      const rows = db
+        .prepare(
+          "SELECT task_id, MAX(ts) AS last_ts, COUNT(*) AS event_count FROM audit_trail " +
+            "WHERE TRIM(task_id) <> '' GROUP BY task_id ORDER BY last_ts DESC, task_id ASC LIMIT ?",
+        )
+        .all(limit) as Array<Record<string, unknown>>;
+      return rows.map((row): RecentTask => ({
+        taskId: String(row["task_id"]),
+        lastTs: String(row["last_ts"]),
+        eventCount: Number(row["event_count"]),
+      }));
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`本地留痕库读取失败：${reason}`, { cause: error });
+  }
+}
+
 /**
  * 从引擎留痕导出合规声明（SP3-6 收尾：真实数据源接线）。
  * taskId 必填（页面侧取自当前任务）；格式仅支持 md/latex/docx。

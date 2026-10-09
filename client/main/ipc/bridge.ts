@@ -36,10 +36,12 @@ import type { FetchLike } from "../cloud/http.ts";
 import {
   complianceExportViewFromEngineTrail,
   complianceSaveFromEngineTrail,
+  readRecentTasks,
   readUsageEvents,
   type ComplianceExportView,
   type ComplianceSaveView,
   type DeclarationFileSaver,
+  type RecentTask,
 } from "../engine-trail.ts";
 import { estimateUsage } from "../../shared/usage.ts";
 
@@ -223,6 +225,8 @@ export class BridgeBackend {
         return this.complianceExport(body);
       case BRIDGE_CHANNELS.complianceSave:
         return this.complianceSave(body);
+      case BRIDGE_CHANNELS.trailRecentTasks:
+        return this.recentTasks();
       case BRIDGE_CHANNELS.entitlementStatus:
         return this.entitlementStatus();
       default:
@@ -517,5 +521,16 @@ export class BridgeBackend {
       },
       this.saveDeclaration,
     );
+  }
+
+  /**
+   * 最近任务（trail:recent_tasks）：本地留痕按任务汇总（合规声明任务来源——
+   * 重启后引擎视图 taskId 已清空，仍可对历史任务出声明）。未接线 fail-closed。
+   */
+  private async recentTasks(): Promise<RecentTask[]> {
+    if (!this.engineTrailDbPath) {
+      throw new Error("本地留痕库未接线（engineTrailDbPath）：无法读取最近任务");
+    }
+    return readRecentTasks(this.engineTrailDbPath);
   }
 }

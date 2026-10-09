@@ -16,6 +16,7 @@ import {
   complianceSaveFromEngineTrail,
   createEngineTrailSource,
   exportDeclarationFromEngineTrail,
+  readRecentTasks,
   readUsageEvents,
 } from "../main/engine-trail.ts";
 import type { DeclarationFileSaver } from "../main/engine-trail.ts";
@@ -524,6 +525,90 @@ describe("声明文件保存（三格式真实落盘）", () => {
         /人工修改说明为必填项/,
       );
       assert.equal(saveCalls, 0, "任何门禁未过都不得触发保存器（不写盘）");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 最近任务（合规声明任务来源）
+// ---------------------------------------------------------------------------
+
+describe("最近任务（合规声明任务来源）", () => {
+  it("按最后留痕时间倒序；计数正确；空 task_id 行剔除", () => {
+    const { dir, dbPath } = createTrailDb({
+      events: [
+        { task_id: "t-old", stage: "analysis", event_type: "model_call", detail: {}, ts: "2026-10-07T01:00:00+00:00" },
+        { task_id: "t-new", stage: "analysis", event_type: "model_call", detail: {}, ts: "2026-10-08T01:00:00+00:00" },
+        { task_id: "t-new", stage: "modeling", event_type: "tool_call", detail: {}, ts: "2026-10-08T02:00:00+00:00" },
+        // 引擎侧观察项：空 task_id 留痕行不可导出，不应出现在任务来源
+        { task_id: "", stage: "analysis", event_type: "model_call", detail: {}, ts: "2026-10-09T00:00:00+00:00" },
+      ],
+    });
+    try {
+      assert.deepEqual(readRecentTasks(dbPath), [
+        { taskId: "t-new", lastTs: "2026-10-08T02:00:00+00:00", eventCount: 2 },
+        { taskId: "t-old", lastTs: "2026-10-07T01:00:00+00:00", eventCount: 1 },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("库缺失 → 空集（无记录是事实）；空表 → 空集", () => {
+    const missingDir = mkdtempSync(join(tmpdir(), "erdos-trail-"));
+    const { dir, dbPath } = createTrailDb();
+    try {
+      assert.deepEqual(readRecentTasks(join(missingDir, "audit.db")), [], "库不存在=无记录");
+      assert.deepEqual(readRecentTasks(dbPath), [], "空表=无任务");
+    } finally {
+      rmSync(missingDir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("limit 截断：仅返回最近 N 个任务", () => {
+    const { dir, dbPath } = createTrailDb({
+      events: [
+        { task_id: "t-a", stage: "analysis", event_type: "model_call", detail: {}, ts: "2026-10-05T00:00:00+00:00" },
+        { task_id: "t-b", stage: "analysis", event_type: "model_call", detail: {}, ts: "2026-10-06T00:00:00+00:00" },
+        { task_id: "t-c", stage: "analysis", event_type: "model_call", detail: {}, ts: "2026-10-07T00:00:00+00:00" },
+      ],
+    });
+    try {
+      assert.deepEqual(
+        readRecentTasks(dbPath, 2).map((task) => task.taskId),
+        ["t-c", "t-b"],
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("并列时间：按 task_id 升序确定（顺序稳定，不抖动）", () => {
+    const { dir, dbPath } = createTrailDb({
+      events: [
+        { task_id: "t-b", stage: "analysis", event_type: "model_call", detail: {}, ts: "2026-10-08T01:00:00+00:00" },
+        { task_id: "t-a", stage: "analysis", event_type: "model_call", detail: {}, ts: "2026-10-08T01:00:00+00:00" },
+      ],
+    });
+    try {
+      assert.deepEqual(
+        readRecentTasks(dbPath).map((task) => task.taskId),
+        ["t-a", "t-b"],
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("库损坏 → 抛可读错误（不把未知冒充为无任务）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "erdos-trail-"));
+    try {
+      const dbPath = join(dir, "audit.db");
+      writeFileSync(dbPath, "not a sqlite database", "utf-8");
+      assert.throws(() => readRecentTasks(dbPath), /本地留痕库读取失败/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -120,3 +120,12 @@ export interface ComplianceSaveResult {
   savedPath: string | null;
   canceled: boolean;
 }
+
+/** 最近任务（trail:recent_tasks）：合规声明任务来源（本地留痕按任务汇总，重启后仍可选）。 */
+export interface RecentTask {
+  taskId: string;
+  /** 最后一次留痕时间。 */
+  lastTs: string;
+  /** 该任务留痕条数。 */
+  eventCount: number;
+}
