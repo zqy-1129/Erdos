@@ -189,9 +189,10 @@ def _build_sink(trail: TrailRecorder):
         model = data.get("model")
         usage = data.get("usage")
         if model and usage:
+            raw_duration = data.get("duration_ms")
             trail.record_model_call(
                 task_id, stage, str(model), dict(usage),
-                duration_ms=float(data.get("duration_ms", 0.0)),
+                duration_ms=float(raw_duration) if raw_duration is not None else None,
             )
         paper_path = data.get("paper_path")
         if stage == "writing" and paper_path and Path(str(paper_path)).exists():

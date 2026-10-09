@@ -77,6 +77,15 @@ def _default_llm() -> _LLM:
     return fake.chat
 
 
+def _duration(reply: dict[str, Any]) -> float | None:
+    """模型端口上报的耗时（真实测量值）；未上报记 None 而不是 0.0。
+
+    留痕里 0 与「真的很快」不可区分（F-007 精度红线）；None 由记录器落库时省略该字段。
+    """
+    value = reply.get("duration_ms")
+    return None if value is None else float(value)
+
+
 _SOLVE_SCRIPT = """\
 # 线性拟合求解（确定性示例）：给定数据点求 y=ax+b 的最小二乘解
 points = [(0, 2.1), (1, 4.0), (2, 6.2), (3, 7.8), (4, 10.1)]
@@ -185,7 +194,7 @@ class StagePipeline:
             "question_focused": True,
             "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
-            "duration_ms": reply.get("duration_ms", 0.0),
+            "duration_ms": _duration(reply),
         }
 
     async def _modeling(self, task_id: str) -> dict[str, Any]:
@@ -205,7 +214,7 @@ class StagePipeline:
             "variables": ["slope", "intercept"],
             "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
-            "duration_ms": reply.get("duration_ms", 0.0),
+            "duration_ms": _duration(reply),
         }
 
     async def _solving(self, task_id: str) -> dict[str, Any]:
@@ -233,7 +242,7 @@ class StagePipeline:
             "artifacts": result.artifacts,
             "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
-            "duration_ms": reply.get("duration_ms", 0.0),
+            "duration_ms": _duration(reply),
         }
 
     async def _solving_tool_loop(self, task_id: str, registry: Any, solve_llm: Any, operations: Any) -> dict[str, Any]:
@@ -329,5 +338,5 @@ class StagePipeline:
             "paper_path": str(paper_path),
             "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
-            "duration_ms": reply.get("duration_ms", 0.0),
+            "duration_ms": _duration(reply),
         }

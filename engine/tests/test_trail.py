@@ -28,6 +28,31 @@ async def test_sink_records_measured_model_duration(tmp_path) -> None:
     assert event.detail["duration_ms"] == 1234.5
 
 
+async def test_sink_omits_duration_when_not_measured(tmp_path) -> None:
+    """耗时不可得时不写该字段：写 0 与「真的很快」在留痕里不可区分。"""
+    from engine.__main__ import _build_sink
+
+    recorder, store = _recorder(tmp_path)
+    await _build_sink(recorder)("t1", "analysis", {
+        "model": "fake-llm/deterministic",
+        "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+    })
+    event = next(e for e in store.events("t1") if e.event_type == EventType.MODEL_CALL)
+    assert "duration_ms" not in event.detail
+    assert event.detail["model"] == "fake-llm/deterministic"
+
+
+def test_record_model_call_duration_optional(tmp_path) -> None:
+    """记录器签名层面：不传耗时即不落该字段（禁止默认 0）。"""
+    recorder, store = _recorder(tmp_path)
+    recorder.record_model_call("t1", "analysis", "m", {"prompt_tokens": 3})
+    recorder.record_model_call("t1", "modeling", "m", {"prompt_tokens": 4}, 42.0)
+
+    events = {e.stage: e for e in store.events("t1") if e.event_type == EventType.MODEL_CALL}
+    assert "duration_ms" not in events["analysis"].detail
+    assert events["modeling"].detail["duration_ms"] == 42.0
+
+
 def test_four_event_types_all_recorded(tmp_path) -> None:
     """跑完整一题：四类事件齐全。"""
     recorder, store = _recorder(tmp_path)

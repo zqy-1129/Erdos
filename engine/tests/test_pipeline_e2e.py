@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from engine.orchestrator.graph import STAGES, StageOrchestrator
-from engine.orchestrator.pipeline import StagePipeline
+from engine.orchestrator.pipeline import FakeLLM, StagePipeline
 from engine.sandbox.base import validate_artifact_path
 from engine.sandbox.subprocess_sandbox import SubprocessSandbox
 from engine.trail.recorder import TrailRecorder
@@ -44,6 +44,15 @@ async def test_stage_data_carries_model_duration(tmp_path: Path) -> None:
     data = await pipeline.process("t-dur", "analysis")
     assert data["duration_ms"] == 777.5
     assert sink.calls[0][2]["duration_ms"] == 777.5
+
+
+async def test_unmeasured_model_duration_is_none_not_zero(tmp_path: Path) -> None:
+    """端口未上报耗时时记 None，不得补 0.0 假装测得（留痕里 0 与"真的很快"不可区分）。"""
+    sink = SinkRecorder()
+    pipeline = StagePipeline(llm=FakeLLM().chat, sink=sink, work_root=tmp_path)
+    data = await pipeline.process("t-nodur", "analysis")
+    assert data["duration_ms"] is None
+    assert sink.calls[0][2]["duration_ms"] is None
 
 
 async def _run_full(task_id: str, pipeline: StagePipeline) -> dict:
