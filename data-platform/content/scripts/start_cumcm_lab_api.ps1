@@ -2,7 +2,16 @@
 param([Parameter(Mandatory=$true)][string]$Address, [string]$PythonExe='E:/Anaconda/envs/pytorch/python.exe')
 $ErrorActionPreference='Stop'
 $contentRoot=Split-Path -Parent $PSScriptRoot
+$launchPath=Join-Path $contentRoot '.runtime/local/lab-launch.json'
+if (Test-Path -LiteralPath $launchPath) {
+    $launch=Get-Content -LiteralPath $launchPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $env:ERDOS_RUNTIME_DIR=$launch.runtime_directory
+    $env:ERDOS_EMBEDDING_DIR=$launch.embedding_directory
+}
 $configPath=Join-Path $contentRoot '.runtime/local/services.json'
+if ($env:ERDOS_RUNTIME_DIR) {
+    $configPath=Join-Path $env:ERDOS_RUNTIME_DIR 'local/services.json'
+}
 $cfg=Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $directory=Join-Path $contentRoot '.runtime/local'
 $statePath=Join-Path $directory 'lab-api-process.json'

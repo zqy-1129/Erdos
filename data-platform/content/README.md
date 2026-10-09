@@ -10,7 +10,7 @@ Git 中包含代码、SQL、契约、配置规范、SDK 和独立测试。历史
 
 调用先 bootstrap 固定 release/manifest，再 retrieve 获取当前小问/写作阶段需要的参考。模板、图片和页面证据的字节只在客户端真实需要时 fetch，按 SHA256 缓存；不做全库离线下载。若只需分析内容，retrieve 返回的数据即可使用。完整安装章节仅供数据机运维、恢复或换机，不要求每位同事执行。
 
-具体连接示例和防火墙规则见末尾“同实验室共用你的本地库”。
+具体连接示例、无需逐次批准的访问方式和鉴权说明见 [实验室接入指南](handoff/cumcm/LAB_ACCESS.md)；防火墙规则见末尾“同实验室共用你的本地库”。
 
 ## 新拉取仓库：先运行独立回归
 
@@ -118,3 +118,7 @@ New-NetFirewallRule -DisplayName 'Erdos CUMCM lab API' -Direction Inbound -Actio
 连接验证应先访问 `/health`，再使用 team_token 做 bootstrap、检索、资源下载和 SHA256 核对。单有 health 成功不能证明有权限或数据就绪。数据机需要保持开机、Docker/API 运行，同事需要能路由到该私有地址；同一实验室 Wi-Fi 的客户端隔离或不同 VLAN 仍可能阻断，需要网络管理员排查。Git 交付不代表本机防火墙规则或异机网络已自动配置。
 
 高级部署：代码与资料目录可分离；ERDOS_DATA_CONTENT_DIR 指向完整 content 资料根目录，ERDOS_RUNTIME_DIR 指向隔离依赖和私有配置目录。两个变量均为运维选项，同事的 SDK 无须设置。默认读取当前 checkout 下的 content 与 .runtime。
+
+交付机长期服务使用工程外 CPU 运行目录 `D:/Erdos_LocalAI/content-api-runtime`，继续使用原有固定 MiniLM 模型。私有 `.runtime/local/lab-launch.json` 保存 runtime_directory、embedding_directory 和 host，启动辅助脚本会读取它；该文件不入 Git。
+
+数据机重启后可在仓库根目录执行 `powershell -File data-platform/content/scripts/start_cumcm_lab_api.ps1 -Address 172.27.50.249`。已创建的 Windows 防火墙规则保留；需要重新配置时，在管理员 PowerShell 执行 `powershell -File data-platform/content/scripts/enable_cumcm_lab_firewall.ps1 -Address 172.27.50.249`。
