@@ -14,7 +14,7 @@
     "dev": "vite",
     "dev:electron": "npm run build:main && electron . --dev",
     "start": "electron .",
-    "test:unit": "node --test tests/contract-ipc.test.ts tests/sp3-2.test.ts tests/sp3-3.test.ts tests/sp3-4-store.test.ts tests/sp3-5.test.ts tests/sp3-5-auth.test.ts tests/sp3-5-telemetry.test.ts tests/sp3-5-telemetry-contract.test.ts tests/sp3-6.test.ts tests/sp3-7-perf.test.ts tests/usage-estimator.test.ts tests/inject.test.ts tests/preload-surface.test.ts tests/prod-demo-leak.test.ts tests/engine-rpc.test.ts tests/engine-host.test.ts tests/tool-timeline.test.ts tests/gate-approve.test.ts tests/tamper-check.test.ts tests/ipc-guard.test.ts tests/key-probe.test.ts tests/update-policy.test.ts tests/sqlite-secret-store.test.ts",
+    "test:unit": "node --test tests/contract-ipc.test.ts tests/contract-snapshot-vectors.test.ts tests/contract-transport.test.ts tests/sp3-2.test.ts tests/sp3-3.test.ts tests/sp3-4-store.test.ts tests/sp3-5.test.ts tests/sp3-5-auth.test.ts tests/sp3-5-telemetry.test.ts tests/sp3-5-telemetry-contract.test.ts tests/sp3-6.test.ts tests/sp3-7-perf.test.ts tests/usage-estimator.test.ts tests/inject.test.ts tests/preload-surface.test.ts tests/prod-demo-leak.test.ts tests/engine-rpc.test.ts tests/engine-host.test.ts tests/tool-timeline.test.ts tests/gate-approve.test.ts tests/tamper-check.test.ts tests/ipc-guard.test.ts tests/key-probe.test.ts tests/update-policy.test.ts tests/sqlite-secret-store.test.ts",
     "test:demo-leak": "npm run build:renderer && node scripts/scan-demo-leak.mjs",
     "test:components": "vitest run",
     "test:smoke": "node scripts/smoke-electron.mjs",
