@@ -31,6 +31,7 @@ logger = logging.getLogger("erdos.scheduler")
 # 设计文档《异步与中间件层·调度器》的周期承诺（东八区本地时间）
 MONTHLY_GRANT_DAY = 1
 MONTHLY_GRANT_LOCAL_HOUR = 0  # 每月 1 日 00:00
+RENEWAL_REMIND_LOCAL_HOUR = 1  # 每日 01:00 续费提醒（早于 02:00 的到期冻结，提醒要先落）
 EXPIRE_LOCAL_HOUR = 2  # 每日 02:00 到期冻结
 RECONCILE_LOCAL_HOUR = 3  # 每日凌晨 03:00 对账
 
@@ -55,6 +56,11 @@ def due_tasks(
             and local.hour == MONTHLY_GRANT_LOCAL_HOUR,
         ),
         ("expire_subscriptions", ("expire", day_key), local.hour == EXPIRE_LOCAL_HOUR),
+        (
+            "renewal_reminders",
+            ("remind", day_key),
+            local.hour == RENEWAL_REMIND_LOCAL_HOUR,
+        ),
         ("reconcile", ("reconcile", day_key), local.hour == RECONCILE_LOCAL_HOUR),
         # 燃尽类监控每小时重算（窗口 1 日滚动），不按"到点"计
         ("slo_burn", ("slo", hour_key), True),
@@ -79,6 +85,14 @@ async def _dispatch(
     if name == "expire_subscriptions":
         return await scheduler_tasks.run_expire_subscriptions_task(
             state.session_factory, settings, now
+        )
+    if name == "renewal_reminders":
+        return await scheduler_tasks.run_renewal_reminders_task(
+            state.session_factory,
+            settings,
+            state.notification_sender,
+            state.code_limiter,
+            now,
         )
     if name == "slo_burn":
         return await scheduler_tasks.run_slo_burn_task(

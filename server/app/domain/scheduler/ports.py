@@ -1,8 +1,9 @@
-"""调度器域端口与数据载体（SP2-7）：月赠 / 订阅到期冻结 / 每日对账。
+"""调度器域端口与数据载体（SP2-7）：月赠 / 订阅到期冻结 / 续费提醒 / 每日对账。
 
 关键约束：
 - 调度任务带锁与幂等批次键（重复触发只执行一次）；
-- 对账差异全量发现并触发告警（禁止静默忽略）。
+- 对账差异全量发现并触发告警（禁止静默忽略）；
+- 续费提醒的"只提醒一次"落在通知的 message_id 幂等上，不靠任务侧的记忆。
 """
 
 from dataclasses import dataclass
@@ -87,4 +88,25 @@ class ExpireSubscriptionRunner(Protocol):
 
     async def expire_overdue(self, now: datetime) -> int:
         """到期订阅标记 expired 并冻结积分账户，返回冻结人数。"""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class RenewalReminderTarget:
+    """一条到期前需提醒的订阅。
+
+    `email` 可为 None：注销前未填邮箱或仅手机注册的用户确实存在，提醒发不出去。
+    端口把"发不出去"这件事如实交给调用方计数与落日志，不在仓储层静默丢弃。
+    """
+
+    user_id: str
+    email: str | None
+    end_at: datetime
+
+
+class RenewalReminderRunner(Protocol):
+    """续费提醒候选集端口（《服务端架构》调度器："到期前 3 天进入提醒队列"）。"""
+
+    async def list_due(self, now: datetime, within_days: int) -> list[RenewalReminderTarget]:
+        """返回 end_at 落在 (now, now + within_days] 的活跃订阅提醒目标。"""
         ...

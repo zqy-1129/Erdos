@@ -18,7 +18,7 @@ from app.core.logging import request_id_var
 from app.domain.notification.service import NotificationService
 from app.infra import scheduler_tasks
 from app.infra.auth import Principal
-from app.repository.notification import SQLAlchemyNotificationLogRepository
+from app.infra.notification_service import build_notification_service
 from app.repository.uow import UnitOfWork
 
 router = APIRouter(tags=["notifications"])
@@ -34,12 +34,12 @@ class VerificationCodeView(BaseModel):
 
 
 def _notification_service(request: Request, session: AsyncSession) -> NotificationService:
-    settings: Settings = request.app.state.settings
-    return NotificationService(
-        SQLAlchemyNotificationLogRepository(session),
+    """与调度任务共用同一装配（避免两处各拼一遍依赖，参数一改就漏改）。"""
+    return build_notification_service(
+        session,
         request.app.state.notification_sender,
         request.app.state.code_limiter,
-        settings,
+        request.app.state.settings,
     )
 
 

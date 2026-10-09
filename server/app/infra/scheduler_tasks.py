@@ -5,6 +5,7 @@
 对账事务提交之后，这个顺序在任何一处写错都会让 SQLite 单写锁自堵。
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -22,11 +23,18 @@ from app.domain.alerts.slo import (
     coverage_of,
     evaluate_burn,
 )
+from app.domain.notification.ports import (
+    NotificationSender,
+    NotificationStatus,
+    VerificationCodeLimiter,
+)
 from app.domain.scheduler.ports import ReconcileResult
 from app.domain.scheduler.service import SchedulerService, reconcile_alert
+from app.infra.notification_service import build_notification_service
 from app.infra.scheduler_runners import (
     SQLAlchemyExpireSubscriptionRunner,
     SQLAlchemyMonthlyGrantRunner,
+    SQLAlchemyRenewalReminderRunner,
 )
 from app.repository.monitoring import SQLAlchemyMonitoringTrendRepository
 from app.repository.scheduler import (
@@ -34,6 +42,8 @@ from app.repository.scheduler import (
     SQLAlchemySchedulerRunRepository,
 )
 from app.repository.uow import UnitOfWork
+
+logger = logging.getLogger("erdos.scheduler")
 
 
 def _service(session: AsyncSession, settings: Settings) -> SchedulerService:
@@ -62,6 +72,44 @@ async def run_expire_subscriptions_task(
     async with UnitOfWork(session_factory) as uow:
         result = await _service(uow.session, settings).run_expire_subscriptions(now)
     return result
+
+
+async def run_renewal_reminders_task(
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    sender: NotificationSender,
+    code_limiter: VerificationCodeLimiter,
+    now: datetime,
+) -> str:
+    """续费提醒：到期前 N 天的活跃订阅逐条提醒（《服务端架构》调度器承诺）。
+
+    "只提醒一次"落在通知的 message_id 幂等上（`renew:{user}:{到期日}`），任务侧不记状态，
+    所以每日重复跑是安全的。候选集读一个短事务、每条发送各开自己的事务：发送含落库写入，
+    嵌在读事务里会让 SQLite 单写锁自堵；一条发不出去也不该中断整批。
+    """
+    async with UnitOfWork(session_factory) as uow:
+        due = await SQLAlchemyRenewalReminderRunner(uow.session).list_due(
+            now, settings.renewal_remind_days
+        )
+
+    sent = failed = no_contact = 0
+    for item in due:
+        if not item.email:
+            no_contact += 1
+            logger.warning(
+                "续费提醒无可用邮箱，跳过：user_id=%s 到期=%s", item.user_id, item.end_at.date()
+            )
+            continue
+        async with UnitOfWork(session_factory) as uow:
+            record = await build_notification_service(
+                uow.session, sender, code_limiter, settings
+            ).notify_renewal_reminder(item.user_id, item.email, item.end_at, now)
+        if record.status == NotificationStatus.SENT.value:
+            sent += 1
+        elif record.status == NotificationStatus.FAILED.value:
+            failed += 1
+
+    return f"due:{len(due)} sent:{sent} failed:{failed} no_contact:{no_contact}"
 
 
 async def run_reconcile_task(

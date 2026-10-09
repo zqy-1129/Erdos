@@ -101,6 +101,7 @@ async def test_loop_grants_monthly_points_end_to_end(session_factory, settings, 
     monkeypatch.setattr(scheduler_loop, "MONTHLY_GRANT_DAY", local.day)
     monkeypatch.setattr(scheduler_loop, "MONTHLY_GRANT_LOCAL_HOUR", local.hour)
     monkeypatch.setattr(scheduler_loop, "EXPIRE_LOCAL_HOUR", -1)
+    monkeypatch.setattr(scheduler_loop, "RENEWAL_REMIND_LOCAL_HOUR", -1)
     monkeypatch.setattr(scheduler_loop, "RECONCILE_LOCAL_HOUR", -1)
 
     async with UnitOfWork(session_factory) as uow:
@@ -149,6 +150,7 @@ async def test_loop_reconciles_and_alerts_end_to_end(session_factory, settings, 
     local = now + timedelta(hours=settings.scheduler_tz_offset_hours)
     monkeypatch.setattr(scheduler_loop, "MONTHLY_GRANT_DAY", -1)
     monkeypatch.setattr(scheduler_loop, "EXPIRE_LOCAL_HOUR", -1)
+    monkeypatch.setattr(scheduler_loop, "RENEWAL_REMIND_LOCAL_HOUR", -1)
     monkeypatch.setattr(scheduler_loop, "RECONCILE_LOCAL_HOUR", local.hour)
 
     from app.repository.models import PointAccount
