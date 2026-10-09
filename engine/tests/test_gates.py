@@ -145,3 +145,61 @@ async def test_5_pass_5_fail_artifacts() -> None:
         result = await runner.run("analysis", {}, rubric)
         assert result.passed is False
         assert runner.retry_count == 3
+
+
+# ----------------------------------------------------------------------
+# 评分口径收口（fail-closed）：量纲/维度覆盖不合法一律不通过
+# 评委按 0~10 或 0~100 分制输出时，加权总分会远超阈值——放行即误判，故拒绝。
+# ----------------------------------------------------------------------
+def _output(scores: list[dict]) -> str:
+    return json.dumps({"scores": scores}, ensure_ascii=False)
+
+
+async def test_ten_point_scale_marks_fail_instead_of_auto_pass() -> None:
+    rubric = load_rubric_for_stage("analysis", RUBRICS_DIR)
+    raw = _output([{"dimension": d.name, "score": 9, "reason": ""} for d in rubric.dimensions])
+    result = _parse_score("analysis", raw, rubric)
+    assert result.passed is False
+    assert result.total_score == 0.0
+
+
+async def test_negative_score_marks_fail() -> None:
+    rubric = load_rubric_for_stage("analysis", RUBRICS_DIR)
+    raw = _output([{"dimension": d.name, "score": -0.5, "reason": ""} for d in rubric.dimensions])
+    assert _parse_score("analysis", raw, rubric).passed is False
+
+
+async def test_missing_dimension_marks_fail() -> None:
+    """漏评维度不得按 0 权重静默丢分量——评委必须覆盖 rubric 全部维度。"""
+    rubric = load_rubric_for_stage("analysis", RUBRICS_DIR)
+    raw = _output([{"dimension": d.name, "score": 0.95, "reason": ""} for d in rubric.dimensions[:-1]])
+    assert _parse_score("analysis", raw, rubric).passed is False
+
+
+async def test_unknown_dimension_name_marks_fail() -> None:
+    rubric = load_rubric_for_stage("analysis", RUBRICS_DIR)
+    names = [d.name for d in rubric.dimensions]
+    names[-1] = "自己发明的维度"
+    raw = _output([{"dimension": n, "score": 0.95, "reason": ""} for n in names])
+    assert _parse_score("analysis", raw, rubric).passed is False
+
+
+async def test_duplicate_dimension_marks_fail() -> None:
+    rubric = load_rubric_for_stage("analysis", RUBRICS_DIR)
+    names = [d.name for d in rubric.dimensions]
+    names[-1] = names[0]
+    raw = _output([{"dimension": n, "score": 0.95, "reason": ""} for n in names])
+    assert _parse_score("analysis", raw, rubric).passed is False
+
+
+async def test_boolean_score_marks_fail() -> None:
+    rubric = load_rubric_for_stage("analysis", RUBRICS_DIR)
+    raw = _output([{"dimension": d.name, "score": True, "reason": ""} for d in rubric.dimensions])
+    assert _parse_score("analysis", raw, rubric).passed is False
+
+
+async def test_numeric_string_score_is_accepted() -> None:
+    """厂商把数字写成字符串是常见行为差异，属可宽容项（量纲仍须 0~1）。"""
+    rubric = load_rubric_for_stage("analysis", RUBRICS_DIR)
+    raw = _output([{"dimension": d.name, "score": "0.95", "reason": ""} for d in rubric.dimensions])
+    assert _parse_score("analysis", raw, rubric).passed is True
