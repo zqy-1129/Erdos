@@ -257,3 +257,112 @@ def test_render_markdown_baseline_only_note() -> None:
     markdown = render_markdown(AcceptanceReport(), title="空报告")
     assert "BASELINE_ONLY" in markdown
     assert "空报告" in markdown
+
+
+# ----------------------------------------------------------------------
+# 判定通道的门禁硬化（S6-2）：rubric 分数入证据、硬检查归因到 gate
+# ----------------------------------------------------------------------
+
+
+class SpyEvaluator:
+    """按 rubric 全维度给同一分数的评委替身，并记录被投喂的产物。"""
+
+    def __init__(self, score: float = 0.9) -> None:
+        self.score = score
+        self.seen: list[tuple[str, dict]] = []
+
+    async def evaluate(self, stage, artifact, rubric) -> str:
+        self.seen.append((stage, artifact))
+        return json.dumps({
+            "scores": [
+                {"dimension": d.name, "score": self.score, "reason": "ok"}
+                for d in rubric.dimensions
+            ]
+        })
+
+
+class _FailedSandbox:
+    """沙箱执行失败替身：exit_code!=0 且 stdout/artifacts 同时为空（触发 SP1-3 硬检查）。"""
+
+    def __init__(self) -> None:
+        from engine.sandbox.base import ExecutionResult
+
+        self._result = ExecutionResult(exit_code=1, stdout="", stderr="boom", artifacts=[])
+
+    async def execute(self, code, files, work_dir):  # noqa: ANN001 - Sandbox 端口替身
+        return self._result
+
+
+async def test_rubric_gate_scores_recorded_per_stage(tmp_path) -> None:
+    """判定通道硬条件「门禁通过」需可举证：逐阶段 rubric 分数入结果。"""
+    spy = SpyEvaluator()
+    runner = AcceptanceRunner(
+        _flow_factory(tmp_path),
+        gate_policy=RubricGatePolicy(spy, _rubrics()),
+        channel=CHANNEL_REAL,
+    )
+    result = await runner.run_one(REGRESSION_SET[0])
+
+    assert result.passed
+    assert [g.stage for g in result.gate_scores] == list(STAGES)
+    assert all(g.passed and g.attempts == 1 for g in result.gate_scores)
+    assert result.gate_scores[0].total_score == pytest.approx(0.9)
+    assert result.gate_scores[0].threshold == 0.7
+
+
+async def test_rubric_policy_feeds_problem_statement_to_judge(tmp_path) -> None:
+    """评委必须看到题面：rubric 有「问题理解」维度，无题面即无从判定（不得盲评）。"""
+    spy = SpyEvaluator()
+    problem = REGRESSION_SET[0]
+    runner = AcceptanceRunner(
+        _flow_factory(tmp_path), gate_policy=RubricGatePolicy(spy, _rubrics())
+    )
+    await runner.run_one(problem)
+
+    stage, artifact = spy.seen[0]
+    assert stage == "analysis"
+    assert artifact["problem_text"] == problem.statement
+    assert artifact["title"] == problem.title
+
+
+async def test_hard_check_reject_attributes_to_gate_not_orchestrator(tmp_path) -> None:
+    """硬检查自动驳回后不得记成编排故障：runner 补 pass 会与已消费的门禁冲突。
+
+    原实现下该场景以 ValueError("门禁冲突…") 冒出来，归因落在 orchestrator，
+    SP1-7 的失败分层归因因此失真（门禁问题被算进编排器）。
+    """
+    runner = AcceptanceRunner(_flow_factory(tmp_path, sandbox=_FailedSandbox()))
+    result = await runner.run_one(REGRESSION_SET[0])
+
+    assert not result.passed
+    assert result.failure_module == FailureModule.GATE
+    assert "硬检查不通过" in result.failure_detail
+    assert "solving" in result.failure_detail
+    assert result.stages_passed == 2
+
+
+async def test_evidence_carries_gate_scores_and_extra(tmp_path) -> None:
+    """证据面：逐题 JSON 含 rubric 分数，summary 可附带评审口径与评委用量。"""
+    spy = SpyEvaluator()
+    evidence = EvidenceWriter(tmp_path / "evidence")
+    problem = REGRESSION_SET[0]
+    report = await AcceptanceRunner(
+        _flow_factory(tmp_path), gate_policy=RubricGatePolicy(spy, _rubrics())
+    ).run_all((problem,), evidence=evidence)
+
+    payload = json.loads(
+        (tmp_path / "evidence" / f"{problem.business_id}.json").read_text(encoding="utf-8")
+    )
+    assert payload["result"]["gate_scores"][0]["stage"] == "analysis"
+
+    summary_path, report_path = evidence.write_summary(
+        report, title="SP1-7 回归报告", extra={"gate_mode": "rubric", "judge_usage": {"calls": 4}}
+    )
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["gate_mode"] == "rubric"
+    assert summary["judge_usage"]["calls"] == 4
+
+    markdown = report_path.read_text(encoding="utf-8")
+    assert "门禁评分" in markdown
+    assert "rubric 评审明细" in markdown
+

@@ -44,6 +44,14 @@ class TaskFlow(Protocol):
         """实际执行过的阶段序列（副作用观测；断点恢复断言「不重放」用）。"""
         ...
 
+    def hard_reject_reason(self) -> str | None:
+        """SP1-3 硬检查驳回原因（None=本轮无硬检查失败）。
+
+        编排器在阶段产出违规时按 reject 语义自动驳回并消费掉本次门禁；运行器据此
+        把失败归因到门禁，而不是继续补 pass 触发「无挂起门禁」冲突。
+        """
+        ...
+
     def close(self, force: bool = False) -> None:
         """释放任务流资源（进程/连接）；force=True 模拟崩溃硬杀（恢复演练用）。"""
         ...
@@ -112,6 +120,10 @@ class FakeLLMFlow:
 
     def executed_stages(self) -> tuple[str, ...]:
         return tuple(self._exec_log.stages)
+
+    def hard_reject_reason(self) -> str | None:
+        """编排器的 SP1-3 硬检查驳回原因（每次 run_current_stage 重置，仅本轮有效）。"""
+        return self._orch.last_hard_reject
 
     def close(self, force: bool = False) -> None:
         """进程内实现无外部资源；检查点连接随对象回收，此处置为显式关闭。"""
