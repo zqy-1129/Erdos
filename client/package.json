@@ -19,6 +19,7 @@
     "test:components": "vitest run",
     "test:smoke": "node scripts/smoke-electron.mjs",
     "drill:w6": "node scripts/w6-drill.mjs",
+    "demo:preflight": "node scripts/demo-preflight.mjs",
     "verify:engine-version": "node scripts/verify-engine-version.mjs",
     "pack": "npm run build && npm run verify:engine-version && electron-builder --config electron-builder.yml"
   },
