@@ -18,6 +18,7 @@
     "test:demo-leak": "npm run build:renderer && node scripts/scan-demo-leak.mjs",
     "test:components": "vitest run",
     "test:smoke": "node scripts/smoke-electron.mjs",
+    "drill:w6": "node scripts/w6-drill.mjs",
     "verify:engine-version": "node scripts/verify-engine-version.mjs",
     "pack": "npm run build && npm run verify:engine-version && electron-builder --config electron-builder.yml"
   },

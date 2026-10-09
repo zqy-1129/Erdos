@@ -1,0 +1,102 @@
+{
+  "drill": "W6-J1024",
+  "ranAt": "2026-10-09T07:30:04.416Z",
+  "ok": true,
+  "home": "erdos-w6-drill-6PxRRa",
+  "platform": "win32",
+  "engine": "python.exe",
+  "engineVersion": "0.1.0",
+  "gitRev": "c742e78",
+  "passed": 10,
+  "executed": 10,
+  "skipped": 0,
+  "protocolErrors": [],
+  "steps": [
+    {
+      "name": "⓪ 契约清单核对（方法三方 / 事件两侧）",
+      "ok": true,
+      "skipped": false,
+      "detail": "方法 10 个（schema/client/engine 三方一致=true）；事件 6 个（schema↔client 一致=true；引擎侧由 test_contract_alignment 守护）",
+      "ms": 4
+    },
+    {
+      "name": "① 引擎启动与握手（spawn → initialize → ready）",
+      "ok": true,
+      "skipped": false,
+      "detail": "state=ready；耗时 1281ms（EC-T6 上限 10s）",
+      "ms": 1281
+    },
+    {
+      "name": "② task_create 登记题面",
+      "ok": true,
+      "skipped": false,
+      "detail": "{\"task_id\":\"w6-drill-task\",\"status\":\"created\"}",
+      "ms": 1
+    },
+    {
+      "name": "③ 事件分流（analysis 完成；RPC 层未知事件零计数）",
+      "ok": true,
+      "skipped": false,
+      "detail": "新增 2 条；种类 stage.progress；未知 0（rpc.ts 拒绝并计数）",
+      "ms": 45
+    },
+    {
+      "name": "④ 门禁 gate_analysis 通过（answer_gate）",
+      "ok": true,
+      "skipped": false,
+      "detail": "{\"task_id\":\"w6-drill-task\",\"gate\":\"gate_analysis\",\"decision\":\"pass\",\"action\":\"next_stage\"}",
+      "ms": 5
+    },
+    {
+      "name": "⑤ kill 看门狗（强杀 → crashed → 自动重启 ready）",
+      "ok": true,
+      "skipped": false,
+      "detail": "pid 29644 → 34588；轨迹 spawning→ready→running→ready→crashed→spawning→ready",
+      "ms": 2388
+    },
+    {
+      "name": "⑥ 崩溃后无丢任务（补投题面后 modeling 延续完成）",
+      "ok": true,
+      "skipped": false,
+      "detail": "progress≥1=true；gate={\"task_id\":\"w6-drill-task\",\"gate\":\"gate_modeling\",\"decision\":\"pass\",\"action\":\"next_stage\"}",
+      "ms": 51
+    },
+    {
+      "name": "⑦ 退出链（stop → 无遗留进程，≤300ms）",
+      "ok": true,
+      "skipped": false,
+      "detail": "pid=34588；退出耗时 25ms（协议硬上限 300ms）",
+      "ms": 25
+    },
+    {
+      "name": "⑧ 检查点与留痕完好（checkpoints.db 阶段行 + audit.db 崩溃前后无丢失）",
+      "ok": true,
+      "skipped": false,
+      "detail": "留痕 2 条（崩溃前 1）；检查点 [analysis:done, modeling:done]",
+      "ms": 4
+    },
+    {
+      "name": "⑨ 单实例（同 userData 锁拒绝 + 不同 userData 控制组存活）",
+      "ok": true,
+      "skipped": false,
+      "detail": "第二实例 exit=0（275ms，未 boot=true）；首实例存活=true→true；控制组 boot=true 存活=true",
+      "ms": 2673
+    }
+  ],
+  "states": [
+    "spawning",
+    "ready",
+    "running",
+    "ready",
+    "crashed",
+    "spawning",
+    "ready",
+    "running",
+    "ready",
+    "stopped"
+  ],
+  "eventCount": 4,
+  "eventsByKind": {
+    "stage.progress": 4
+  }
+}

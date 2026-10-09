@@ -39,6 +39,15 @@ const clientRoot = path.resolve(__dirname, "../.."); // dist/main → client/
 const isDev = process.argv.includes("--dev") || process.env.ERDOS_DEV === "1";
 const DEV_SERVER_URL = process.env.ERDOS_DEV_SERVER_URL ?? "http://localhost:5173";
 
+/**
+ * 联调/CI 隔离（W6 预演）：显式指定 userData 根目录——单实例锁、SQLite 密钥库、
+ * 设备指纹与 HTML 存储全部随目录隔离，避免 drill 触碰真实用户数据。
+ * （必须在 app ready 前调用；不对生产暴露任何默认值。）
+ */
+if (process.env.ERDOS_USER_DATA_DIR) {
+  app.setPath("userData", path.resolve(process.env.ERDOS_USER_DATA_DIR));
+}
+
 /** IPC 来源策略（生产仅 file://；开发追加 dev server）。 */
 function isTrustedSender(frameUrl: string | undefined): boolean {
   return isAllowedSenderUrl(frameUrl, { dev: isDev, devServerUrl: DEV_SERVER_URL });
