@@ -260,7 +260,9 @@ def main() -> None:
     server = JsonRpcServer(state, events)
 
     runtime = register_all(
-        server, state, checkpoint=checkpoint, runner=pipeline.process, events=events,
+        server, state, checkpoint=checkpoint,
+        task_store=checkpoint,  # R1：题面与阶段检查点同库落盘（重启后 start_stage 水合恢复）
+        runner=pipeline.process, events=events,
         runtime_info={
             "protocol_version": 2,
             "engine_version": _engine_version(),

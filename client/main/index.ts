@@ -16,6 +16,13 @@ import { runSmoke } from "./smoke.ts";
 import { BridgeBackend } from "./ipc/bridge.ts";
 import { isAllowedSenderUrl } from "./ipc/guard.ts";
 import { createSqliteSecretStore } from "./sqlite-secret-store.ts";
+import { createPlatformEncryptor } from "./safe-storage-encryptor.ts";
+import { createEncryptedTokenStore } from "./cloud/session-store.ts";
+import { createEncryptedEntitlementStateStore } from "./entitlement/state-store.ts";
+import { createEncryptedOfflineLedger } from "./entitlement/ledger-store.ts";
+import { createExportSaver, createFileSaver } from "./save-export.ts";
+import { ensureDeviceFingerprint } from "./device-identity.ts";
+import { resolveAuthRuntime } from "./ipc/cloud-auth.ts";
 import { verifyEngineDir } from "./tamper-check.ts";
 import { resolveChannel } from "./update/policy.ts";
 import { setupAutoUpdate } from "./update/updater.ts";
@@ -31,6 +38,15 @@ const clientRoot = path.resolve(__dirname, "../.."); // dist/main → client/
 
 const isDev = process.argv.includes("--dev") || process.env.ERDOS_DEV === "1";
 const DEV_SERVER_URL = process.env.ERDOS_DEV_SERVER_URL ?? "http://localhost:5173";
+
+/**
+ * 联调/CI 隔离（W6 预演）：显式指定 userData 根目录——单实例锁、SQLite 密钥库、
+ * 设备指纹与 HTML 存储全部随目录隔离，避免 drill 触碰真实用户数据。
+ * （必须在 app ready 前调用；不对生产暴露任何默认值。）
+ */
+if (process.env.ERDOS_USER_DATA_DIR) {
+  app.setPath("userData", path.resolve(process.env.ERDOS_USER_DATA_DIR));
+}
 
 /** IPC 来源策略（生产仅 file://；开发追加 dev server）。 */
 function isTrustedSender(frameUrl: string | undefined): boolean {
@@ -52,6 +68,11 @@ let mainWindow: BrowserWindow | null = null;
 let engineHost: EngineHost | null = null;
 let bridgeBackend: BridgeBackend | null = null;
 
+/** 引擎数据根目录（留痕/检查点/产物）：EngineHost home 与留痕库路径共用同一约定。 */
+function engineHomePath(): string {
+  return path.join(app.getPath("userData"), "engine-home");
+}
+
 /** 引擎通道 → RPC 方法名（engine:event 与业务通道不在此列）。 */
 function channelToMethod(channel: string): RpcMethod | null {
   if (channel === "engine:event" || !channel.startsWith("engine:")) return null;
@@ -63,9 +84,64 @@ function registerBridgeIpc(): void {
   const secretStore = createSqliteSecretStore(path.join(app.getPath("userData"), "erdos.db"), (message) =>
     console.warn(`[client] ${message}`),
   );
-  bridgeBackend = new BridgeBackend({ secretStore });
+  // SP3-5 鉴权接线：ERDOS_API_BASE_URL 决定运行模式（dev 未配置 → 演示回退；生产未配置 → fail-closed）；
+  // 设备指纹持久化于 userData（注册赠分防刷，见 device-identity.ts）
+  const runtime = resolveAuthRuntime({ apiBaseUrl: process.env.ERDOS_API_BASE_URL, dev: isDev });
+  const fingerprint = ensureDeviceFingerprint(path.join(app.getPath("userData"), "device-fingerprint"));
+  console.log(
+    `[client] 鉴权模式：${runtime.mode === "cloud" ? `cloud（${runtime.baseUrl}）` : runtime.mode}`,
+  );
+  // SP3-4 本地安全存储：会话令牌加密落盘（safeStorage 密文进 SQLite；驱动不可用时回退内存并告警）
+  const sessionStore = secretStore
+    ? createEncryptedTokenStore({
+        secrets: secretStore,
+        encryptor: createPlatformEncryptor((message) => console.warn(`[client] ${message}`)),
+      })
+    : null;
+  if (!sessionStore) {
+    console.warn("[client] 会话落盘不可用（SQLite 降级）：重启后需重新登录");
+  }
+  console.log(`[client] 会话落盘：${sessionStore ? "已启用（加密）" : "未启用（内存）"}`);
+  // SP3-4 第二批：权益快照 + 同步元数据加密落盘（断网重启仍可展示快照余额与 72h 宽限倒计时）
+  const entitlementStore = secretStore
+    ? createEncryptedEntitlementStateStore({
+        secrets: secretStore,
+        encryptor: createPlatformEncryptor((message) => console.warn(`[client] ${message}`)),
+      })
+    : null;
+  if (!entitlementStore) {
+    console.warn("[client] 权益快照落盘不可用（SQLite 降级）：重启后需联网刷新恢复宽限");
+  }
+  console.log(`[client] 权益快照落盘：${entitlementStore ? "已启用（加密）" : "未启用（内存）"}`);
+  // SP3-4 第三批：离线流水账本加密落盘（待补扣跨重启延续；断网重启不丢记账、不透支）
+  const offlineLedger = secretStore
+    ? createEncryptedOfflineLedger({
+        secrets: secretStore,
+        encryptor: createPlatformEncryptor((message) => console.warn(`[client] ${message}`)),
+      })
+    : null;
+  if (!offlineLedger) {
+    console.warn("[client] 离线账本落盘不可用（SQLite 降级）：重启后待补扣记账丢失");
+  }
+  console.log(`[client] 离线账本落盘：${offlineLedger ? "已启用（加密）" : "未启用（内存）"}`);
+  bridgeBackend = new BridgeBackend({
+    secretStore,
+    auth: { runtime, fingerprint, platform: process.platform, sessionStore, entitlementStore, entitlementLedger: offlineLedger },
+    // billing:export 落盘：原生保存对话框 + 写盘（取消不视为失败；写盘异常由桥归一为可读错误）
+    saveExport: createExportSaver(() => mainWindow, "导出积分流水（CSV）"),
+    // compliance:save 落盘：声明文件三格式（md/latex 文本 + docx 真实二进制）原生保存对话框
+    saveDeclaration: createFileSaver(() => mainWindow, "导出 AI 工具使用声明"),
+    // F-002 用量估算 / SP3-6 声明数据源：引擎留痕库（与 EngineHost home 同一约定）
+    engineTrailDbPath: path.join(engineHomePath(), "audit.db"),
+    // 会话失效下发：业务 401 清会话后推给渲染层（回登录页；见 app-stores.bindSessionInvalidation）
+    onSessionInvalidated: () => {
+      mainWindow?.webContents.send(BRIDGE_CHANNELS.authSessionInvalidated, { reason: "unauthorized" });
+    },
+  });
+  // 事件型通道（主进程 → 渲染层推送）：不注册 ipcMain.handle
+  const eventChannels = new Set<string>([BRIDGE_CHANNELS.engineEvent, BRIDGE_CHANNELS.authSessionInvalidated]);
   for (const channel of Object.values(BRIDGE_CHANNELS)) {
-    if (channel === BRIDGE_CHANNELS.engineEvent) continue;
+    if (eventChannels.has(channel)) continue;
     ipcMain.handle(channel, (event, payload) => {
       if (!isTrustedSender(event.senderFrame?.url)) {
         return Promise.reject(new Error("非法调用来源：已拒绝"));
@@ -77,7 +153,7 @@ function registerBridgeIpc(): void {
 }
 
 function registerEngineIpc(): void {
-  const home = path.join(app.getPath("userData"), "engine-home");
+  const home = engineHomePath();
   const { command, args, cwd } = engineCommand();
 
   engineHost = new EngineHost({

@@ -30,6 +30,8 @@ export interface EntitlementView {
   balance: number;
   /** 宽限到期时刻（绝对 ms 时间戳；null=无快照），供断网横幅倒计时。 */
   graceDeadlineMs: number | null;
+  /** true=联网刷新失败、本次为本地快照视图（显示「同步失败」轻提示）。 */
+  stale: boolean;
 }
 
 export interface KeyItemView {
@@ -75,6 +77,15 @@ export interface BillingOverview {
   pointsBalance: number;
 }
 
+/** 流水导出结果（billing:export）：真实保存路径或演示文件名；取消=用户主动放弃。 */
+export interface BillingExportView {
+  /** 建议/实际文件名（取消时为建议名）。 */
+  filename: string;
+  /** 实际保存路径（用户取消或演示模式为 null）。 */
+  savedPath: string | null;
+  canceled: boolean;
+}
+
 export interface ContentItem {
   id: string;
   kind: "template" | "case";
@@ -99,4 +110,22 @@ export interface ComplianceExportResult {
   filename: string;
   /** 产物 sha256（US-007 声明含产物哈希）。 */
   artifactHashes: string[];
+}
+
+/** 声明文件保存结果（compliance:save）：真实保存路径或演示文件名；取消=用户主动放弃。 */
+export interface ComplianceSaveResult {
+  /** 建议/实际文件名（取消时为建议名）。 */
+  filename: string;
+  /** 实际保存路径（用户取消或演示模式为 null）。 */
+  savedPath: string | null;
+  canceled: boolean;
+}
+
+/** 最近任务（trail:recent_tasks）：合规声明任务来源（本地留痕按任务汇总，重启后仍可选）。 */
+export interface RecentTask {
+  taskId: string;
+  /** 最后一次留痕时间。 */
+  lastTs: string;
+  /** 该任务留痕条数。 */
+  eventCount: number;
 }

@@ -11,7 +11,7 @@ import { BootTimer } from "./engine/boot-mark.ts";
 import { CrashGuard } from "./engine/crash-guard.ts";
 import { AppShell } from "./components/layout.tsx";
 import { useHashRoute } from "./router.tsx";
-import { bindConnectivity, createAppStores, type AppStores } from "./state/app-stores.ts";
+import { createAppStores, restoreSessionAction, type AppStores } from "./state/app-stores.ts";
 import { useStore } from "./storage/store.ts";
 import { LoginPage } from "./pages/login.tsx";
 import { WorkspacePage } from "./pages/workspace.tsx";
@@ -61,7 +61,7 @@ export function App(props: { stores: AppStores }): ReactNode {
 
 export function createStores(bridge: ErdosBridge): AppStores {
   const stores = createAppStores(bridge);
-  bindConnectivity(stores);
+  void restoreSessionAction(stores); // 启动免登录（主进程有持久化会话时进入登录态）
   return stores;
 }
 
