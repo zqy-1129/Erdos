@@ -66,6 +66,10 @@ def classify_reconcile_diff(diff_count: int) -> Severity | None:
 # 《服务端架构》§10 与 PRD 6.1 的承诺：云端可用性 99.5%。这是产品口径，不做成部署可调项。
 SLO_AVAILABILITY: Final[float] = 0.995
 
+# 燃尽与数据覆盖率两条预算类告警的指标键：看板与静默去重都以它为单位。
+SLO_BURN_METRIC: Final[str] = "slo_burn"
+SLO_COVERAGE_METRIC: Final[str] = "slo_data_coverage"
+
 # 采样指标 -> SLO 档位。可用性是唯一 P0；错误率与延迟类为 P1；容量水位为 P2。
 # 延迟档按 P95 口径评估（PRD 写的是 P99>500ms），P99 需要监测表增列，
 # 该替换口径已登记待契约/架构评审确认，不假装它就是 P99。
@@ -78,6 +82,9 @@ METRIC_SEVERITY: Final[dict[str, Severity]] = {
     "cpu_percent": Severity.P2,
     "memory_percent": Severity.P2,
     "db_pool_usage": Severity.P2,
+    # 预算燃尽类（调度小时任务产出，不在采样规则里）
+    SLO_BURN_METRIC: Severity.P0,
+    SLO_COVERAGE_METRIC: Severity.P1,
 }
 
 

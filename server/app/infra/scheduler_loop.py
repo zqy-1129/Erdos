@@ -4,11 +4,15 @@
 也就是"每月 1 日 00:00（东八区）发放订阅月赠"这条承诺在无人值守时不会发生，用户订了订阅却
 拿不到月赠。批次键幂等（scheduler_runs 唯一约束）本来就为"可能被重复触发"而设计，缺的只是触发。
 
+SLO 预算燃尽按小时复检（窗口 1 日）：它不是"到点做一次"的业务动作，而是持续的可用性承诺
+监控，所以每小时滚动重算，判级变化才播报（见 scheduler_tasks.SloBurnState）。
+
 周期口径取自设计文档，做成模块常量而非配置项：它们是产品承诺，不该按部署随意改。
 时区用固定偏移（东八区无夏令时），避免为三处判断引入 tz 数据依赖。
 
 多实例安全：进程内的"本轮已触发"标记只是省掉重复尝试；真正的去重在数据库批次键上，
-所以两个实例同一时刻各跑一次也只会发放一次。
+所以两个实例同一时刻各跑一次也只会发放一次。SLO 播报是唯一例外——它按进程内状态判级，
+多实例会各播报一次同档告警，静默窗口（同级别同指标 300s）在真实部署里把它合并掉。
 """
 
 import asyncio
@@ -20,6 +24,7 @@ from fastapi import FastAPI
 from app.core.clock import utc_now
 from app.core.config import Settings
 from app.infra import scheduler_tasks
+from app.infra.scheduler_tasks import SloBurnState
 
 logger = logging.getLogger("erdos.scheduler")
 
@@ -40,6 +45,7 @@ def due_tasks(
     local = now_utc + timedelta(hours=settings.scheduler_tz_offset_hours)
     day_key = local.date().isoformat()
     month_key = f"{local.year}-{local.month:02d}"
+    hour_key = local.strftime("%Y-%m-%dT%H")
 
     candidates = (
         (
@@ -50,6 +56,8 @@ def due_tasks(
         ),
         ("expire_subscriptions", ("expire", day_key), local.hour == EXPIRE_LOCAL_HOUR),
         ("reconcile", ("reconcile", day_key), local.hour == RECONCILE_LOCAL_HOUR),
+        # 燃尽类监控每小时重算（窗口 1 日滚动），不按"到点"计
+        ("slo_burn", ("slo", hour_key), True),
     )
     due: list[tuple[str, tuple[str, str]]] = []
     for name, marker, hour_hit in candidates:
@@ -59,7 +67,9 @@ def due_tasks(
     return due
 
 
-async def _dispatch(app: FastAPI, name: str, now: datetime) -> str:
+async def _dispatch(
+    app: FastAPI, name: str, now: datetime, slo_state: SloBurnState
+) -> str:
     state = app.state
     settings: Settings = state.settings
     if name == "monthly_grant":
@@ -69,6 +79,10 @@ async def _dispatch(app: FastAPI, name: str, now: datetime) -> str:
     if name == "expire_subscriptions":
         return await scheduler_tasks.run_expire_subscriptions_task(
             state.session_factory, settings, now
+        )
+    if name == "slo_burn":
+        return await scheduler_tasks.run_slo_burn_task(
+            state.session_factory, settings, state.alert_outlet, now, slo_state
         )
     result = await scheduler_tasks.run_reconcile_task(
         state.session_factory, settings, state.alert_outlet, now
@@ -80,14 +94,15 @@ async def run_scheduler_loop(app: FastAPI) -> None:
     """调度主循环：按 tick 轮询到点任务；ERDOS_SCHEDULER_ENABLED=false 时整条链路关闭。"""
     settings: Settings = app.state.settings
     if not settings.scheduler_enabled:
-        logger.info("调度后台循环已关闭（ERDOS_SCHEDULER_ENABLED=false），三大任务仅剩管理端触发")
+        logger.info("调度后台循环已关闭（ERDOS_SCHEDULER_ENABLED=false），周期任务仅剩管理端触发")
         return
     fired: set[tuple[str, str]] = set()
+    slo_state = SloBurnState()
     while True:
         now = utc_now()
         for name, marker in due_tasks(now, settings, fired):
             try:
-                result = await _dispatch(app, name, now)
+                result = await _dispatch(app, name, now, slo_state)
                 logger.info("调度任务完成：%s -> %s", name, result)
             except asyncio.CancelledError:
                 raise

@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     alert_webhook_retries: int = 2
     alert_webhook_backoff_seconds: float = 1.0
 
+    # 月度可用性预算（99.5%）燃尽判级：比例相对"日窗口预算份额"，与月度同量纲
+    slo_burn_page_ratio: float = 2.0  # 燃尽达允许速率 2 倍 -> P0
+    slo_burn_warn_ratio: float = 1.0  # 已达预算速率（月底踩线）-> P1
+    slo_coverage_floor: float = 0.5  # 日窗口观测覆盖率下限：没数据不等于健康
+
     # 认证授权（SP2-2）：JWT 双令牌、RBAC 四角色、防爆破、Ed25519
     auth_issuer: str = "erdos-server"
     auth_access_ttl_seconds: int = 900  # 访问令牌 15 分钟

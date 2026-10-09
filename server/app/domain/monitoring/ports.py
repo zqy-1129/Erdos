@@ -159,6 +159,10 @@ class MonitoringTrendRepository(Protocol):
         """删除截止时间之前的快照，返回删除行数。"""
         ...
 
+    async def window_error_minutes(self, start: datetime, end: datetime) -> tuple[int, float]:
+        """窗口内 (观测分钟数, error_rate 之和)，区间左闭右开；供 SLO 预算燃尽聚合。"""
+        ...
+
 
 def display_values(sample: MonitoringSample) -> dict[str, float]:
     """采样 -> 展示口径（百分比/单位换算），供 SSE 负载与看板渲染。"""
