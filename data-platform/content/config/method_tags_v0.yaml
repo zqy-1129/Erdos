@@ -1,0 +1,258 @@
+# 方法标签词典 v0（案例标注用，工作包3）
+#
+# 设计原则：
+# - tag 为入库规范名（method_tags 元素），patterns 为匹配正则（re.IGNORECASE 编译，
+#   大小写敏感场合用 (?-i:...) 局部关闭）；
+# - 只收录「可辨识的建模方法」，不收 优化/预测/评价 等泛化词；
+# - 每个标签的命中判定由 annotate_cases.py 按区域加权（标题/关键词/摘要），
+#   本文件只负责「词 → 标签」映射与冲突消解声明。
+version: v0
+
+# 命中后需移除的其他标签（specific 胜 generic）
+conflicts:
+  - when: 0-1规划
+    remove: [整数规划]
+  - when: [线性回归, Logistic回归]
+    remove: [回归分析]
+  - when: 多目标优化
+    remove: [目标规划]
+  - when: [BP神经网络, 卷积神经网络, 循环神经网络, 深度学习]
+    remove: [神经网络]
+  - when: Logistic回归
+    remove: [Logistic模型]
+
+tags:
+  # ---------- 优化 ----------
+  - tag: 线性规划
+    patterns: ['(?<!非)线性规划', 'linear programming']
+  - tag: 非线性规划
+    patterns: ['非线性规划', 'non-?linear programming']
+  - tag: 整数规划
+    patterns: ['整数规划', 'integer programming']
+  - tag: 0-1规划
+    patterns:
+      - '0\s*[-—‑－/，,]\s*1\s*(?:型)?\s*(?:整数)?\s*规划'
+      - 'zero[- ]one programming'
+      - 'binary programming'
+      - '二值规划'
+  - tag: 混合整数规划
+    patterns: ['混合整数', 'mixed[- ]integer']
+  - tag: 多目标优化
+    patterns: ['多目标\s*(?:优化|规划|决策|模型)', 'multi-?objective', 'pareto']
+  - tag: 单目标优化
+    patterns: ['单目标优化', 'single[- ]objective']
+  - tag: 枚举与搜索
+    patterns: ['枚举法', '遍历(?!性)', '穷举', '二分法', '三分查找', '三分搜索', '变步长搜索', '网格搜索', 'grid search']
+  - tag: 目标规划
+    patterns: ['目标规划', 'goal programming']
+  - tag: 动态规划
+    patterns: ['动态规划', 'dynamic programming']
+  - tag: 二次规划
+    patterns: ['二次规划', 'quadratic programming']
+  - tag: 凸优化
+    patterns: ['凸优化', 'convex (?:optimization|programming|opt)', '内点法', 'interior point']
+  - tag: 单纯形法
+    patterns: ['单纯形', 'simplex']
+  - tag: 梯度下降
+    patterns: ['梯度下降', 'gradient descent', '最速下降法?']
+  - tag: 遗传算法
+    patterns: ['遗传算法', 'genetic algorithm', '(?-i:\bGA\b)']
+  - tag: NSGA-II
+    patterns: ['NSGA\s*-?\s*II', '非支配排序']
+  - tag: 模拟退火
+    patterns: ['模拟退火', 'simulated annealing']
+  - tag: 粒子群算法
+    patterns: ['粒子群', 'particle swarm', '(?-i:\bPSO\b)']
+  - tag: 蚁群算法
+    patterns: ['蚁群', 'ant colony', '(?-i:\bACO\b)']
+  - tag: 禁忌搜索
+    patterns: ['禁忌搜索', 'tabu search']
+  - tag: 差分进化
+    patterns: ['差分进化', 'differential evolution']
+  - tag: 免疫算法
+    patterns: ['免疫算法', '人工免疫', 'artificial immune']
+  - tag: 匈牙利算法
+    patterns: ['匈牙利(?:算法|法)', 'hungarian algorithm']
+  - tag: 分支定界
+    patterns: ['分支定界', 'branch\s*(?:and|&)\s*bound', '(?-i:\bB&B\b)']
+  - tag: 贪心算法
+    patterns: ['贪心', 'greedy']
+  - tag: 邻域搜索
+    patterns: ['邻域搜索', 'neighbou?rhood search', '变邻域']
+  - tag: 强化学习
+    patterns: ['强化学习', 'reinforcement learning', '(?-i:\bQ-?learning\b)']
+  - tag: 拉格朗日乘子法
+    patterns: ['拉格朗日', 'lagrange (?:multiplier|function|relaxation)', '(?-i:\bKKT\b)']
+
+  # ---------- 图论与网络 ----------
+  - tag: 图论模型
+    patterns: ['图论', 'graph theory', '复杂网络', 'complex network', 'net[-\s]?work[-\s]*(?:based|analysis)', 'graph[-\s]based', 'graph model', '(?<!neural )network\s+(?:model|simulation|approach)', 'nodes and edges']
+  - tag: 复杂网络
+    patterns: ['复杂网络', 'complex network', 'multi[-\s]?layer network', 'multilayer network', 'small[-\s]?world', 'scale[-\s]?free', '无标度', '多层网络']
+  - tag: 最短路
+    patterns: ['最短路', 'dijkstra', 'floyd', 'shortest path']
+  - tag: 最小生成树
+    patterns: ['最小生成树', 'minimum spanning tree', 'prim算法', 'kruskal']
+  - tag: 最大流
+    patterns: ['最大流', 'max(?:imum)?[- ]flow']
+  - tag: 网络流
+    patterns: ['网络流', 'network flow']
+  - tag: 旅行商问题
+    patterns: ['旅行商', '(?-i:\bTSP\b)', 'travel+ing salesman']
+  - tag: 指派问题
+    patterns: ['指派问题', 'assignment problem']
+
+  # ---------- 评价 / 决策 ----------
+  - tag: 层次分析法
+    patterns: ['层次分析法', 'analytic(al)? hierarchy', '(?-i:\bAHP\b)']
+  - tag: 熵权法
+    patterns: ['熵权', '熵值法', 'entropy (?:weight|method)', '(?-i:\bEWM\b)']
+  - tag: TOPSIS
+    patterns: ['(?-i:\bTOPSIS\b)', '逼近理想解', '优劣解距离']
+  - tag: 模糊综合评价
+    patterns: ['模糊综合(?:评价|评判)法?', 'fuzzy comprehensive', 'fuzzy evaluation', '模糊评价']
+  - tag: 灰色关联分析
+    patterns: ['灰色关联', '灰关联', 'gr[ae]y relation']
+  - tag: 主成分分析
+    patterns: ['主成分分析', 'principal component', '(?-i:\bPCA\b)']
+  - tag: 因子分析
+    patterns: ['因子分析', 'factor analysis']
+  - tag: 聚类分析
+    patterns: ['聚类', 'clustering', '(?-i:\bK-?means\b)', '(?-i:\bDBSCAN\b)']
+  - tag: 判别分析
+    patterns: ['判别分析', 'discriminant']
+  - tag: 数据包络分析
+    patterns: ['数据包络', '(?-i:\bDEA\b)']
+  - tag: 秩和比
+    patterns: ['秩和比', '(?-i:\bRSR\b)']
+  - tag: 变异系数法
+    patterns: ['变异系数', 'coefficient of variation']
+  - tag: Spearman秩相关
+    patterns: ['spearman', '斯皮尔曼', '秩相关']
+  - tag: 相关性分析
+    patterns: ['相关(?:性)?分析', 'correlation (?:analysis|matrix|coefficient)', 'pearson']
+  - tag: 敏感性分析
+    patterns: ['敏感性分析', 'sensitivity analysis']
+  - tag: 假设检验
+    patterns: ['假设检验', 'hypothesis test', '显著性检验', 't检验', '(?-i:\bt-test\b)', '卡方检验', 'chi-?square', 'mann[-\s]?kendall', '正态性检验', 'normality test']
+  - tag: 方差分析
+    patterns: ['方差分析', '(?-i:\bANOVA\b)', '(?-i:\bANCOVA\b)']
+
+  # ---------- 预测 ----------
+  - tag: 时间序列分析
+    patterns:
+      - '时间序列(?:分析|预测|模型|方法|建模)'
+      - 'time[- ]series (?:analysis|model|forecast)'
+      - '\barima\b'
+      - '\barma\b'
+      - '\bsarima\b'
+      - '\bpvar\b'
+      - 'var\s*模型'
+      - 'moving average'
+      - '移动平均'
+  - tag: 灰色预测
+    patterns: ['灰色预测', '灰色模型', 'GM\s*\(\s*1\s*[,，]\s*1\s*\)', 'gr[ae]y (?:prediction|model)']
+  - tag: 回归分析
+    patterns: ['回归分析', 'regression analysis', '多元回归', '逐步回归', 'stepwise']
+  - tag: 线性回归
+    patterns: ['线性回归', 'linear regression']
+  - tag: Logistic回归
+    patterns: ['logistic\s*(?:回归|regression)', '逻辑回归', 'logit']
+  - tag: 岭回归
+    patterns: ['岭回归', 'lasso', '弹性网', 'elastic net']
+  - tag: 贝叶斯方法
+    patterns: ['贝叶斯', 'bayes']
+  - tag: BP神经网络
+    patterns: ['BP\s*(?:神经网络|算法|模型)', 'BP neural', '反向传播', 'back ?propagat']
+  - tag: 卷积神经网络
+    patterns: ['卷积神经网络', 'convolutional neural', '(?-i:\bCNN\b)']
+  - tag: 循环神经网络
+    patterns: ['循环神经网络', 'recurrent neural', '(?-i:\bLSTM\b)', '(?-i:\bGRU\b)', '(?-i:\bRNN\b)', '长短期记忆']
+  - tag: 支持向量机
+    patterns: ['支持向量机', 'support vector', '(?-i:\bSVM\b)']
+  - tag: 随机森林
+    patterns: ['随机森林', 'random forest']
+  - tag: 决策树
+    patterns: ['决策树', 'decision tree', '(?-i:\bCART\b)', '(?-i:\bID3\b)', 'C4\.5']
+  - tag: K近邻
+    patterns: ['(?-i:\bk-?nn\b)', 'K近邻', '(?-i:k nearest neighbo)']
+  - tag: XGBoost
+    patterns: ['(?-i:xgboost)', '(?-i:\bXGB\b)', '梯度提升', 'gradient boosting', '(?-i:\bGBDT\b)', '(?-i:lightgbm)']
+  - tag: AdaBoost
+    patterns: ['(?-i:adaboost)', 'adaptive boosting', '自适应提升']
+  - tag: 深度学习
+    patterns: ['深度学习', 'deep learning', 'transformer', '注意力机制', 'attention mechanism']
+  - tag: 马尔可夫链
+    patterns: ['马尔可夫', '马尔科夫', 'markov', '隐马尔可夫', '(?-i:\bHMM\b)']
+  - tag: 卡尔曼滤波
+    patterns: ['卡尔曼', 'kalman']
+  - tag: 指数平滑
+    patterns: ['指数平滑', 'exponential smoothing', 'holt[- ]?winter']
+  - tag: 蒙特卡洛
+    patterns: ['蒙特卡洛', '蒙特卡罗', 'monte[-\s]?carlo', '(?-i:\bMCMC\b)', '随机模拟']
+
+  # ---------- 机理 / 仿真 ----------
+  - tag: 微分方程模型
+    patterns: ['微分方程', 'differential equation', '(?-i:\bODE\b)', '(?-i:\bPDE\b)', '(?-i:\bcooling law\b)', '牛顿冷却']
+  - tag: 差分方程模型
+    patterns: ['差分方程', 'difference equation', '递推(?:法|关系|公式|式)']
+  - tag: 传染病模型
+    patterns: ['(?-i:\bSIR\b)', '(?-i:\bSEIR\b)', '(?-i:\bSEIS\b)', '(?-i:\bSIRS\b)', '(?-i:\bSIS\b)', '传染病(?:模型|动力学)', 'epidemic', 'reproduction number', 'compartmental? model']
+  - tag: Logistic模型
+    patterns: ['logistic\s*(?:增长|阻滞|人口|微分|传染)', 'logistic (?:model|growth|equation|function|differential)', '阻滞增长']
+  - tag: 人口增长模型
+    patterns: ['malthus', '马尔萨斯', 'logistic人口', '人口增长模型']
+  - tag: 种群动力学模型
+    patterns: ['种群(?:模型|竞争|动力学|增长)', 'lotka[-\s]?volterra', '捕食', 'predator(?:[\s-]*and[\s-]*|[\s-]+)?prey', 'beverton[\s-]*holt', 'population dynamics', 'interspecific']
+  - tag: 多智能体模型
+    patterns: ['agent[-\s]based', 'multi[-\s]agent', '多智能体', '智能体建模']
+  - tag: 元胞自动机
+    patterns: ['元胞自动机', 'cellular automat(?:on|a)']
+  - tag: 热传导方程
+    patterns: ['热传导', 'heat (?:conduction|equation|transfer)', '导热(?:方程|模型|微分)']
+  - tag: 波动方程
+    patterns: ['波动方程', 'wave equation']
+  - tag: 流体力学
+    patterns: ['流体力学', 'navier[-\s]?stokes', '伯努利方程', 'bernoulli', '(?-i:\bCFD\b)']
+  - tag: 有限元
+    patterns: ['有限元', 'finite element', '(?-i:\bFEM\b)']
+  - tag: 有限差分
+    patterns: ['有限差分', 'finite difference', '差分格式']
+  - tag: 龙格库塔
+    patterns: ['龙格[-\s]?库塔', 'runge[-\s]?kutta', '(?-i:\bRK4\b)']
+  - tag: 排队论
+    patterns: ['排队论', '排队模型', '排队系统', 'queueing', 'queuing', 'M/M/[0-9]']
+  - tag: 博弈论
+    patterns: ['博弈', 'game theory', 'nash', '纳什', 'replicator']
+  - tag: 存储论
+    patterns: ['存储论', '库存模型', 'inventory model', '(?-i:\bEOQ\b)']
+  - tag: 随机过程
+    patterns: ['随机过程', 'stochastic process', '布朗运动', 'brownian', '随机游走', 'random walk', '随机微分', 'stochastic differential', 'gaussian white noise']
+  - tag: 系统动力学
+    patterns: ['系统动力学', 'system dynamics']
+  - tag: 投影寻踪
+    patterns: ['投影寻踪', 'projection pursuit']
+  - tag: 耦合协调度
+    patterns: ['耦合协调', 'coupling coordination']
+  - tag: 神经网络
+    patterns: ['神经网络', 'neural network']
+  - tag: 离散事件仿真
+    patterns: ['离散事件', 'discrete[-\s]event']
+
+  # ---------- 数据处理 / 数值方法 ----------
+  - tag: 坐标变换
+    patterns: ['坐标变换', '坐标转换', 'coordinate transform']
+  - tag: 几何建模
+    patterns: ['几何建模', '解三角形', '正弦定理', '余弦定理', '三角剖分', '几何分析']
+  - tag: 插值法
+    patterns: ['插值', '样条', 'spline', 'interpolation']
+  - tag: 数据拟合
+    patterns: ['曲线拟合', '数据拟合', '拟合(?:出|得到|模型|方法|曲线)', 'curve[-\s]?fit', 'fitting']
+  - tag: 最小二乘法
+    patterns: ['最小二乘', 'least squares?']
+  - tag: 傅里叶变换
+    patterns: ['傅里叶', 'fourier']
+  - tag: 小波分析
+    patterns: ['小波', 'wavelet']
+  - tag: 谱分析
+    patterns: ['谱分析', 'spectral analysis', '功率谱', '频谱分析']

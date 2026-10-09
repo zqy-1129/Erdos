@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/cumcm/v2/context_capsule.schema.json",
+  "title": "Erdos cumcm v2 单次检索上下文包（context_capsule）",
+  "type": "object",
+  "required": ["request_id", "result", "release_id", "retrieval_mode", "stage", "units", "writing_recipes", "figure_recipes", "missing", "budget_actual", "resource_locks"],
+  "properties": {
+    "request_id": {"type": "string"},
+    "result": {"type": "string", "enum": ["ok", "no_reference", "unsupported_stage", "invalid_request", "not_available", "integrity_error", "blocked_usage"]},
+    "error_reason": {"type": ["string", "null"]},
+    "release_id": {"type": "string"},
+    "retrieval_mode": {"type": "string"},
+    "embedding_profile_id": {"type": ["string", "null"]},
+    "stage": {"type": "string"},
+    "query_summary": {"type": "string"},
+    "units": {"type": "array", "items": {"$ref": "retrieval_unit.schema.json"}},
+    "writing_recipes": {"type": "array", "items": {"$ref": "writing_recipe.schema.json"}},
+    "figure_recipes": {"type": "array", "items": {"$ref": "figure_recipe.schema.json"}},
+    "missing": {"type": "array", "items": {"type": "object"}},
+    "budget_actual": {"type": ["integer", "null"]},
+    "resource_locks": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": false
+}

@@ -32,7 +32,7 @@ export const ENGINE_TRAIL_DB = "audit.db";
 const EVENT_TYPES = new Set(["model_call", "tool_call", "artifact", "manual_edit"]);
 
 /** 打开只读连接（busy_timeout 等待写锁；不存在/损坏时抛出）。 */
-function openReadOnly(dbPath: string): DatabaseSync {
+export function openReadOnly(dbPath: string): DatabaseSync {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   db.exec("PRAGMA busy_timeout = 3000");
   return db;

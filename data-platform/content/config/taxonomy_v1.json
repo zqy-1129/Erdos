@@ -1,0 +1,1170 @@
+{
+  "schema_version": 1,
+  "kind": "taxonomy_v1",
+  "description": "十九赛事检索用工作分类。problem_types 是『工作分类』而非官方题型断言；method_tags/data_tags/domain_tags 分层，一题多标签、子问题独立标注。方法词表权威来源为 config/method_tags_v0.yaml，此处保留稳定 code/别名映射用于跨记录引用与校验。",
+  "working_classification_note": "engine_regression_category 是回归分布用标签，不作为分类金标准。",
+  "problem_types": [
+    {
+      "code": "optimization",
+      "name_zh": "优化",
+      "name_en": "optimization",
+      "goal": "在约束下求目标函数最优（最大化/最小化），并给出决策方案",
+      "boundary": "区分于单纯描述机理或预测；需有明确目标、决策变量与约束",
+      "criteria": [
+        "出现目标函数与约束条件",
+        "要求求最优解或可行动作",
+        "决策变量可枚举/连续"
+      ]
+    },
+    {
+      "code": "prediction",
+      "name_zh": "预测",
+      "name_en": "prediction",
+      "goal": "用历史/观测数据对未来或未知量做推断",
+      "boundary": "区分于机理推导；以数据驱动或时序外推为主",
+      "criteria": [
+        "有时间序列或样本数据",
+        "要求给出未来值/区间/概率",
+        "强调误差/不确定性"
+      ]
+    },
+    {
+      "code": "evaluation",
+      "name_zh": "评价决策",
+      "name_en": "evaluation",
+      "goal": "对多个候选做排序/评分/择优或多个因素综合评判",
+      "boundary": "区分于优化（通常无连续决策变量，以排序/权重为主）",
+      "criteria": [
+        "多指标打分/排序",
+        "层次/权重/综合评分",
+        "要求给出结论或排名"
+      ]
+    },
+    {
+      "code": "mechanism",
+      "name_zh": "机理",
+      "name_en": "mechanism",
+      "goal": "建立描述物理/生物/传播等过程的方程或模型",
+      "boundary": "区分于纯数据预测；需体现因果关系或守恒/动力学",
+      "criteria": [
+        "微分/差分方程或动力学过程",
+        "因果关系或守恒律",
+        "仿真/数值求解过程"
+      ]
+    },
+    {
+      "code": "classification",
+      "name_zh": "分类识别",
+      "name_en": "classification",
+      "goal": "把对象归入若干已知类别并评估命中率",
+      "boundary": "区分于评价（标签已知、以判别准确率为目标）",
+      "criteria": [
+        "有类别标签",
+        "要求识别/判别",
+        "混淆矩阵/准确率"
+      ]
+    },
+    {
+      "code": "statistical_analysis",
+      "name_zh": "统计分析",
+      "name_en": "statistical_analysis",
+      "goal": "对数据进行描述、检验、相关性/差异分析",
+      "boundary": "区分于机理与预测；以统计推断为核心产出",
+      "criteria": [
+        "假设检验/方差/相关",
+        "分布/显著性结论",
+        "不承诺预测未来"
+      ]
+    },
+    {
+      "code": "unknown",
+      "name_zh": "待判定",
+      "name_en": "unknown",
+      "goal": null,
+      "boundary": "尚不足以判定的工作类别",
+      "criteria": []
+    }
+  ],
+  "method_tag_dictionary_ref": "config/method_tags_v0.yaml",
+  "method_tags": {
+    "categories": [
+      {
+        "category_code": "optimization",
+        "name_zh": "优化",
+        "codes": [
+          "linear_programming",
+          "nonlinear_programming",
+          "integer_programming",
+          "binary_programming",
+          "mixed_integer_programming",
+          "multiobjective_optimization",
+          "single_objective_optimization",
+          "enumeration_search",
+          "goal_programming",
+          "dynamic_programming",
+          "quadratic_programming",
+          "convex_optimization",
+          "simplex",
+          "gradient_descent",
+          "genetic_algorithm",
+          "nsga_ii",
+          "simulated_annealing",
+          "particle_swarm",
+          "ant_colony",
+          "tabu_search",
+          "differential_evolution",
+          "immune_algorithm",
+          "hungarian",
+          "branch_bound",
+          "greedy",
+          "neighborhood_search",
+          "reinforcement_learning",
+          "lagrange_multiplier"
+        ]
+      },
+      {
+        "category_code": "graph",
+        "name_zh": "图论与网络",
+        "codes": [
+          "graph_model",
+          "complex_network",
+          "shortest_path",
+          "minimum_spanning_tree",
+          "maximum_flow",
+          "network_flow",
+          "traveling_salesman",
+          "assignment"
+        ]
+      },
+      {
+        "category_code": "evaluation",
+        "name_zh": "评价/决策",
+        "codes": [
+          "ahp",
+          "entropy_weight",
+          "topsis",
+          "fuzzy_evaluation",
+          "grey_relation",
+          "pca",
+          "factor_analysis",
+          "clustering",
+          "discriminant_analysis",
+          "dea",
+          "rank_sum_ratio",
+          "coefficient_variation",
+          "spearman",
+          "correlation",
+          "sensitivity",
+          "hypothesis_test",
+          "anova"
+        ]
+      },
+      {
+        "category_code": "prediction",
+        "name_zh": "预测",
+        "codes": [
+          "time_series",
+          "grey_prediction",
+          "regression",
+          "linear_regression",
+          "logistic_regression",
+          "ridge_regression",
+          "bayesian",
+          "bp_network",
+          "cnn",
+          "rnn",
+          "svm",
+          "random_forest",
+          "decision_tree",
+          "knn",
+          "xgboost",
+          "adaboost",
+          "deep_learning",
+          "markov_chain",
+          "kalman",
+          "exponential_smoothing",
+          "monte_carlo"
+        ]
+      },
+      {
+        "category_code": "mechanism",
+        "name_zh": "机理/仿真",
+        "codes": [
+          "differential_equation",
+          "difference_equation",
+          "epidemic_model",
+          "logistic_growth",
+          "population_growth",
+          "population_dynamics",
+          "agent_based_model",
+          "cellular_automata",
+          "heat_equation",
+          "wave_equation",
+          "fluid_dynamics",
+          "finite_element",
+          "finite_difference",
+          "runge_kutta",
+          "queueing",
+          "game_theory",
+          "inventory_model",
+          "stochastic_process",
+          "system_dynamics",
+          "projection_pursuit",
+          "coupling_coordination",
+          "neural_network",
+          "discrete_event_simulation"
+        ]
+      },
+      {
+        "category_code": "data",
+        "name_zh": "数据处理/数值",
+        "codes": [
+          "coordinate_transform",
+          "geometry",
+          "interpolation",
+          "data_fitting",
+          "least_squares",
+          "fourier",
+          "wavelet",
+          "spectral_analysis"
+        ]
+      }
+    ],
+    "entries": [
+      {
+        "code": "linear_programming",
+        "name_zh": "线性规划",
+        "aliases": [
+          "线性规划"
+        ],
+        "legacy_tag": "线性规划"
+      },
+      {
+        "code": "nonlinear_programming",
+        "name_zh": "非线性规划",
+        "aliases": [
+          "非线性规划"
+        ],
+        "legacy_tag": "非线性规划"
+      },
+      {
+        "code": "integer_programming",
+        "name_zh": "整数规划",
+        "aliases": [
+          "整数规划"
+        ],
+        "legacy_tag": "整数规划"
+      },
+      {
+        "code": "binary_programming",
+        "name_zh": "0-1规划",
+        "aliases": [
+          "0-1规划"
+        ],
+        "legacy_tag": "0-1规划"
+      },
+      {
+        "code": "mixed_integer_programming",
+        "name_zh": "混合整数规划",
+        "aliases": [
+          "混合整数规划"
+        ],
+        "legacy_tag": "混合整数规划"
+      },
+      {
+        "code": "multiobjective_optimization",
+        "name_zh": "多目标优化",
+        "aliases": [
+          "多目标优化"
+        ],
+        "legacy_tag": "多目标优化"
+      },
+      {
+        "code": "single_objective_optimization",
+        "name_zh": "单目标优化",
+        "aliases": [
+          "单目标优化"
+        ],
+        "legacy_tag": "单目标优化"
+      },
+      {
+        "code": "enumeration_search",
+        "name_zh": "枚举与搜索",
+        "aliases": [
+          "枚举与搜索"
+        ],
+        "legacy_tag": "枚举与搜索"
+      },
+      {
+        "code": "goal_programming",
+        "name_zh": "目标规划",
+        "aliases": [
+          "目标规划"
+        ],
+        "legacy_tag": "目标规划"
+      },
+      {
+        "code": "dynamic_programming",
+        "name_zh": "动态规划",
+        "aliases": [
+          "动态规划"
+        ],
+        "legacy_tag": "动态规划"
+      },
+      {
+        "code": "quadratic_programming",
+        "name_zh": "二次规划",
+        "aliases": [
+          "二次规划"
+        ],
+        "legacy_tag": "二次规划"
+      },
+      {
+        "code": "convex_optimization",
+        "name_zh": "凸优化",
+        "aliases": [
+          "凸优化"
+        ],
+        "legacy_tag": "凸优化"
+      },
+      {
+        "code": "simplex",
+        "name_zh": "单纯形法",
+        "aliases": [
+          "单纯形法"
+        ],
+        "legacy_tag": "单纯形法"
+      },
+      {
+        "code": "gradient_descent",
+        "name_zh": "梯度下降",
+        "aliases": [
+          "梯度下降"
+        ],
+        "legacy_tag": "梯度下降"
+      },
+      {
+        "code": "genetic_algorithm",
+        "name_zh": "遗传算法",
+        "aliases": [
+          "遗传算法"
+        ],
+        "legacy_tag": "遗传算法"
+      },
+      {
+        "code": "nsga_ii",
+        "name_zh": "NSGA-II",
+        "aliases": [
+          "NSGA-II"
+        ],
+        "legacy_tag": "NSGA-II"
+      },
+      {
+        "code": "simulated_annealing",
+        "name_zh": "模拟退火",
+        "aliases": [
+          "模拟退火"
+        ],
+        "legacy_tag": "模拟退火"
+      },
+      {
+        "code": "particle_swarm",
+        "name_zh": "粒子群算法",
+        "aliases": [
+          "粒子群算法"
+        ],
+        "legacy_tag": "粒子群算法"
+      },
+      {
+        "code": "ant_colony",
+        "name_zh": "蚁群算法",
+        "aliases": [
+          "蚁群算法"
+        ],
+        "legacy_tag": "蚁群算法"
+      },
+      {
+        "code": "tabu_search",
+        "name_zh": "禁忌搜索",
+        "aliases": [
+          "禁忌搜索"
+        ],
+        "legacy_tag": "禁忌搜索"
+      },
+      {
+        "code": "differential_evolution",
+        "name_zh": "差分进化",
+        "aliases": [
+          "差分进化"
+        ],
+        "legacy_tag": "差分进化"
+      },
+      {
+        "code": "immune_algorithm",
+        "name_zh": "免疫算法",
+        "aliases": [
+          "免疫算法"
+        ],
+        "legacy_tag": "免疫算法"
+      },
+      {
+        "code": "hungarian",
+        "name_zh": "匈牙利算法",
+        "aliases": [
+          "匈牙利算法"
+        ],
+        "legacy_tag": "匈牙利算法"
+      },
+      {
+        "code": "branch_bound",
+        "name_zh": "分支定界",
+        "aliases": [
+          "分支定界"
+        ],
+        "legacy_tag": "分支定界"
+      },
+      {
+        "code": "greedy",
+        "name_zh": "贪心算法",
+        "aliases": [
+          "贪心算法"
+        ],
+        "legacy_tag": "贪心算法"
+      },
+      {
+        "code": "neighborhood_search",
+        "name_zh": "邻域搜索",
+        "aliases": [
+          "邻域搜索"
+        ],
+        "legacy_tag": "邻域搜索"
+      },
+      {
+        "code": "reinforcement_learning",
+        "name_zh": "强化学习",
+        "aliases": [
+          "强化学习"
+        ],
+        "legacy_tag": "强化学习"
+      },
+      {
+        "code": "lagrange_multiplier",
+        "name_zh": "拉格朗日乘子法",
+        "aliases": [
+          "拉格朗日乘子法"
+        ],
+        "legacy_tag": "拉格朗日乘子法"
+      },
+      {
+        "code": "graph_model",
+        "name_zh": "图论模型",
+        "aliases": [
+          "图论模型"
+        ],
+        "legacy_tag": "图论模型"
+      },
+      {
+        "code": "complex_network",
+        "name_zh": "复杂网络",
+        "aliases": [
+          "复杂网络"
+        ],
+        "legacy_tag": "复杂网络"
+      },
+      {
+        "code": "shortest_path",
+        "name_zh": "最短路",
+        "aliases": [
+          "最短路"
+        ],
+        "legacy_tag": "最短路"
+      },
+      {
+        "code": "minimum_spanning_tree",
+        "name_zh": "最小生成树",
+        "aliases": [
+          "最小生成树"
+        ],
+        "legacy_tag": "最小生成树"
+      },
+      {
+        "code": "maximum_flow",
+        "name_zh": "最大流",
+        "aliases": [
+          "最大流"
+        ],
+        "legacy_tag": "最大流"
+      },
+      {
+        "code": "network_flow",
+        "name_zh": "网络流",
+        "aliases": [
+          "网络流"
+        ],
+        "legacy_tag": "网络流"
+      },
+      {
+        "code": "traveling_salesman",
+        "name_zh": "旅行商问题",
+        "aliases": [
+          "旅行商问题"
+        ],
+        "legacy_tag": "旅行商问题"
+      },
+      {
+        "code": "assignment",
+        "name_zh": "指派问题",
+        "aliases": [
+          "指派问题"
+        ],
+        "legacy_tag": "指派问题"
+      },
+      {
+        "code": "ahp",
+        "name_zh": "层次分析法",
+        "aliases": [
+          "层次分析法"
+        ],
+        "legacy_tag": "层次分析法"
+      },
+      {
+        "code": "entropy_weight",
+        "name_zh": "熵权法",
+        "aliases": [
+          "熵权法"
+        ],
+        "legacy_tag": "熵权法"
+      },
+      {
+        "code": "topsis",
+        "name_zh": "TOPSIS",
+        "aliases": [
+          "TOPSIS"
+        ],
+        "legacy_tag": "TOPSIS"
+      },
+      {
+        "code": "fuzzy_evaluation",
+        "name_zh": "模糊综合评价",
+        "aliases": [
+          "模糊综合评价"
+        ],
+        "legacy_tag": "模糊综合评价"
+      },
+      {
+        "code": "grey_relation",
+        "name_zh": "灰色关联分析",
+        "aliases": [
+          "灰色关联分析"
+        ],
+        "legacy_tag": "灰色关联分析"
+      },
+      {
+        "code": "pca",
+        "name_zh": "主成分分析",
+        "aliases": [
+          "主成分分析"
+        ],
+        "legacy_tag": "主成分分析"
+      },
+      {
+        "code": "factor_analysis",
+        "name_zh": "因子分析",
+        "aliases": [
+          "因子分析"
+        ],
+        "legacy_tag": "因子分析"
+      },
+      {
+        "code": "clustering",
+        "name_zh": "聚类分析",
+        "aliases": [
+          "聚类分析"
+        ],
+        "legacy_tag": "聚类分析"
+      },
+      {
+        "code": "discriminant_analysis",
+        "name_zh": "判别分析",
+        "aliases": [
+          "判别分析"
+        ],
+        "legacy_tag": "判别分析"
+      },
+      {
+        "code": "dea",
+        "name_zh": "数据包络分析",
+        "aliases": [
+          "数据包络分析"
+        ],
+        "legacy_tag": "数据包络分析"
+      },
+      {
+        "code": "rank_sum_ratio",
+        "name_zh": "秩和比",
+        "aliases": [
+          "秩和比"
+        ],
+        "legacy_tag": "秩和比"
+      },
+      {
+        "code": "coefficient_variation",
+        "name_zh": "变异系数法",
+        "aliases": [
+          "变异系数法"
+        ],
+        "legacy_tag": "变异系数法"
+      },
+      {
+        "code": "spearman",
+        "name_zh": "Spearman秩相关",
+        "aliases": [
+          "Spearman秩相关"
+        ],
+        "legacy_tag": "Spearman秩相关"
+      },
+      {
+        "code": "correlation",
+        "name_zh": "相关性分析",
+        "aliases": [
+          "相关性分析"
+        ],
+        "legacy_tag": "相关性分析"
+      },
+      {
+        "code": "sensitivity",
+        "name_zh": "敏感性分析",
+        "aliases": [
+          "敏感性分析"
+        ],
+        "legacy_tag": "敏感性分析"
+      },
+      {
+        "code": "hypothesis_test",
+        "name_zh": "假设检验",
+        "aliases": [
+          "假设检验"
+        ],
+        "legacy_tag": "假设检验"
+      },
+      {
+        "code": "anova",
+        "name_zh": "方差分析",
+        "aliases": [
+          "方差分析"
+        ],
+        "legacy_tag": "方差分析"
+      },
+      {
+        "code": "time_series",
+        "name_zh": "时间序列分析",
+        "aliases": [
+          "时间序列分析"
+        ],
+        "legacy_tag": "时间序列分析"
+      },
+      {
+        "code": "grey_prediction",
+        "name_zh": "灰色预测",
+        "aliases": [
+          "灰色预测"
+        ],
+        "legacy_tag": "灰色预测"
+      },
+      {
+        "code": "regression",
+        "name_zh": "回归分析",
+        "aliases": [
+          "回归分析"
+        ],
+        "legacy_tag": "回归分析"
+      },
+      {
+        "code": "linear_regression",
+        "name_zh": "线性回归",
+        "aliases": [
+          "线性回归"
+        ],
+        "legacy_tag": "线性回归"
+      },
+      {
+        "code": "logistic_regression",
+        "name_zh": "Logistic回归",
+        "aliases": [
+          "Logistic回归"
+        ],
+        "legacy_tag": "Logistic回归"
+      },
+      {
+        "code": "ridge_regression",
+        "name_zh": "岭回归",
+        "aliases": [
+          "岭回归"
+        ],
+        "legacy_tag": "岭回归"
+      },
+      {
+        "code": "bayesian",
+        "name_zh": "贝叶斯方法",
+        "aliases": [
+          "贝叶斯方法"
+        ],
+        "legacy_tag": "贝叶斯方法"
+      },
+      {
+        "code": "bp_network",
+        "name_zh": "BP神经网络",
+        "aliases": [
+          "BP神经网络"
+        ],
+        "legacy_tag": "BP神经网络"
+      },
+      {
+        "code": "cnn",
+        "name_zh": "卷积神经网络",
+        "aliases": [
+          "卷积神经网络"
+        ],
+        "legacy_tag": "卷积神经网络"
+      },
+      {
+        "code": "rnn",
+        "name_zh": "循环神经网络",
+        "aliases": [
+          "循环神经网络"
+        ],
+        "legacy_tag": "循环神经网络"
+      },
+      {
+        "code": "svm",
+        "name_zh": "支持向量机",
+        "aliases": [
+          "支持向量机"
+        ],
+        "legacy_tag": "支持向量机"
+      },
+      {
+        "code": "random_forest",
+        "name_zh": "随机森林",
+        "aliases": [
+          "随机森林"
+        ],
+        "legacy_tag": "随机森林"
+      },
+      {
+        "code": "decision_tree",
+        "name_zh": "决策树",
+        "aliases": [
+          "决策树"
+        ],
+        "legacy_tag": "决策树"
+      },
+      {
+        "code": "knn",
+        "name_zh": "K近邻",
+        "aliases": [
+          "K近邻"
+        ],
+        "legacy_tag": "K近邻"
+      },
+      {
+        "code": "xgboost",
+        "name_zh": "XGBoost",
+        "aliases": [
+          "XGBoost"
+        ],
+        "legacy_tag": "XGBoost"
+      },
+      {
+        "code": "adaboost",
+        "name_zh": "AdaBoost",
+        "aliases": [
+          "AdaBoost"
+        ],
+        "legacy_tag": "AdaBoost"
+      },
+      {
+        "code": "deep_learning",
+        "name_zh": "深度学习",
+        "aliases": [
+          "深度学习"
+        ],
+        "legacy_tag": "深度学习"
+      },
+      {
+        "code": "markov_chain",
+        "name_zh": "马尔可夫链",
+        "aliases": [
+          "马尔可夫链"
+        ],
+        "legacy_tag": "马尔可夫链"
+      },
+      {
+        "code": "kalman",
+        "name_zh": "卡尔曼滤波",
+        "aliases": [
+          "卡尔曼滤波"
+        ],
+        "legacy_tag": "卡尔曼滤波"
+      },
+      {
+        "code": "exponential_smoothing",
+        "name_zh": "指数平滑",
+        "aliases": [
+          "指数平滑"
+        ],
+        "legacy_tag": "指数平滑"
+      },
+      {
+        "code": "monte_carlo",
+        "name_zh": "蒙特卡洛",
+        "aliases": [
+          "蒙特卡洛"
+        ],
+        "legacy_tag": "蒙特卡洛"
+      },
+      {
+        "code": "differential_equation",
+        "name_zh": "微分方程模型",
+        "aliases": [
+          "微分方程模型"
+        ],
+        "legacy_tag": "微分方程模型"
+      },
+      {
+        "code": "difference_equation",
+        "name_zh": "差分方程模型",
+        "aliases": [
+          "差分方程模型"
+        ],
+        "legacy_tag": "差分方程模型"
+      },
+      {
+        "code": "epidemic_model",
+        "name_zh": "传染病模型",
+        "aliases": [
+          "传染病模型"
+        ],
+        "legacy_tag": "传染病模型"
+      },
+      {
+        "code": "logistic_growth",
+        "name_zh": "Logistic模型",
+        "aliases": [
+          "Logistic模型"
+        ],
+        "legacy_tag": "Logistic模型"
+      },
+      {
+        "code": "population_growth",
+        "name_zh": "人口增长模型",
+        "aliases": [
+          "人口增长模型"
+        ],
+        "legacy_tag": "人口增长模型"
+      },
+      {
+        "code": "population_dynamics",
+        "name_zh": "种群动力学模型",
+        "aliases": [
+          "种群动力学模型"
+        ],
+        "legacy_tag": "种群动力学模型"
+      },
+      {
+        "code": "agent_based_model",
+        "name_zh": "多智能体模型",
+        "aliases": [
+          "多智能体模型"
+        ],
+        "legacy_tag": "多智能体模型"
+      },
+      {
+        "code": "cellular_automata",
+        "name_zh": "元胞自动机",
+        "aliases": [
+          "元胞自动机"
+        ],
+        "legacy_tag": "元胞自动机"
+      },
+      {
+        "code": "heat_equation",
+        "name_zh": "热传导方程",
+        "aliases": [
+          "热传导方程"
+        ],
+        "legacy_tag": "热传导方程"
+      },
+      {
+        "code": "wave_equation",
+        "name_zh": "波动方程",
+        "aliases": [
+          "波动方程"
+        ],
+        "legacy_tag": "波动方程"
+      },
+      {
+        "code": "fluid_dynamics",
+        "name_zh": "流体力学",
+        "aliases": [
+          "流体力学"
+        ],
+        "legacy_tag": "流体力学"
+      },
+      {
+        "code": "finite_element",
+        "name_zh": "有限元",
+        "aliases": [
+          "有限元"
+        ],
+        "legacy_tag": "有限元"
+      },
+      {
+        "code": "finite_difference",
+        "name_zh": "有限差分",
+        "aliases": [
+          "有限差分"
+        ],
+        "legacy_tag": "有限差分"
+      },
+      {
+        "code": "runge_kutta",
+        "name_zh": "龙格库塔",
+        "aliases": [
+          "龙格库塔"
+        ],
+        "legacy_tag": "龙格库塔"
+      },
+      {
+        "code": "queueing",
+        "name_zh": "排队论",
+        "aliases": [
+          "排队论"
+        ],
+        "legacy_tag": "排队论"
+      },
+      {
+        "code": "game_theory",
+        "name_zh": "博弈论",
+        "aliases": [
+          "博弈论"
+        ],
+        "legacy_tag": "博弈论"
+      },
+      {
+        "code": "inventory_model",
+        "name_zh": "存储论",
+        "aliases": [
+          "存储论"
+        ],
+        "legacy_tag": "存储论"
+      },
+      {
+        "code": "stochastic_process",
+        "name_zh": "随机过程",
+        "aliases": [
+          "随机过程"
+        ],
+        "legacy_tag": "随机过程"
+      },
+      {
+        "code": "system_dynamics",
+        "name_zh": "系统动力学",
+        "aliases": [
+          "系统动力学"
+        ],
+        "legacy_tag": "系统动力学"
+      },
+      {
+        "code": "projection_pursuit",
+        "name_zh": "投影寻踪",
+        "aliases": [
+          "投影寻踪"
+        ],
+        "legacy_tag": "投影寻踪"
+      },
+      {
+        "code": "coupling_coordination",
+        "name_zh": "耦合协调度",
+        "aliases": [
+          "耦合协调度"
+        ],
+        "legacy_tag": "耦合协调度"
+      },
+      {
+        "code": "neural_network",
+        "name_zh": "神经网络",
+        "aliases": [
+          "神经网络"
+        ],
+        "legacy_tag": "神经网络"
+      },
+      {
+        "code": "discrete_event_simulation",
+        "name_zh": "离散事件仿真",
+        "aliases": [
+          "离散事件仿真"
+        ],
+        "legacy_tag": "离散事件仿真"
+      },
+      {
+        "code": "coordinate_transform",
+        "name_zh": "坐标变换",
+        "aliases": [
+          "坐标变换"
+        ],
+        "legacy_tag": "坐标变换"
+      },
+      {
+        "code": "geometry",
+        "name_zh": "几何建模",
+        "aliases": [
+          "几何建模"
+        ],
+        "legacy_tag": "几何建模"
+      },
+      {
+        "code": "interpolation",
+        "name_zh": "插值法",
+        "aliases": [
+          "插值法"
+        ],
+        "legacy_tag": "插值法"
+      },
+      {
+        "code": "data_fitting",
+        "name_zh": "数据拟合",
+        "aliases": [
+          "数据拟合"
+        ],
+        "legacy_tag": "数据拟合"
+      },
+      {
+        "code": "least_squares",
+        "name_zh": "最小二乘法",
+        "aliases": [
+          "最小二乘法"
+        ],
+        "legacy_tag": "最小二乘法"
+      },
+      {
+        "code": "fourier",
+        "name_zh": "傅里叶变换",
+        "aliases": [
+          "傅里叶变换"
+        ],
+        "legacy_tag": "傅里叶变换"
+      },
+      {
+        "code": "wavelet",
+        "name_zh": "小波分析",
+        "aliases": [
+          "小波分析"
+        ],
+        "legacy_tag": "小波分析"
+      },
+      {
+        "code": "spectral_analysis",
+        "name_zh": "谱分析",
+        "aliases": [
+          "谱分析"
+        ],
+        "legacy_tag": "谱分析"
+      }
+    ]
+  },
+  "data_tags": [
+    {
+      "code": "time_series",
+      "name_zh": "时间序列"
+    },
+    {
+      "code": "tabular",
+      "name_zh": "表格数据"
+    },
+    {
+      "code": "image",
+      "name_zh": "图像"
+    },
+    {
+      "code": "spatial",
+      "name_zh": "空间数据"
+    },
+    {
+      "code": "graph_network",
+      "name_zh": "图/网络"
+    },
+    {
+      "code": "text",
+      "name_zh": "文本"
+    },
+    {
+      "code": "categorical",
+      "name_zh": "分类/标称"
+    },
+    {
+      "code": "numeric",
+      "name_zh": "数值型"
+    }
+  ],
+  "domain_tags": [
+    {
+      "code": "scheduling",
+      "name_zh": "调度"
+    },
+    {
+      "code": "energy",
+      "name_zh": "能源"
+    },
+    {
+      "code": "traffic",
+      "name_zh": "交通"
+    },
+    {
+      "code": "environment",
+      "name_zh": "环境"
+    },
+    {
+      "code": "finance",
+      "name_zh": "金融"
+    },
+    {
+      "code": "logistics",
+      "name_zh": "物流"
+    },
+    {
+      "code": "biology",
+      "name_zh": "生物"
+    },
+    {
+      "code": "chemistry",
+      "name_zh": "化工"
+    },
+    {
+      "code": "physics",
+      "name_zh": "物理"
+    },
+    {
+      "code": "social",
+      "name_zh": "社会/管理"
+    },
+    {
+      "code": "manufacturing",
+      "name_zh": "制造"
+    },
+    {
+      "code": "health",
+      "name_zh": "健康/医疗"
+    }
+  ],
+  "label_status": [
+    "pending_review",
+    "approved",
+    "rejected",
+    "unknown"
+  ],
+  "confidence_range": [
+    0,
+    1
+  ]
+}

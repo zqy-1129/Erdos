@@ -1,0 +1,291 @@
+{
+  "schema_version": 1,
+  "kind": "competition_registry",
+  "description": "Erdos 19 赛事入口注册表（阶段01）。稳定ID沿用设计文档；本表只登记入口、来源路径与状态口径，不承载文件计数（计数由盘点脚本产出 coverage.json）。显示名为工作名，官方全称/语言/轮次未逐一核验，模糊字段置 null 标待核验。",
+  "dataset_root": "D:/Erdos_data",
+  "status_vocab": {
+    "material_status": ["待下载", "部分资料", "待核验", "已核验"],
+    "template_status": ["待下载", "待核验", "通用适配待核验", "已核验"]
+  },
+  "cpmcm_candidate_note": "CPMCM/ 为研赛(华为杯/CPMCM)既有历史来源：含历年优秀论文选与 2026 中文题目。按内容归入 cpmcm 入口，不新建第20个入口；归属依据为目录名与已知研赛公开材料，最终需内容复核确认（review_status=待核验）。",
+  "shared_source_note": "templates/00_通用模板 为跨赛事共享模板来源，登记为 shared_sources，不占用十九赛事入口；状态为通用适配待核验，不得宣称为某赛事专用完成品。",
+  "paradigm_note": "资源类型提示仅基于来源根与文件名的弱提示；正文未核验时不得标为已确认的题目/优秀论文。",
+  "competitions": [
+    {
+      "competition_id": "mcm",
+      "display_name": "美国大学生数学建模竞赛（MCM/ICM 美赛）",
+      "source_dir_name": "01_MCM_ICM美赛",
+      "language_hint": null,
+      "language_hint_note": "模板含 zh/en 两套，赛事级语言待核验",
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/01_MCM_ICM美赛", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/01_MCM_ICM美赛", "role_hint": "优秀论文/题目混合原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/01_MCM_ICM美赛", "role_hint": "赛事模板源码"}
+      ],
+      "material_status": "部分资料",
+      "template_status": "待核验"
+    },
+    {
+      "competition_id": "huashu",
+      "display_name": "华数杯大学生数学建模竞赛（冬季赛）",
+      "source_dir_name": "02_华数杯冬季赛",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/02_华数杯冬季赛", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/02_华数杯冬季赛", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/02_华数杯冬季赛", "role_hint": "赛事模板源码"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待核验"
+    },
+    {
+      "competition_id": "statistics",
+      "display_name": "全国统计建模大赛",
+      "source_dir_name": "03_统计建模大赛",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/03_统计建模大赛", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/03_统计建模大赛", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/03_统计建模大赛", "role_hint": "赛事模板源码"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待核验"
+    },
+    {
+      "competition_id": "mathorcup",
+      "display_name": "MathorCup 高校数学建模挑战赛",
+      "source_dir_name": "04_MathorCup",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/04_MathorCup", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/04_MathorCup", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/04_MathorCup", "role_hint": "赛事模板源码"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待核验"
+    },
+    {
+      "competition_id": "renzheng",
+      "display_name": "认证杯数学建模网络挑战赛",
+      "source_dir_name": "05_认证杯",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/05_认证杯", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/05_认证杯", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/05_认证杯", "role_hint": "赛事模板源码（当前缺失）"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待下载"
+    },
+    {
+      "competition_id": "teddy",
+      "display_name": "泰迪杯数据挖掘挑战赛",
+      "source_dir_name": "06_泰迪杯",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/06_泰迪杯", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/06_泰迪杯", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/06_泰迪杯", "role_hint": "赛事模板源码（当前缺失）"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待下载"
+    },
+    {
+      "competition_id": "wuyi",
+      "display_name": "五一数学建模竞赛",
+      "source_dir_name": "07_五一数模",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/07_五一数模", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/07_五一数模", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/07_五一数模", "role_hint": "赛事模板源码"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待核验"
+    },
+    {
+      "competition_id": "electrician",
+      "display_name": "电工杯（中国电机工程学会杯）数学建模竞赛",
+      "source_dir_name": "08_电工杯",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/08_电工杯", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/08_电工杯", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/08_电工杯", "role_hint": "赛事模板源码"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待核验"
+    },
+    {
+      "competition_id": "apmcm_zh",
+      "display_name": "亚太地区大学生数学建模竞赛（APMCM 中文·6月）",
+      "source_dir_name": "09_APMCM中文6月",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/09_APMCM中文6月", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/09_APMCM中文6月", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/09_APMCM中文6月", "role_hint": "赛事模板源码"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待核验"
+    },
+    {
+      "competition_id": "zhongqing",
+      "display_name": "中青杯全国大学生数学建模竞赛",
+      "source_dir_name": "10_中青杯",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/10_中青杯", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/10_中青杯", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/10_中青杯", "role_hint": "赛事模板源码（当前缺失）"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待下载"
+    },
+    {
+      "competition_id": "shenzhen",
+      "display_name": "深圳杯数学建模挑战赛",
+      "source_dir_name": "11_深圳杯",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/11_深圳杯", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/11_深圳杯", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/11_深圳杯", "role_hint": "赛事模板源码（当前缺失）"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待下载"
+    },
+    {
+      "competition_id": "cumcm",
+      "display_name": "高教社杯全国大学生数学建模竞赛（国赛/CUMCM）",
+      "source_dir_name": "12_CUMCM国赛",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/12_CUMCM国赛", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/12_CUMCM国赛", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/12_CUMCM国赛", "role_hint": "赛事模板源码"}
+      ],
+      "material_status": "部分资料",
+      "template_status": "待核验"
+    },
+    {
+      "competition_id": "cpmcm",
+      "display_name": "华为杯中国研究生数学建模竞赛（研赛/CPMCM）",
+      "source_dir_name": "13_华为杯研赛",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/13_华为杯研赛", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/13_华为杯研赛", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/13_华为杯研赛", "role_hint": "赛事模板源码"},
+        {"source_root": "CPMCM", "relative_path": "CPMCM/04-25年优秀论文", "role_hint": "研赛历年优秀论文候选来源（待内容复核）"},
+        {"source_root": "CPMCM", "relative_path": "CPMCM/2026年中文题目", "role_hint": "研赛2026中文题目候选来源（待内容复核）"}
+      ],
+      "material_status": "部分资料",
+      "template_status": "待核验"
+    },
+    {
+      "competition_id": "shuwei",
+      "display_name": "数维杯国际大学生数学建模挑战赛",
+      "source_dir_name": "14_数维杯",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/14_数维杯", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/14_数维杯", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/14_数维杯", "role_hint": "赛事模板源码"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待核验"
+    },
+    {
+      "competition_id": "apmcm_en",
+      "display_name": "亚太地区大学生数学建模竞赛（APMCM 英文·11月）",
+      "source_dir_name": "15_APMCM英文11月",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/15_APMCM英文11月", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/15_APMCM英文11月", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/15_APMCM英文11月", "role_hint": "赛事模板源码"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待核验"
+    },
+    {
+      "competition_id": "xiaomeisai",
+      "display_name": "小美赛（数学建模竞赛）",
+      "source_dir_name": "16_小美赛",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/16_小美赛", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/16_小美赛", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/16_小美赛", "role_hint": "赛事模板源码（当前缺失）"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待下载"
+    },
+    {
+      "competition_id": "yangtze",
+      "display_name": "长三角高校数学建模竞赛",
+      "source_dir_name": "17_长三角高校数模",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/17_长三角高校数模", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/17_长三角高校数模", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/17_长三角高校数模", "role_hint": "赛事模板源码"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待核验"
+    },
+    {
+      "competition_id": "dongbei",
+      "display_name": "东北三省数学建模联赛",
+      "source_dir_name": "18_东三省数模联赛",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/18_东三省数模联赛", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/18_东三省数模联赛", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/18_东三省数模联赛", "role_hint": "赛事模板源码"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待核验"
+    },
+    {
+      "competition_id": "huazhong",
+      "display_name": "华中杯大学生数学建模挑战赛",
+      "source_dir_name": "19_华中杯",
+      "language_hint": null,
+      "language_hint_note": null,
+      "sources": [
+        {"source_root": "problems", "relative_path": "problems/19_华中杯", "role_hint": "历年题目与附件原始资料"},
+        {"source_root": "papers_pending_auth", "relative_path": "papers_pending_auth/19_华中杯", "role_hint": "优秀论文原始资料（待授权核验）"},
+        {"source_root": "templates", "relative_path": "templates/19_华中杯", "role_hint": "赛事模板源码"}
+      ],
+      "material_status": "待下载",
+      "template_status": "待核验"
+    }
+  ],
+  "shared_sources": [
+    {
+      "source_root": "templates",
+      "relative_path": "templates/00_通用模板",
+      "role_hint": "跨赛事共享模板源码（原型，状态通用适配待核验）",
+      "status": "通用适配待核验"
+    }
+  ]
+}

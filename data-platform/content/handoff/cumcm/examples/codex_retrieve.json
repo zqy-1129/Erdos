@@ -1,0 +1,15 @@
+{
+  "request_id": "client-current-q1-model",
+  "competition_id": "cumcm",
+  "release_id": "cumcm-2010-2025-codex-v2",
+  "historical_year_range": [2010, 2025],
+  "subproblem": {
+    "subproblem_id": "current-task:q1",
+    "goal": "依据当前任务附件建立优化调度模型，解释约束并验证求解结果",
+    "problem_types": ["optimization"]
+  },
+  "stage": "model",
+  "usage_purpose": "consumer",
+  "top_k": 5,
+  "token_budget": 4000
+}

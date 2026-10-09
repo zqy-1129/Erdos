@@ -1,0 +1,480 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/case_profile.schema.json",
+  "title": "Erdos case_profile v1 draft",
+  "type": "object",
+  "properties": {
+    "case_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "problem_id": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "_common.json#/definitions/entityId"
+        }
+      ]
+    },
+    "resolution_status": {
+      "type": "string",
+      "enum": [
+        "resolved",
+        "unresolved"
+      ]
+    },
+    "publication_status": {
+      "$ref": "_common.json#/definitions/publication"
+    },
+    "competition_id": {
+      "$ref": "_common.json#/definitions/competitionId"
+    },
+    "source_sha256": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "_common.json#/definitions/sha256"
+        }
+      ]
+    },
+    "source_asset_ref": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "_common.json#/definitions/assetRef"
+        }
+      ]
+    },
+    "extractor_version": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "schema_version": {
+      "$ref": "_common.json#/definitions/schemaVersionInt"
+    },
+    "profile_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "review_status": {
+      "$ref": "_common.json#/definitions/reviewStatus"
+    },
+    "license": {
+      "$ref": "_common.json#/definitions/licenseScope"
+    },
+    "license_evidence": {
+      "$ref": "_common.json#/definitions/licenseEvidence"
+    },
+    "method_tags": {
+      "$ref": "_common.json#/definitions/tagList"
+    },
+    "structure": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "section_title": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ]
+          },
+          "section_type": {
+            "type": "string",
+            "enum": [
+              "abstract",
+              "restatement",
+              "assumptions",
+              "symbols",
+              "analysis",
+              "model",
+              "solve",
+              "validation",
+              "sensitivity",
+              "discussion",
+              "conclusion",
+              "references",
+              "appendix",
+              "toc",
+              "other"
+            ]
+          },
+          "level": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "subproblem_ref": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "_common.json#/definitions/entityId"
+              }
+            ]
+          },
+          "page_range": {
+            "$ref": "_common.json#/definitions/pageRange"
+          },
+          "page_evidence": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ]
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "_common.json#/definitions/evidence"
+              }
+            ]
+          }
+        },
+        "required": [
+          "section_title",
+          "section_type",
+          "level",
+          "subproblem_ref",
+          "page_range",
+          "page_evidence",
+          "evidence"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "writing": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "section": {
+            "type": "string",
+            "enum": [
+              "abstract",
+              "restatement",
+              "assumptions",
+              "symbols",
+              "analysis",
+              "model",
+              "solve",
+              "validation",
+              "sensitivity",
+              "discussion",
+              "conclusion",
+              "references",
+              "appendix",
+              "toc",
+              "other"
+            ]
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organization": {
+            "type": "string",
+            "minLength": 1
+          },
+          "method_description": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ]
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "_common.json#/definitions/evidence"
+              }
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "suggestion"
+            ]
+          },
+          "confidence": {
+            "$ref": "_common.json#/definitions/confidence"
+          }
+        },
+        "required": [
+          "section",
+          "purpose",
+          "organization",
+          "method_description",
+          "evidence",
+          "kind",
+          "confidence"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "length": {
+      "type": "object",
+      "properties": {
+        "zh_chars": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "en_words": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "zh_parts": {
+          "$ref": "_common.json#/definitions/countParts"
+        },
+        "en_parts": {
+          "$ref": "_common.json#/definitions/countParts"
+        },
+        "section_ratios": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "section_type": {
+                "type": "string",
+                "enum": [
+                  "abstract",
+                  "restatement",
+                  "assumptions",
+                  "symbols",
+                  "analysis",
+                  "model",
+                  "solve",
+                  "validation",
+                  "sensitivity",
+                  "discussion",
+                  "conclusion",
+                  "references",
+                  "appendix",
+                  "toc",
+                  "other"
+                ]
+              },
+              "unit": {
+                "type": "string",
+                "enum": [
+                  "zh_chars",
+                  "en_words"
+                ]
+              },
+              "ratio": {
+                "$ref": "_common.json#/definitions/confidence"
+              }
+            },
+            "required": [
+              "section_type",
+              "unit",
+              "ratio"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "uniqueItems": false
+        },
+        "statistical_basis": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "zh_chars",
+        "en_words",
+        "zh_parts",
+        "en_parts",
+        "section_ratios",
+        "statistical_basis",
+        "missing"
+      ],
+      "additionalProperties": false
+    },
+    "figures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "figure_id": {
+            "$ref": "_common.json#/definitions/entityId"
+          },
+          "type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "purpose": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ]
+          },
+          "variables": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ]
+          },
+          "caption_style": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ]
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "integer",
+                "minimum": 1
+              }
+            ]
+          },
+          "confidence": {
+            "$ref": "_common.json#/definitions/confidence"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "_common.json#/definitions/evidence"
+              }
+            ]
+          },
+          "result_scope": {
+            "const": "historical_reference"
+          }
+        },
+        "required": [
+          "figure_id",
+          "type",
+          "purpose",
+          "variables",
+          "caption_style",
+          "page",
+          "confidence",
+          "evidence",
+          "result_scope"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "last_updated": {
+      "$ref": "_common.json#/definitions/timestamp"
+    },
+    "is_fixture": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional metadata only; cannot override defined fields."
+    }
+  },
+  "required": [
+    "case_id",
+    "problem_id",
+    "resolution_status",
+    "publication_status",
+    "competition_id",
+    "source_sha256",
+    "source_asset_ref",
+    "extractor_version",
+    "schema_version",
+    "profile_version",
+    "review_status",
+    "license",
+    "license_evidence",
+    "structure",
+    "writing",
+    "length",
+    "figures"
+  ],
+  "additionalProperties": false
+}

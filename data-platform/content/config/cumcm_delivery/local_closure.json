@@ -1,0 +1,23 @@
+{
+  "scope": "cumcm-2010-2025-local-internal",
+  "base_run_id": "cumcm-2010-2025-codex-r002",
+  "base_release_id": "cumcm-2010-2025-codex-v2",
+  "run_id": "cumcm-2010-2025-codex-r003",
+  "release_id": "cumcm-2010-2025-codex-v3",
+  "cloud_deployment": "out_of_scope_user_requested_local_only",
+  "source_policy": "preserve originals and sealed releases; create derivative version",
+  "review_policy": "source-pinned local vision transcription and independent source inspection; never equate model agreement with ground truth",
+  "model_policy": "local-only API at 127.0.0.1:18790; models/dependencies/service in D:/Erdos_LocalAI; fixed public revisions; no remote historical-page uploads",
+  "usage_policy": "user explicitly confirmed local team internal retrieval, analysis and template extraction; external distribution and third-party-model permissions remain ungranted",
+  "workstreams": [
+    "business entity schemas and safe legacy projection",
+    "body-grounded problem and paper identity resolution",
+    "page geometry, complete visual evidence and formula transcription",
+    "source-backed content patterns with disjoint length statistics",
+    "independent held-out review and retrieval labels",
+    "local scoped retrieval and self-contained offline SDK",
+    "dynamic format boundary tests and official rule evidence",
+    "real new-input computation, per-section writing and assembled paper reference flow",
+    "new immutable release, real PostgreSQL/S3 import and acceptance"
+  ]
+}

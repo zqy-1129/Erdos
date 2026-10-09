@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/base_outline.schema.json",
+  "title": "Erdos base_outline v1 draft",
+  "type": "object",
+  "properties": {
+    "outline_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "competition_id": {
+      "$ref": "_common.json#/definitions/competitionId"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "schema_version": {
+      "$ref": "_common.json#/definitions/schemaVersionInt"
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "section_type": {
+            "type": "string",
+            "enum": [
+              "abstract",
+              "restatement",
+              "assumptions",
+              "symbols",
+              "analysis",
+              "model",
+              "solve",
+              "validation",
+              "sensitivity",
+              "discussion",
+              "conclusion",
+              "references",
+              "appendix",
+              "toc",
+              "other"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "repeat": {
+            "type": "string",
+            "enum": [
+              "once",
+              "per_subproblem"
+            ]
+          },
+          "optional": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "section_type",
+          "title",
+          "repeat",
+          "optional"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "uniqueItems": false
+    },
+    "is_fixture": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional metadata only; cannot override defined fields."
+    }
+  },
+  "required": [
+    "outline_id",
+    "competition_id",
+    "version",
+    "schema_version",
+    "sections"
+  ],
+  "additionalProperties": false
+}

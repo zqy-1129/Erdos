@@ -3,8 +3,9 @@
  * 可续任务「继续」回工作台（不重复扣积分）。三态齐备。
  */
 
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { BRIDGE_CHANNELS, type HistoryTask } from "../bridges/bridge.ts";
+import type { StageName } from "../../../shared/ipc.ts";
 import { EmptyState, ErrorState, OfflineState } from "../components/states.tsx";
 import { useRemoteData } from "../components/use-remote.ts";
 import { VirtualList } from "../components/virtual-list.tsx";
@@ -14,6 +15,7 @@ import type { AppStores } from "../state/app-stores.ts";
 
 export function HistoryPage(props: { stores: AppStores }): ReactNode {
   const connectivity = useStore(props.stores.connectivity);
+  const [resumingId, setResumingId] = useState<string | null>(null);
   const remote = useRemoteData<HistoryTask[]>(() =>
     props.stores.bridge.invoke<HistoryTask[]>(BRIDGE_CHANNELS.historyList),
   );
@@ -41,12 +43,21 @@ export function HistoryPage(props: { stores: AppStores }): ReactNode {
   }
 
   const resume = async (task: HistoryTask) => {
+    if (resumingId !== null) return; // 防双击双跑（引擎对同阶段非幂等）
+    setResumingId(task.taskId);
     try {
-      await props.stores.bridge.invoke(BRIDGE_CHANNELS.historyResume, { taskId: task.taskId });
+      const result = await props.stores.bridge.invoke<{ taskId: string; stage: StageName }>(
+        BRIDGE_CHANNELS.historyResume,
+        { taskId: task.taskId },
+      );
+      // 预置引擎视图：导航后工作台立即进入运行态（不等事件到达，避免闪空态）
+      props.stores.engine.setState({ taskId: result.taskId, stage: result.stage, running: true });
       navigate("/workspace");
     } catch (error) {
       // 继续失败：停留在列表并提示
       alert(error instanceof Error ? error.message : String(error));
+    } finally {
+      setResumingId(null);
     }
   };
 
@@ -65,7 +76,12 @@ export function HistoryPage(props: { stores: AppStores }): ReactNode {
             </div>
             <div>
               {task.resumable ? (
-                <button type="button" className="btn" onClick={() => void resume(task)}>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={resumingId !== null}
+                  onClick={() => void resume(task)}
+                >
                   从检查点继续
                 </button>
               ) : (

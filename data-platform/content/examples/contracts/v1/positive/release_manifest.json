@@ -1,0 +1,20 @@
+{
+  "release_id": "cumcm-release-1",
+  "version": 1,
+  "competition_id": "cumcm",
+  "schema_version": 1,
+  "published_status": "staging",
+  "items": [
+    {
+      "asset_id": "cumcm-case-001-paper",
+      "version": 1,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "case_paper",
+      "change": "add"
+    }
+  ],
+  "dependencies": [],
+  "removed": [],
+  "created_at": "2026-10-04T00:00:00Z",
+  "is_fixture": true
+}

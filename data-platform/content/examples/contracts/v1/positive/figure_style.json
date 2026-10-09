@@ -1,0 +1,25 @@
+{
+  "style_id": "cumcm-figure-v1",
+  "competition_id": "cumcm",
+  "version": 1,
+  "schema_version": 1,
+  "fonts": {
+    "family": "Times New Roman",
+    "size": 10.5,
+    "axis_label_size": 9
+  },
+  "colors": [
+    "#000000",
+    "#1f77b4",
+    "#d62728"
+  ],
+  "line_width": 1.0,
+  "caption_style": "图名居中于图下，编号按章",
+  "numbering": "图 1",
+  "output_format": [
+    "png",
+    "pdf"
+  ],
+  "review_status": "pending_review",
+  "is_fixture": true
+}

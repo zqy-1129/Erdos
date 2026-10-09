@@ -63,7 +63,9 @@ def _spawn(
         env[ENGINE_HOME_KEY] = str(home)
     if drop_home:
         env.pop(ENGINE_HOME_KEY, None)
-    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    creationflags = 0
+    if sys.platform == "win32":  # 平台守卫用 sys.platform：mypy 静态收窄仅识别它（os.name 不参与）
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
     proc = subprocess.Popen(  # noqa: S603 - 固定解释器与模块名，测试受控输入
         [sys.executable, "-m", "engine"],
         stdin=subprocess.PIPE,
@@ -303,7 +305,7 @@ def test_sigterm_graceful_exit(tmp_path: Path) -> None:
     )
     q = _reader(proc)
     _wait_for_response(q, "ui-1", timeout=30)
-    if os.name == "nt":
+    if sys.platform == "win32":  # 平台守卫用 sys.platform（同上：Linux CI mypy 需静态收窄）
         proc.send_signal(signal.CTRL_BREAK_EVENT)
     else:
         proc.send_signal(signal.SIGTERM)

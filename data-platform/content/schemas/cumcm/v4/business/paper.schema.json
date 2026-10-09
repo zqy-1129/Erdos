@@ -1,0 +1,96 @@
+{
+  "type": "object",
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "year": {
+      "type": "integer",
+      "minimum": 2010,
+      "maximum": 2025
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "page_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "problem_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "relation_status": {
+      "enum": [
+        "candidate",
+        "source_checked",
+        "verified",
+        "rejected",
+        "abstained"
+      ]
+    },
+    "award": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "award_status": {
+      "enum": [
+        "candidate",
+        "source_checked",
+        "verified",
+        "rejected",
+        "abstained"
+      ]
+    },
+    "method_mentions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      }
+    },
+    "method_status": {
+      "enum": [
+        "candidate",
+        "source_checked",
+        "verified",
+        "rejected",
+        "abstained"
+      ]
+    },
+    "compliance_note": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    }
+  },
+  "required": [
+    "case_id",
+    "source_sha256",
+    "year",
+    "title",
+    "page_count",
+    "problem_id",
+    "relation_status",
+    "award",
+    "award_status",
+    "method_mentions",
+    "method_status",
+    "compliance_note"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

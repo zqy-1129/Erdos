@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "records": [
+    {
+      "case_id": "cumcm-2018-B-03",
+      "problem_id": "cumcm-2018-B",
+      "source_rel": "papers_pending_auth/12_CUMCM国赛/高教社杯全国大学生数学建模竞赛优秀论文/2018年高教社杯全国大学生数学建模竞赛优秀论文/2018B：基于 0-1 规划的单 RGV 动态调度模型.pdf",
+      "source_sha256": "8ef81da6379bbbda662f665c47019d7aa84ce521aec29284d5d12b96c43f851a",
+      "problem_source_sha256": "8945f462be3fad94bf7750a86cd2fe3462b78ae0606bf606b8da143c997d50fe",
+      "page": 1,
+      "title_excerpt": "基于 0-1 规划的单 RGV 动态调度模型",
+      "body_terms": [
+        "RGV",
+        "CNC",
+        "动态调度"
+      ],
+      "year": 2018,
+      "problem_code": "B",
+      "review_method": "visual_and_page_text",
+      "reviewer": "Codex",
+      "review_date": "2026-10-05",
+      "identity_basis": "来源目录的年份/题号 + 第1页题名和摘要主题，与已核验题面相符；不核定奖项或许可"
+    },
+    {
+      "case_id": "cumcm-2023-A-092",
+      "problem_id": "cumcm-2023-A",
+      "source_rel": "papers_pending_auth/12_CUMCM国赛/高教社杯全国大学生数学建模竞赛优秀论文/2023年高教社杯全国大学生数学建模竞赛优秀论文/A092.pdf",
+      "source_sha256": "6f19a1e21443043cc30e3ca70ecf41dd41152205ffa143adbbd2e99fd307bc8e",
+      "problem_source_sha256": "3e2507025f0a776e3ba8e340e646d2105896482b055cdd6a22862dedbf89311b",
+      "page": 1,
+      "title_excerpt": "定日镜场的优化设计",
+      "body_terms": [
+        "定日镜",
+        "光学效率",
+        "输出热功率"
+      ],
+      "year": 2023,
+      "problem_code": "A",
+      "review_method": "visual_and_page_text",
+      "reviewer": "Codex",
+      "review_date": "2026-10-05",
+      "identity_basis": "来源目录的年份/题号 + 第1页题名和摘要主题，与已核验题面相符；不核定奖项或许可"
+    },
+    {
+      "case_id": "cumcm-2023-A-165",
+      "problem_id": "cumcm-2023-A",
+      "source_rel": "papers_pending_auth/12_CUMCM国赛/高教社杯全国大学生数学建模竞赛优秀论文/2023年高教社杯全国大学生数学建模竞赛优秀论文/A165.pdf",
+      "source_sha256": "63e129d60639f2a84beb094818290ab1035ddc0aa1d4b94c8189689d0523b401",
+      "problem_source_sha256": "3e2507025f0a776e3ba8e340e646d2105896482b055cdd6a22862dedbf89311b",
+      "page": 1,
+      "title_excerpt": "基于机理分析法的定日镜场优化设计模型",
+      "body_terms": [
+        "定日镜",
+        "光学效率",
+        "输出热功率"
+      ],
+      "year": 2023,
+      "problem_code": "A",
+      "review_method": "visual_and_page_text",
+      "reviewer": "Codex",
+      "review_date": "2026-10-05",
+      "identity_basis": "来源目录的年份/题号 + 第1页题名和摘要主题，与已核验题面相符；不核定奖项或许可"
+    },
+    {
+      "case_id": "cumcm-2023-A-175",
+      "problem_id": "cumcm-2023-A",
+      "source_rel": "papers_pending_auth/12_CUMCM国赛/高教社杯全国大学生数学建模竞赛优秀论文/2023年高教社杯全国大学生数学建模竞赛优秀论文/A175.pdf",
+      "source_sha256": "904914537e950e7faabbad018ebd1ecb410d5ff94d19731a79e2f3b971a28ac1",
+      "problem_source_sha256": "3e2507025f0a776e3ba8e340e646d2105896482b055cdd6a22862dedbf89311b",
+      "page": 1,
+      "title_excerpt": "定日镜场的优化设计模型",
+      "body_terms": [
+        "定日镜",
+        "光学效率",
+        "输出热功率"
+      ],
+      "year": 2023,
+      "problem_code": "A",
+      "review_method": "visual_and_page_text",
+      "reviewer": "Codex",
+      "review_date": "2026-10-05",
+      "identity_basis": "来源目录的年份/题号 + 第1页题名和摘要主题，与已核验题面相符；不核定奖项或许可"
+    },
+    {
+      "case_id": "cumcm-2023-B-226",
+      "problem_id": "cumcm-2023-B",
+      "source_rel": "papers_pending_auth/12_CUMCM国赛/高教社杯全国大学生数学建模竞赛优秀论文/2023年高教社杯全国大学生数学建模竞赛优秀论文/B226.pdf",
+      "source_sha256": "6575167cc2cace9fc4f7a2d9e654128803b4270096fcb2e63b27ef05faf7a33d",
+      "problem_source_sha256": "e709e066139ea0a4bb64aa7e56ea097725a1f2b4e5161fc8c7e50c48be079396",
+      "page": 1,
+      "title_excerpt": "多波束测线布设",
+      "body_terms": [
+        "多波束",
+        "覆盖宽度",
+        "重叠率"
+      ],
+      "year": 2023,
+      "problem_code": "B",
+      "review_method": "visual_and_page_text",
+      "reviewer": "Codex",
+      "review_date": "2026-10-05",
+      "identity_basis": "来源目录的年份/题号 + 第1页题名和摘要主题，与已核验题面相符；不核定奖项或许可"
+    },
+    {
+      "case_id": "cumcm-2023-B-311",
+      "problem_id": "cumcm-2023-B",
+      "source_rel": "papers_pending_auth/12_CUMCM国赛/高教社杯全国大学生数学建模竞赛优秀论文/2023年高教社杯全国大学生数学建模竞赛优秀论文/B311.pdf",
+      "source_sha256": "b939b88771b288865fef612c613eb1d6a5890049fade34578ba35a66a4e95095",
+      "problem_source_sha256": "e709e066139ea0a4bb64aa7e56ea097725a1f2b4e5161fc8c7e50c48be079396",
+      "page": 1,
+      "title_excerpt": "基于主要目标法的测线设计问题",
+      "body_terms": [
+        "测线",
+        "覆盖宽度",
+        "重叠率"
+      ],
+      "year": 2023,
+      "problem_code": "B",
+      "review_method": "visual_and_page_text",
+      "reviewer": "Codex",
+      "review_date": "2026-10-05",
+      "identity_basis": "来源目录的年份/题号 + 第1页题名和摘要主题，与已核验题面相符；不核定奖项或许可"
+    },
+    {
+      "case_id": "cumcm-2023-B-477",
+      "problem_id": "cumcm-2023-B",
+      "source_rel": "papers_pending_auth/12_CUMCM国赛/高教社杯全国大学生数学建模竞赛优秀论文/2023年高教社杯全国大学生数学建模竞赛优秀论文/B477.pdf",
+      "source_sha256": "07329ac31d14177997c01035dcac29e1c03243ad71cb7ccaa381cf016595e1c6",
+      "problem_source_sha256": "e709e066139ea0a4bb64aa7e56ea097725a1f2b4e5161fc8c7e50c48be079396",
+      "page": 1,
+      "title_excerpt": "多波束测深合理探测方案的设计及效果分析",
+      "body_terms": [
+        "多波束",
+        "覆盖宽度",
+        "重叠率"
+      ],
+      "year": 2023,
+      "problem_code": "B",
+      "review_method": "visual_and_page_text",
+      "reviewer": "Codex",
+      "review_date": "2026-10-05",
+      "identity_basis": "来源目录的年份/题号 + 第1页题名和摘要主题，与已核验题面相符；不核定奖项或许可"
+    }
+  ]
+}

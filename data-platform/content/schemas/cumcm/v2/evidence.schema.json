@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/cumcm/v2/evidence.schema.json",
+  "title": "Erdos cumcm v2 审核证据（review）",
+  "type": "object",
+  "required": ["review_id", "object_id", "object_version", "property_paths", "source_asset_ref", "candidate", "conclusion", "reviewer_type", "reviewed_at", "review_status"],
+  "properties": {
+    "review_id": {"type": "string"},
+    "object_id": {"type": "string"},
+    "object_version": {"type": ["integer", "null"]},
+    "property_paths": {"type": "array", "items": {"type": "string"}},
+    "source_asset_ref": {"type": "object"},
+    "locations": {"type": "array", "items": {"type": "object"}},
+    "candidate": {"type": "object"},
+    "conclusion": {"type": "string"},
+    "basis": {"type": "string"},
+    "reviewer_type": {"type": "string", "enum": ["human", "agent_visual", "rule", "content_match", "unknown"]},
+    "reviewer_id": {"type": "string"},
+    "method": {"type": ["string", "null"]},
+    "model": {"type": ["string", "null"]},
+    "version": {"type": ["string", "null"]},
+    "reviewed_at": {"type": "string"},
+    "review_status": {"type": "string", "enum": ["pending_review", "approved", "rejected", "unknown"]},
+    "scope": {"type": "string", "enum": ["document", "block", "field"]}
+  },
+  "additionalProperties": false
+}

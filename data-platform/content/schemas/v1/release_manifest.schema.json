@@ -1,0 +1,122 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/release_manifest.schema.json",
+  "title": "Erdos release_manifest v1 draft",
+  "type": "object",
+  "properties": {
+    "release_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "competition_id": {
+      "$ref": "_common.json#/definitions/competitionId"
+    },
+    "schema_version": {
+      "$ref": "_common.json#/definitions/schemaVersionInt"
+    },
+    "published_status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "staging",
+        "published",
+        "withdrawn"
+      ]
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "asset_id": {
+            "$ref": "_common.json#/definitions/entityId"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sha256": {
+            "$ref": "_common.json#/definitions/sha256"
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "change": {
+            "type": "string",
+            "enum": [
+              "add",
+              "update",
+              "keep",
+              "remove"
+            ]
+          }
+        },
+        "required": [
+          "asset_id",
+          "version",
+          "sha256",
+          "role",
+          "change"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "uniqueItems": false
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "release_id": {
+            "$ref": "_common.json#/definitions/entityId"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "release_id",
+          "version"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "removed": {
+      "type": "array",
+      "items": {
+        "$ref": "_common.json#/definitions/entityId"
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "created_at": {
+      "$ref": "_common.json#/definitions/timestamp"
+    },
+    "is_fixture": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional metadata only; cannot override defined fields."
+    }
+  },
+  "required": [
+    "release_id",
+    "version",
+    "competition_id",
+    "schema_version",
+    "published_status",
+    "items",
+    "dependencies",
+    "removed"
+  ],
+  "additionalProperties": false
+}

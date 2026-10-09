@@ -14,16 +14,20 @@
  *   ⑧ 检查点与留痕完好（node:sqlite 读 checkpoints.db 行 + 客户端读取器读 audit.db；
  *     崩溃前留痕不得减少）
  *   ⑨ 单实例（同一 userData：第二实例被锁拒绝且未进入 boot；控制组：不同 userData 可正常启动）
+ *   ⑩ 真实 Key 通道（--with-key；mock 厂商端点 200/401）：验证「首行注入 → Authorization → /models 探测」
+ *      （10-24 待签认项；真实厂商端点以运行时替换 base_url 补测）
+ *   --with-solving（可选）：solving 阶段专项（真实沙箱执行，实测约 60~120s；10-24 待签认项）
  *
  * 用法（client/ 目录）：
- *   node scripts/w6-drill.mjs [--skip-singleton] [--skip-engine] [--out <evidence.json>]
+ *   node scripts/w6-drill.mjs [--skip-singleton] [--skip-engine] [--with-solving] [--with-key] [--out <evidence.json>]
  * 前置：engine/.venv（或 ERDOS_ENGINE_PYTHON 覆盖）；⑨ 需已构建 dist（npm run build）。
  * 退出码：0=全项通过；1=存在失败步骤；2=前置缺失。
  * 证据：JSON 默认写 reports/w6-drill-<日期>.json（steps/状态轨迹/事件统计/版本/计时；
  * 路径已脱敏为 basename，完整 home 见控制台输出）。
  */
 import { execSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -42,6 +46,8 @@ const repoRoot = join(clientRoot, "..");
 const argv = process.argv.slice(2);
 const skipSingleton = argv.includes("--skip-singleton");
 const skipEngine = argv.includes("--skip-engine");
+const withSolving = argv.includes("--with-solving");
+const withKey = argv.includes("--with-key");
 const outIndex = argv.indexOf("--out");
 const stamp = new Date().toISOString().slice(0, 10);
 const outPath = outIndex >= 0 && argv[outIndex + 1] ? argv[outIndex + 1] : join(repoRoot, "reports", `w6-drill-${stamp}.json`);
@@ -75,6 +81,10 @@ const steps = [];
 const states = [];
 const events = [];
 const protocolErrors = [];
+/** 沙箱镜像摘要等告警行（10-24 待签认项参考；不失败仅记录）。 */
+const sandboxWarnings = [];
+/** solving 专项耗时（--with-solving）。 */
+let solvingMs = null;
 let mark = Date.now();
 /** 步骤记录：skipped 步骤不计入通过率（跳过即跳过，不冒充通过）。 */
 const step = (name, ok, detail = "", skipped = false) => {
@@ -148,7 +158,10 @@ function makeHost() {
       if (events.length < 5000) events.push(event);
     },
     onStateChange: (state) => states.push(state),
-    onLog: (line) => console.log(`[engine] ${line}`),
+    onLog: (line) => {
+      if (/摘要|digest/i.test(line)) sandboxWarnings.push(line);
+      console.log(`[engine] ${line}`);
+    },
     onProtocolError: (err) => {
       protocolErrors.push(err.message);
       console.warn(`[drill] 协议错误：${err.message}`);
@@ -237,6 +250,36 @@ async function runEngineSection() {
       modelingDone && gate2?.action === "next_stage" && taskInputOk,
       `progress≥1=${modelingDone}；gate=${JSON.stringify(gate2)}；题面落盘=${taskInputOk}（title=${persisted?.title ?? "-"}）`,
     );
+
+    // ⑥b solving 专项（--with-solving；真实沙箱执行，10-24 待签认口径；冷启动含镜像拉取可能显著变慢）
+    if (withSolving) {
+      const tSolve = Date.now();
+      await host.invoke("start_stage", { task_id: DRILL_TASK, stage: "solving" });
+      const solvingDone = await waitUntil(
+        () => events.some((e) => e.event === "stage.progress" && e.stage === "solving" && e.progress >= 1),
+        240_000,
+      );
+      solvingMs = Date.now() - tSolve;
+      const toolEvents = events.filter((e) => e.event === "tool.call" || e.event === "tool.result").length;
+      // 数据侧证据：solving 检查点行已落盘（非「假执行」的最低证据；沙箱模式见 sandboxWarnings）
+      const solvingDb = new DatabaseSync(join(home, "checkpoints.db"), { readOnly: true });
+      let solvingStatus = "missing";
+      try {
+        const row = solvingDb
+          .prepare("SELECT status FROM checkpoints WHERE task_id = ? AND stage = 'solving'")
+          .get(DRILL_TASK);
+        if (row !== undefined) solvingStatus = String(row["status"]);
+      } finally {
+        solvingDb.close();
+      }
+      step(
+        "⑥b solving 专项（真实沙箱执行完成）",
+        solvingDone && solvingStatus !== "missing",
+        `耗时 ${solvingMs}ms；工具事件 ${toolEvents} 条；检查点 solving:${solvingStatus}`,
+      );
+    } else {
+      step("⑥b solving 专项", true, "按参数跳过（--with-solving 启用；10-24 待签认项）", true);
+    }
 
     // ⑦ 退出链（stop → 无遗留进程；协议硬上限 300ms）
     // 注：Windows 下 child.kill("SIGTERM") 为硬终止（不可捕获），检查点依赖逐阶段落盘；
@@ -351,6 +394,84 @@ async function runSingletonSection() {
   }
 }
 
+// ---- ⑩ 真实 Key 通道（--with-key；mock 厂商端点，验证首行注入→鉴权→探测链路） --
+async function runKeyChannelSection() {
+  /** mock 收到的请求（url + Authorization 头）：证「首行注入 → 鉴权头到端」。 */
+  const received = [];
+  let server = null;
+  let host = null;
+  let okResult = null;
+  let badResult = null;
+  const keyHome = mkdtempSync(join(tmpdir(), "erdos-w6-key-"));
+  // Key 模式装配要求（引擎 __main__：ERDOS_MODEL_BASE_URL/NAME）；finally 恢复现场
+  const prevBaseUrl = process.env.ERDOS_MODEL_BASE_URL;
+  const prevModelName = process.env.ERDOS_MODEL_NAME;
+  try {
+    server = createServer((req, res) => {
+      received.push({ url: req.url ?? "", auth: String(req.headers["authorization"] ?? "") });
+      if ((req.url ?? "").startsWith("/bad/")) {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "invalid api key（mock：401 仅表示探测未通过）" } }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ object: "list", data: [{ id: "drill-mock-model", object: "model" }] }));
+    });
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const port = server.address().port;
+    const okBase = `http://127.0.0.1:${port}/ok`;
+    const badBase = `http://127.0.0.1:${port}/bad`;
+    process.env.ERDOS_MODEL_BASE_URL = okBase;
+    process.env.ERDOS_MODEL_NAME = "drill-mock-model";
+
+    host = new EngineHost({
+      command: enginePython,
+      args: ["-m", "engine"],
+      cwd: repoRoot,
+      home: keyHome,
+      key: () => "sk-drill-mock", // 首行一次性注入（mock 凭据；仅演练用，勿用于真实厂商）
+      onEvent: () => {},
+      onStateChange: () => {},
+      onLog: () => {},
+      onProtocolError: (err) => console.warn(`[drill] 协议错误：${err.message}`),
+    });
+    await host.reloadKey(); // spawn（首行注入）→ initialize → ready
+    okResult = await host.invoke("provider_test", { base_url: okBase, model: "drill-mock-model", provider: "openai" });
+    badResult = await host.invoke("provider_test", { base_url: badBase, model: "drill-mock-model", provider: "openai" });
+    const mockKey = "Bearer sk-drill-mock";
+    const okAuth = received.some((item) => item.url.startsWith("/ok/models") && item.auth === mockKey);
+    const badAuth = received.some((item) => item.url.startsWith("/bad/models") && item.auth === mockKey);
+    step(
+      "⑩ 真实 Key 通道（mock 厂商端点：首行注入 → Authorization → /models 探测）",
+      okResult?.ok === true && badResult?.ok === false && okAuth && badAuth && received.length >= 2,
+      `200→ok=${okResult?.ok}（tool_mode=${okResult?.tool_mode}）；401→ok=${badResult?.ok}` +
+        `（不判定 Key 无效：红线口径）；鉴权头到端 ok/bad=${okAuth}/${badAuth}；mock 请求 ${received.length} 次`,
+    );
+  } catch (err) {
+    step("⑩ 真实 Key 通道", false, err instanceof Error ? err.message : String(err));
+  } finally {
+    if (host !== null && host.childPid !== null) host.stop();
+    if (host !== null) await waitUntil(() => host.childPid === null, 5_000);
+    if (server !== null) server.close();
+    rmSync(keyHome, { recursive: true, force: true });
+    if (prevBaseUrl === undefined) delete process.env.ERDOS_MODEL_BASE_URL;
+    else process.env.ERDOS_MODEL_BASE_URL = prevBaseUrl;
+    if (prevModelName === undefined) delete process.env.ERDOS_MODEL_NAME;
+    else process.env.ERDOS_MODEL_NAME = prevModelName;
+  }
+  const mockKey = "Bearer sk-drill-mock";
+  return {
+    ok: okResult?.ok ?? null,
+    toolMode: okResult?.tool_mode ?? null,
+    bad: badResult?.ok ?? null,
+    authSeen: received.some((item) => item.url.startsWith("/ok/models") && item.auth === mockKey),
+    requests: received.length,
+  };
+}
+
 // ---- 主流程 ---------------------------------------------------------------
 console.log(`[drill] W6 联调预演开始（引擎 home=${home}）`);
 runContractCheck();
@@ -358,6 +479,19 @@ if (skipEngine) {
   step("①~⑧ 引擎链路", true, "按参数跳过（仅验证单实例）", true);
 } else {
   await runEngineSection();
+}
+let keyChannelEvidence = null;
+if (!withKey) {
+  step("⑩ 真实 Key 通道", true, "按参数跳过（--with-key 启用；10-24 待签认项）", true);
+} else if (enginePython === null) {
+  step("⑩ 真实 Key 通道", true, "跳过：未找到引擎环境", true);
+} else {
+  try {
+    keyChannelEvidence = await runKeyChannelSection();
+  } catch (err) {
+    // 兜底：段内未捕获异常不得中断主流程与证据落盘
+    step("⑩ 真实 Key 通道", false, err instanceof Error ? err.message : String(err));
+  }
 }
 if (skipSingleton) {
   step("⑨ 单实例", true, "按参数跳过（10-24 人工或构建后重跑）", true);
@@ -396,6 +530,9 @@ const evidence = {
   executed: executed.length,
   skipped: steps.length - executed.length,
   protocolErrors,
+  solvingMs,
+  sandboxWarnings,
+  keyChannel: keyChannelEvidence,
   steps,
   states,
   eventCount: events.length,

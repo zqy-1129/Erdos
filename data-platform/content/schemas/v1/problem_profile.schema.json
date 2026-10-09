@@ -1,0 +1,227 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/problem_profile.schema.json",
+  "title": "Erdos problem_profile v1 draft",
+  "type": "object",
+  "properties": {
+    "problem_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "competition_id": {
+      "$ref": "_common.json#/definitions/competitionId"
+    },
+    "year": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": 1900
+        }
+      ]
+    },
+    "round": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "track": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "language": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "problem_code": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "problem_types": {
+      "type": "array",
+      "items": {
+        "$ref": "_common.json#/definitions/problemType"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "method_tags": {
+      "$ref": "_common.json#/definitions/tagList"
+    },
+    "data_tags": {
+      "$ref": "_common.json#/definitions/tagList"
+    },
+    "domain_tags": {
+      "$ref": "_common.json#/definitions/tagList"
+    },
+    "confidence": {
+      "$ref": "_common.json#/definitions/confidence"
+    },
+    "label_status": {
+      "$ref": "_common.json#/definitions/labelStatus"
+    },
+    "provenance": {
+      "$ref": "_common.json#/definitions/provenance"
+    },
+    "subproblems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "subproblem_id": {
+            "$ref": "_common.json#/definitions/entityId"
+          },
+          "problem_types": {
+            "type": "array",
+            "items": {
+              "$ref": "_common.json#/definitions/problemType"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "method_tags": {
+            "$ref": "_common.json#/definitions/tagList"
+          },
+          "data_tags": {
+            "$ref": "_common.json#/definitions/tagList"
+          },
+          "domain_tags": {
+            "$ref": "_common.json#/definitions/tagList"
+          },
+          "confidence": {
+            "$ref": "_common.json#/definitions/confidence"
+          },
+          "label_status": {
+            "$ref": "_common.json#/definitions/labelStatus"
+          },
+          "provenance": {
+            "$ref": "_common.json#/definitions/provenance"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ]
+          }
+        },
+        "required": [
+          "subproblem_id",
+          "problem_types",
+          "confidence",
+          "label_status",
+          "provenance"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "_common.json#/definitions/relPath"
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "source_sha256": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "_common.json#/definitions/sha256"
+        }
+      ]
+    },
+    "source_asset_ref": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "_common.json#/definitions/assetRef"
+        }
+      ]
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "$ref": "_common.json#/definitions/relPath"
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "schema_version": {
+      "$ref": "_common.json#/definitions/schemaVersionInt"
+    },
+    "profile_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "review_status": {
+      "$ref": "_common.json#/definitions/reviewStatus"
+    },
+    "last_updated": {
+      "$ref": "_common.json#/definitions/timestamp"
+    },
+    "is_fixture": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional metadata only; cannot override defined fields."
+    },
+    "label_schema_version": {
+      "$ref": "_common.json#/definitions/schemaVersionInt"
+    }
+  },
+  "required": [
+    "problem_id",
+    "competition_id",
+    "problem_types",
+    "confidence",
+    "label_status",
+    "provenance",
+    "subproblems",
+    "source_sha256",
+    "source_asset_ref",
+    "schema_version",
+    "profile_version",
+    "review_status"
+  ],
+  "additionalProperties": false
+}

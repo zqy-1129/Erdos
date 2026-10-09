@@ -1,0 +1,59 @@
+{
+  "type": "object",
+  "properties": {
+    "business_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "problem_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "award": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 32
+    },
+    "method_tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "oss_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "compliance_note": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    }
+  },
+  "required": [
+    "business_id",
+    "problem_id",
+    "title",
+    "award",
+    "method_tags",
+    "oss_key",
+    "sha256",
+    "compliance_note"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

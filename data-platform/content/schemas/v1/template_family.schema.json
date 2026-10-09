@@ -1,0 +1,161 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/template_family.schema.json",
+  "title": "Erdos template_family v1 draft",
+  "type": "object",
+  "properties": {
+    "family_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "competition_id": {
+      "$ref": "_common.json#/definitions/competitionId"
+    },
+    "family_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "schema_version": {
+      "$ref": "_common.json#/definitions/schemaVersionInt"
+    },
+    "publication_status": {
+      "$ref": "_common.json#/definitions/publication"
+    },
+    "ruleset_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "ruleset_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "ruleset_status": {
+      "type": "string",
+      "enum": [
+        "pending_verification",
+        "verified",
+        "unknown"
+      ]
+    },
+    "ruleset_ref": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "_common.json#/definitions/assetRef"
+        }
+      ]
+    },
+    "language": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "layout_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "latex",
+              "docx"
+            ]
+          },
+          "asset_ref": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "_common.json#/definitions/assetRef"
+              }
+            ]
+          }
+        },
+        "required": [
+          "format",
+          "asset_ref"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "uniqueItems": false
+    },
+    "base_outline_ref": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "_common.json#/definitions/assetRef"
+        }
+      ]
+    },
+    "writing_policy_ref": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "_common.json#/definitions/assetRef"
+        }
+      ]
+    },
+    "figure_style_ref": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "_common.json#/definitions/assetRef"
+        }
+      ]
+    },
+    "table_style_ref": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "_common.json#/definitions/assetRef"
+        }
+      ]
+    },
+    "review_status": {
+      "$ref": "_common.json#/definitions/reviewStatus"
+    },
+    "is_fixture": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional metadata only; cannot override defined fields."
+    }
+  },
+  "required": [
+    "family_id",
+    "competition_id",
+    "family_version",
+    "schema_version",
+    "publication_status",
+    "ruleset_id",
+    "ruleset_version",
+    "ruleset_status",
+    "ruleset_ref",
+    "language",
+    "layout_refs",
+    "base_outline_ref",
+    "writing_policy_ref",
+    "figure_style_ref",
+    "table_style_ref",
+    "review_status"
+  ],
+  "additionalProperties": false
+}

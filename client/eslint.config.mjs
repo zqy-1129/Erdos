@@ -32,6 +32,8 @@ export default tseslint.config(
         clearTimeout: "readonly",
         setInterval: "readonly",
         clearInterval: "readonly",
+        fetch: "readonly", // Node 22 原生（预检脚本探测服务端健康）
+        AbortController: "readonly",
       },
     },
   },

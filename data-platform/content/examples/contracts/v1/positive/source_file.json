@@ -1,0 +1,19 @@
+{
+  "relative_path": "problems/12_CUMCM国赛/CUMCM2018Problems/2018-B-Chinese/CUMCM-2018-Problem-B-Chinese.doc",
+  "size": 12345,
+  "mtime_ns": 1700000000000000000,
+  "extension": ".doc",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "competition_ids": [
+    "cumcm"
+  ],
+  "scope": "competition",
+  "source_root": "problems",
+  "resource_type_hint": "题目或附件",
+  "recognition_basis": "来源根 problems / 目录 12_CUMCM国赛 → cumcm",
+  "recognition_status": "待核验",
+  "hash_source": "full",
+  "status": "ok",
+  "note": "",
+  "is_fixture": true
+}

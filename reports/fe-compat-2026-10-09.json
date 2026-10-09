@@ -1,0 +1,120 @@
+{
+  "generatedAt": "2026-10-09T12:06:03.634Z",
+  "results": [
+    {
+      "level": "INFO",
+      "label": "① 环境信息",
+      "detail": "Microsoft Windows 10 专业版；RAM 31.9GB；分辨率 1920x1080；DPI 100%；杀软 Windows Defender"
+    },
+    {
+      "level": "PASS",
+      "label": "②a 中文路径·壳级冒烟",
+      "detail": "中文+空格目录下四阶段全链通过（证据 冒烟证据.json）"
+    },
+    {
+      "level": "PASS",
+      "label": "②b 中文路径·数据回读",
+      "detail": "任务 smoke-task；标题「壳级冒烟」；题面中文字节往返 完好"
+    },
+    {
+      "level": "PASS",
+      "label": "②c 中文路径·声明导出（md+docx）",
+      "detail": "md 806B；docx 10194B（zip 魔数 ✓）"
+    },
+    {
+      "level": "PASS",
+      "label": "③ 低配·冷启动",
+      "detail": "BootTimer 口径 p50=2.4ms（min 1.9 / max 2.7，n=5），预算 <3s 达标；墙钟 508/486/496/528/504ms"
+    },
+    {
+      "level": "PASS",
+      "label": "③b 中文路径·userData 建库",
+      "detail": "erdos.db 已生成"
+    },
+    {
+      "level": "PASS",
+      "label": "④ 网络·离线/弱网资产复跑",
+      "detail": "72h 宽限 + 遥测 outbox 用例 27 例全过"
+    }
+  ],
+  "payload": {
+    "environment": {
+      "platform": "win32 x64",
+      "node": "v24.21.0",
+      "cpu": "AMD Ryzen 5 5600G with Radeon Graphics × 12",
+      "ramGB": 31.9,
+      "caption": "Microsoft Windows 10 专业版",
+      "version": "10.0.19045",
+      "resolution": "1920x1080",
+      "dpiPercent": "100",
+      "antivirus": "Windows Defender"
+    },
+    "localization": {
+      "base": "C:\\Users\\yangjl\\AppData\\Local\\Temp\\erdos-兼容 预检-y3YDPy",
+      "home": "C:\\Users\\yangjl\\AppData\\Local\\Temp\\erdos-兼容 预检-y3YDPy\\引擎数据 engine-home",
+      "smoke": {
+        "home": "C:\\Users\\yangjl\\AppData\\Local\\Temp\\erdos-兼容 预检-y3YDPy\\引擎数据 engine-home",
+        "states": [
+          "spawning",
+          "ready",
+          "running",
+          "ready",
+          "running",
+          "ready",
+          "running",
+          "ready",
+          "running",
+          "ready",
+          "stopped"
+        ],
+        "steps": 12
+      },
+      "readback": {
+        "found": true,
+        "title": "壳级冒烟",
+        "textOk": true
+      },
+      "export": {
+        "mdPath": "C:\\Users\\yangjl\\AppData\\Local\\Temp\\erdos-兼容 预检-y3YDPy\\导出 exports\\AI 使用声明.md",
+        "docxPath": "C:\\Users\\yangjl\\AppData\\Local\\Temp\\erdos-兼容 预检-y3YDPy\\导出 exports\\AI 使用声明.docx",
+        "mdBytes": 806,
+        "docxBytes": 10194,
+        "zipMagic": true
+      },
+      "cleaned": true
+    },
+    "coldStart": {
+      "appReadyMs": [
+        2.7,
+        2.1,
+        1.9,
+        2.5,
+        2.4
+      ],
+      "wallMs": [
+        508,
+        486,
+        496,
+        528,
+        504
+      ],
+      "p50": 2.4,
+      "min": 1.9,
+      "max": 2.7,
+      "budgetMs": 3000,
+      "captured": true,
+      "userData": "C:\\Users\\yangjl\\AppData\\Local\\Temp\\erdos-兼容 冷启动-NCuFcp\\用户数据 userdata",
+      "erdosDb": true,
+      "cleaned": true
+    },
+    "offlineAssets": {
+      "files": [
+        "tests/sp3-4-entitlement-store.test.ts",
+        "tests/sp3-5-telemetry.test.ts"
+      ],
+      "pass": 27,
+      "fail": 0,
+      "status": 0
+    }
+  }
+}

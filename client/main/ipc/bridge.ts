@@ -6,7 +6,8 @@
  * 开发期演示回退；unconfigured（生产未配置）fail-closed 报错，不冒充成功。
  * billing:export 经注入的落盘回调（原生保存对话框 + 写盘，见 main/save-export.ts）落盘。
  * keys:usage（F-002 用量估算）与 compliance:export（SP3-6 声明）经引擎留痕库读取接线
- * （见 main/engine-trail.ts）；其余通道（内容库/历史）暂为演示数据（后续批次逐步接入）。
+ * （见 main/engine-trail.ts）；历史通道经本地留痕 × 检查点库读取接线（见 main/local-history.ts），
+ * 续跑复用既有 RPC（start_stage）；内容库暂为演示数据（前置 BE-19B 接口，后续批次接入）。
  *
  * keys → KeyVault（safeStorage 加密），telemetry → TelemetrySdk（白名单 + 隐私过滤）。
  * 明文 Key / 令牌永不出主进程。
@@ -14,7 +15,10 @@
  * keysTest 真实化（FE-TOOLUI W12）：经注入的引擎探测函数走 provider_test
  * （见 main/ipc/key-probe.ts）；引擎未接线/Web 环境返回 unverified，不冒充连通。
  */
+import { dirname, join } from "node:path";
+
 import { BRIDGE_CHANNELS } from "../../shared/bridge-channels.ts";
+import type { RpcMethod, StageName } from "../../shared/ipc.ts";
 import { KeyVault, InMemorySecretStore, type SecretStore } from "../key-vault.ts";
 import { createPlatformEncryptor } from "../safe-storage-encryptor.ts";
 import type { TokenStore } from "../cloud/auth-client.ts";
@@ -44,7 +48,9 @@ import {
   type RecentTask,
 } from "../engine-trail.ts";
 import { estimateUsage } from "../../shared/usage.ts";
+import { readLocalHistory, resolveResumeStage, type LocalHistoryTask } from "../local-history.ts";
 
+/** 四阶段顺序（演示事件注入方向；恢复定位见 local-history.ts，两者同序）。 */
 const STAGES = ["analysis", "modeling", "solving", "writing"];
 
 const DEMO_CONTENT = [
@@ -52,11 +58,6 @@ const DEMO_CONTENT = [
   { id: "t2", kind: "template", title: "MCM 官方格式模板", tags: ["格式", "美赛"], referenceOnly: false },
   { id: "c1", kind: "case", title: "2024 A 题一等奖论文（节选）", tags: ["优化", "评价"], referenceOnly: true },
   { id: "c2", kind: "case", title: "2019 C 题机场出租车思路", tags: ["机理", "预测"], referenceOnly: true },
-];
-
-const DEMO_HISTORY = [
-  { taskId: "t-1001", title: "示例题：嫦娥三号软着陆", status: "writing", updatedAt: "2026-10-02T18:00:00Z", resumable: true },
-  { taskId: "t-1002", title: "2024 C 题打磨", status: "done", updatedAt: "2026-10-01T15:30:00Z", resumable: false },
 ];
 
 /** 鉴权接线配置（index.ts 装配；未提供时按 demo 演示回退，保持既有演示语义）。 */
@@ -107,7 +108,15 @@ export interface BridgeBackendOptions {
    * 未接线时声明保存报错（fail-closed）。
    */
   saveDeclaration?: DeclarationFileSaver | null;
+  /**
+   * 引擎调用转发（history:resume 接线：复用既有 RPC start_stage；懒启动/等待就绪由 EngineHost 承接）。
+   * 未接线时续跑报错（fail-closed），不冒充成功。
+   */
+  engineInvoke?: EngineInvokeFn | null;
 }
+
+/** 引擎 RPC 调用转发（主进程装配：EngineHost.invoke；方法名受 RpcMethod 约束）。 */
+export type EngineInvokeFn = (method: RpcMethod, params: Record<string, unknown>) => Promise<unknown>;
 
 export class BridgeBackend {
   private readonly keyVault: KeyVault;
@@ -127,6 +136,8 @@ export class BridgeBackend {
   private readonly engineTrailDbPath: string | null;
   /** 声明文件保存器（未接线时声明保存 fail-closed 报错）。 */
   private readonly saveDeclaration: DeclarationFileSaver | null;
+  /** 引擎调用转发（未接线时历史续跑 fail-closed 报错）。 */
+  private readonly engineInvoke: EngineInvokeFn | null;
   private sessionUsername: string | null = null;
   private activeKeyId: string | null = null;
   /** 引擎探测函数（FE-KEYIN/W12 接线：EngineHost.reloadKey → provider_test）。 */
@@ -146,6 +157,7 @@ export class BridgeBackend {
     this.saveExport = options.saveExport ?? null;
     this.engineTrailDbPath = options.engineTrailDbPath ?? null;
     this.saveDeclaration = options.saveDeclaration ?? null;
+    this.engineInvoke = options.engineInvoke ?? null;
     const auth = options.auth ?? { runtime: { mode: "demo" } as AuthRuntime };
     if (auth.runtime.mode === "cloud" && (auth.fingerprint ?? "").trim()) {
       const cloudAuth = new CloudAuthBridge({
@@ -218,9 +230,9 @@ export class BridgeBackend {
       case BRIDGE_CHANNELS.contentList:
         return DEMO_CONTENT;
       case BRIDGE_CHANNELS.historyList:
-        return DEMO_HISTORY;
+        return this.historyList();
       case BRIDGE_CHANNELS.historyResume:
-        return { taskId: String(body["taskId"] ?? ""), resumable: true };
+        return this.historyResume(body);
       case BRIDGE_CHANNELS.complianceExport:
         return this.complianceExport(body);
       case BRIDGE_CHANNELS.complianceSave:
@@ -532,5 +544,46 @@ export class BridgeBackend {
       throw new Error("本地留痕库未接线（engineTrailDbPath）：无法读取最近任务");
     }
     return readRecentTasks(this.engineTrailDbPath);
+  }
+
+  /**
+   * 历史任务列表（US-003）：本地留痕 × 检查点库组合读取（见 main/local-history.ts）。
+   * 未接线 fail-closed 报错；库缺失=空列表、库损坏=报错（读取器口径，不把未知冒充为空）。
+   */
+  private historyList(): LocalHistoryTask[] {
+    return readLocalHistory(this.trailDbPath(), this.checkpointsDbPath());
+  }
+
+  /**
+   * 从检查点续跑（US-003）：定位下一阶段 → 复用既有 RPC（start_stage；题面由引擎侧检查点水合）。
+   * 依赖倒置：引擎调用经注入的 engineInvoke；未接线 / 无可恢复检查点 → 可读错误（不猜测阶段）。
+   */
+  private async historyResume(
+    body: Record<string, unknown>,
+  ): Promise<{ taskId: string; stage: StageName; resumable: true }> {
+    const taskId = String(body["taskId"] ?? "").trim();
+    if (!taskId) throw new Error("缺少 taskId：无法恢复任务");
+    if (!this.engineInvoke) {
+      throw new Error("引擎调用未接线（engineInvoke）：无法恢复任务");
+    }
+    const stage = resolveResumeStage(this.checkpointsDbPath(), taskId);
+    if (stage === null) {
+      throw new Error(`任务已完成或无可恢复检查点：${taskId}`);
+    }
+    await this.engineInvoke("start_stage", { task_id: taskId, stage });
+    return { taskId, stage, resumable: true };
+  }
+
+  /** 留痕库路径（未接线 fail-closed：读取本地历史前必须接线）。 */
+  private trailDbPath(): string {
+    if (!this.engineTrailDbPath) {
+      throw new Error("本地历史不可用：未接线引擎留痕库（engineTrailDbPath）");
+    }
+    return this.engineTrailDbPath;
+  }
+
+  /** 检查点库路径（与留痕库同目录：引擎 home 下 checkpoints.db）。 */
+  private checkpointsDbPath(): string {
+    return join(dirname(this.trailDbPath()), "checkpoints.db");
   }
 }

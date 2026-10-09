@@ -40,3 +40,10 @@ client/dist/
 
 # 验收证据本地归档（docs/acceptance 逐题 JSON/报告，不入库，见 SP1-7 交付报告）
 docs/
+
+# Personal Trilium notes and local note databases are not project deliverables.
+/trilium/
+/Trilium/
+/trilium-data/
+/trilium-notes/
+/Trilium笔记/
