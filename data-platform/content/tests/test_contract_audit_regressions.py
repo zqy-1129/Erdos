@@ -16,6 +16,7 @@ v=importlib.util.module_from_spec(SPEC);SPEC.loader.exec_module(v)
 class AuditContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        (ROOT/'out').mkdir(exist_ok=True)
         _,*vv=v.load_jsonschema();v._v=tuple(vv)
         cls.store,cls.schemas=v.load_store(v.SCHEMAS_DIR)
         cls.taxonomy=json.loads(v.DEFAULT_TAXONOMY.read_text(encoding='utf-8'))
