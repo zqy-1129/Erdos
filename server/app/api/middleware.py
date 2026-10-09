@@ -33,11 +33,15 @@ from app.infra.metrics import (
 from app.infra.rate_limit import RateLimiter, SlidingWindowRateLimiter, client_ip_key
 
 # 《服务端架构》§接入层：公开接口白名单——注册/登录/令牌/找回、支付回调（自带 HMAC 验签）、
-# 公钥发布（客户端离线验签要用）、商品目录、验证码（自带限流）、健康检查与指标抓取。
+# 公钥发布（客户端离线验签要用）、验证码（自带限流）、健康检查与指标抓取。
 #
 # 这份名单此前只写在文档里：开启 auth_enforce（生产要求 True）后中间件无差别拦掉所有无凭证
 # 请求，等于把注册、支付回调与 /v1/auth/jwks 一起挡死——两种配置都不安全。
-# 现在它是唯一事实源，tests/api/test_authz_matrix.py 逐条比对策略表，防漂移。
+# 现在它是唯一事实源，tests/api/test_authz_matrix.py 逐条比对策略表，
+# scripts/contract_audit.py 再与契约的 op 级 security 双向互证，防漂移。
+#
+# 商品目录（GET /v1/billing/products）不在这份名单里：契约声明其需 BearerAuth，PRD 购买流程
+# 起点是"已登录用户选择商品"，客户端也没有匿名拉取目录的调用方。要做未登录价格页需先改契约。
 PUBLIC_PATHS: frozenset[str] = frozenset(
     {
         "/v1/health",
@@ -48,7 +52,6 @@ PUBLIC_PATHS: frozenset[str] = frozenset(
         "/v1/auth/password/reset/request",
         "/v1/auth/password/reset/confirm",
         "/v1/auth/jwks",
-        "/v1/billing/products",
         "/v1/billing/callbacks/payment",
         "/v1/notifications/verification-code",
         # 登录前事件靠设备级 distinct_id 归因，收紧会打断客户端 outbox 补报（跨端契约）

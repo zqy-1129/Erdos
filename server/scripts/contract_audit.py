@@ -1,9 +1,11 @@
 """契约一致性审计（contracts/openapi.yaml vs 实际实现）。
 
-三项检查：
+四项检查：
 1. 路径×方法比对：openapi 声明与 FastAPI 实际路由互差集；
 2. envelope schema 引用完整性：每个 *Envelope* 的 data 引用可解析；
-3. 错误码镜像：x-error-codes 与 app.core.errors.ERROR_SPECS 100% 一致。
+3. 错误码镜像：x-error-codes 与 app.core.errors.ERROR_SPECS 100% 一致；
+4. 鉴权口径互证：契约 op 级 `security` ⇔ 实现公开白名单 `PUBLIC_PATHS`（"要不要凭证"这一层）。
+   角色档（admin/operator）契约里只有文字没有机器声明，本检查不比对，已登记为 v1.1 缺口。
 
 用于契约 v1 冻结评审前自检，可重复执行：
     python scripts/contract_audit.py
@@ -15,6 +17,7 @@ from pathlib import Path
 
 import yaml
 
+from app.api.middleware import PUBLIC_PATHS
 from app.core.config import Settings
 from app.core.errors import ERROR_SPECS
 from app.main import create_app
@@ -87,6 +90,29 @@ def check_error_codes(spec: dict) -> list[str]:
     return problems
 
 
+def check_security_alignment(spec: dict) -> list[str]:
+    """契约声明的"要不要凭证"与中间件公开白名单互证（双向）。
+
+    两个方向都会出事：契约写 `BearerAuth` 而实现放行 = 文档承诺的鉴权在生产里不存在；
+    契约写匿名而实现要凭证 = enforce 打开后调用方静默 401。契约里的角色档（admin/operator）
+    只有 summary/description 文字，无可机器判定字段，因此本检查只覆盖匿名/凭证这一层。
+    """
+    problems: list[str] = []
+    for path, item in spec["paths"].items():
+        for method, op in item.items():
+            if method not in _METHODS:
+                continue
+            contract_anonymous = not op.get("security")
+            impl_public = path in PUBLIC_PATHS
+            if contract_anonymous is not impl_public:
+                problems.append(
+                    f"{method.upper():6s} {path} 契约="
+                    f"{'匿名可达' if contract_anonymous else '需凭证'}，"
+                    f"实现={'公开白名单' if impl_public else '要求鉴权'}"
+                )
+    return problems
+
+
 def main() -> int:
     spec = load_contract()
     contract_paths = extract_contract_paths(spec)
@@ -130,7 +156,17 @@ def main() -> int:
     else:
         print(f"[OK] x-error-codes 与 ERROR_SPECS 一致（{len(ERROR_SPECS) - 1} 个）")
 
-    return 1 if (only_contract or only_app or ref_missing or err_problems) else 0
+    sec_problems = check_security_alignment(spec)
+    print()
+    if sec_problems:
+        print("[漂移] 契约 security 与实现公开白名单不一致:")
+        for r in sec_problems:
+            print(f"  {r}")
+    else:
+        public_ops = sum(1 for p in PUBLIC_PATHS)
+        print(f"[OK] 匿名/凭证口径一致（白名单 {public_ops} 条，角色档不比对）")
+
+    return 1 if (only_contract or only_app or ref_missing or err_problems or sec_problems) else 0
 
 
 if __name__ == "__main__":

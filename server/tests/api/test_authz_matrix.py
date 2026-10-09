@@ -22,7 +22,7 @@ from conftest import StaticIntrospector
 
 # (method, path) -> public | user | admin。public 即设计文档的"公开接口白名单"。
 POLICY: dict[tuple[str, str], str] = {
-    # ---- 公开：注册/登录/令牌/找回/健康/商品目录/支付回调/验证码 ----
+    # ---- 公开：注册/登录/令牌/找回/健康/支付回调/验证码 ----
     ("GET", "/v1/health"): "public",
     ("GET", "/v1/auth/jwks"): "public",
     ("POST", "/v1/auth/register"): "public",
@@ -31,13 +31,15 @@ POLICY: dict[tuple[str, str], str] = {
     ("POST", "/v1/auth/logout"): "public",
     ("POST", "/v1/auth/password/reset/request"): "public",
     ("POST", "/v1/auth/password/reset/confirm"): "public",
-    ("GET", "/v1/billing/products"): "public",
     ("POST", "/v1/billing/callbacks/payment"): "public",  # HMAC 验签 fail-closed
     ("POST", "/v1/notifications/verification-code"): "public",  # 限流 60s/日10
     # 匿名摄入是既有跨端契约（登录前事件靠设备级 distinct_id 归因）；收紧会静默打断
     # 客户端 outbox 补报，伪造治理口径归 DEC-028，见 contracts/openapi.yaml 同条描述
     ("POST", "/v1/telemetry/events"): "public",
     # ---- 登录用户 ----
+    # 商品目录：契约声明 BearerAuth，PRD 购买流程起点是"已登录用户选商品"，客户端无匿名调用方。
+    # 此前被放进 PUBLIC_PATHS 属实现侧无依据放宽，现由 contract_audit 第 4 项（security⇔白名单）盯住。
+    ("GET", "/v1/billing/products"): "user",
     ("GET", "/v1/account/profile"): "user",
     ("POST", "/v1/account/password"): "user",
     ("GET", "/v1/account/devices"): "user",

@@ -164,7 +164,10 @@ async def test_refund_points_pack_rejected(client) -> None:
 
 
 async def test_billing_endpoints_require_auth(client) -> None:
-    assert (await client.get("/v1/billing/products")).status_code == 200  # 商品列表公开
+    # test 环境 auth_enforce 关闭，中间件不拦无凭证请求；本用例只证明"带业务响应"而非"公开放行"。
+    # 匿名/凭证口径由 tests/api/test_authz_matrix.py（策略表）与 scripts/contract_audit.py
+    # （契约 security ⇔ PUBLIC_PATHS）双向盯住：商品目录已改判需登录。
+    assert (await client.get("/v1/billing/products")).status_code == 200
     assert (
         await client.post(
             "/v1/billing/orders",
