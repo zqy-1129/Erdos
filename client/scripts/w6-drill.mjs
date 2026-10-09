@@ -9,7 +9,7 @@
  *   ③ 事件分流（analysis 完成；RPC 层未知事件零计数——未知事件在 rpc.ts 拒绝并计入协议错误）
  *   ④ 门禁 gate_analysis 通过（answer_gate）
  *   ⑤ kill 看门狗（强杀引擎 → crashed → 自动重启 → ready；重启次数由状态轨迹证实）
- *   ⑥ 崩溃后无丢任务（重启后补投题面 + 检查点延续 modeling 完成）
+ *   ⑥ 崩溃后无丢任务（重启后直接续跑 modeling；题面随检查点库落盘并自动水合）
  *   ⑦ 退出链（stop → 无遗留进程，协议硬上限 300ms；Windows SIGTERM=硬终止语义见风险登记）
  *   ⑧ 检查点与留痕完好（node:sqlite 读 checkpoints.db 行 + 客户端读取器读 audit.db；
  *     崩溃前留痕不得减少）
@@ -215,24 +215,27 @@ async function runEngineSection() {
       `pid ${pidBefore} → ${host.childPid}；轨迹 ${states.join("→")}`,
     );
 
-    // ⑥ 崩溃后无丢任务（重启后补投题面 + 检查点延续 modeling）
-    // 引擎题面为内存态（不随检查点持久化）：崩溃重启后须补投题面——
-    // 该口径已登记为 W6 风险项（客户端需持久化题面或历史任务来源补投）。
-    await host.invoke("task_create", {
-      task_id: DRILL_TASK,
-      title: "W6 联调预演",
-      problem_text: "预演题面：计算 1+1（重启后补投）",
-    });
+    // ⑥ 崩溃后无丢任务（重启后直接续跑 modeling；题面随检查点库落盘并自动水合——R1 已关闭）
     await host.invoke("start_stage", { task_id: DRILL_TASK, stage: "modeling" });
     const modelingDone = await waitUntil(
       () => events.some((e) => e.event === "stage.progress" && e.stage === "modeling" && e.progress >= 1),
       60_000,
     );
     const gate2 = await host.invoke("answer_gate", { task_id: DRILL_TASK, gate: "gate_modeling", decision: "pass" });
+    // 题面持久化数据侧核对（客户端直读引擎库）：原始题面随 task_create 落盘、重启后可用于水合
+    const taskInputDb = new DatabaseSync(join(home, "checkpoints.db"), { readOnly: true });
+    let persisted = null;
+    try {
+      persisted = taskInputDb.prepare("SELECT title, problem_text FROM task_inputs WHERE task_id = ?").get(DRILL_TASK);
+    } finally {
+      taskInputDb.close();
+    }
+    const taskInputOk =
+      persisted?.title === "W6 联调预演" && String(persisted?.problem_text ?? "").includes("计算 1+1");
     step(
-      "⑥ 崩溃后无丢任务（补投题面后 modeling 延续完成）",
-      modelingDone && gate2?.action === "next_stage",
-      `progress≥1=${modelingDone}；gate=${JSON.stringify(gate2)}`,
+      "⑥ 崩溃后无丢任务（重启后直接续跑 modeling；题面落盘并水合）",
+      modelingDone && gate2?.action === "next_stage" && taskInputOk,
+      `progress≥1=${modelingDone}；gate=${JSON.stringify(gate2)}；题面落盘=${taskInputOk}（title=${persisted?.title ?? "-"}）`,
     );
 
     // ⑦ 退出链（stop → 无遗留进程；协议硬上限 300ms）

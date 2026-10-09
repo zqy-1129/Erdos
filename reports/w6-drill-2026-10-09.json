@@ -1,12 +1,12 @@
 {
   "drill": "W6-J1024",
-  "ranAt": "2026-10-09T07:30:04.416Z",
+  "ranAt": "2026-10-09T08:01:30.984Z",
   "ok": true,
-  "home": "erdos-w6-drill-6PxRRa",
+  "home": "erdos-w6-drill-QJGoJ7",
   "platform": "win32",
   "engine": "python.exe",
   "engineVersion": "0.1.0",
-  "gitRev": "c742e78",
+  "gitRev": "c1a756d",
   "passed": 10,
   "executed": 10,
   "skipped": 0,
@@ -23,22 +23,22 @@
       "name": "① 引擎启动与握手（spawn → initialize → ready）",
       "ok": true,
       "skipped": false,
-      "detail": "state=ready；耗时 1281ms（EC-T6 上限 10s）",
-      "ms": 1281
+      "detail": "state=ready；耗时 1055ms（EC-T6 上限 10s）",
+      "ms": 1056
     },
     {
       "name": "② task_create 登记题面",
       "ok": true,
       "skipped": false,
       "detail": "{\"task_id\":\"w6-drill-task\",\"status\":\"created\"}",
-      "ms": 1
+      "ms": 3
     },
     {
       "name": "③ 事件分流（analysis 完成；RPC 层未知事件零计数）",
       "ok": true,
       "skipped": false,
       "detail": "新增 2 条；种类 stage.progress；未知 0（rpc.ts 拒绝并计数）",
-      "ms": 45
+      "ms": 37
     },
     {
       "name": "④ 门禁 gate_analysis 通过（answer_gate）",
@@ -51,36 +51,36 @@
       "name": "⑤ kill 看门狗（强杀 → crashed → 自动重启 ready）",
       "ok": true,
       "skipped": false,
-      "detail": "pid 29644 → 34588；轨迹 spawning→ready→running→ready→crashed→spawning→ready",
-      "ms": 2388
+      "detail": "pid 29692 → 33388；轨迹 spawning→ready→running→ready→crashed→spawning→ready",
+      "ms": 2213
     },
     {
-      "name": "⑥ 崩溃后无丢任务（补投题面后 modeling 延续完成）",
+      "name": "⑥ 崩溃后无丢任务（重启后直接续跑 modeling；题面落盘并水合）",
       "ok": true,
       "skipped": false,
-      "detail": "progress≥1=true；gate={\"task_id\":\"w6-drill-task\",\"gate\":\"gate_modeling\",\"decision\":\"pass\",\"action\":\"next_stage\"}",
-      "ms": 51
+      "detail": "progress≥1=true；gate={\"task_id\":\"w6-drill-task\",\"gate\":\"gate_modeling\",\"decision\":\"pass\",\"action\":\"next_stage\"}；题面落盘=true（title=W6 联调预演）",
+      "ms": 54
     },
     {
       "name": "⑦ 退出链（stop → 无遗留进程，≤300ms）",
       "ok": true,
       "skipped": false,
-      "detail": "pid=34588；退出耗时 25ms（协议硬上限 300ms）",
-      "ms": 25
+      "detail": "pid=33388；退出耗时 41ms（协议硬上限 300ms）",
+      "ms": 41
     },
     {
       "name": "⑧ 检查点与留痕完好（checkpoints.db 阶段行 + audit.db 崩溃前后无丢失）",
       "ok": true,
       "skipped": false,
       "detail": "留痕 2 条（崩溃前 1）；检查点 [analysis:done, modeling:done]",
-      "ms": 4
+      "ms": 2
     },
     {
       "name": "⑨ 单实例（同 userData 锁拒绝 + 不同 userData 控制组存活）",
       "ok": true,
       "skipped": false,
-      "detail": "第二实例 exit=0（275ms，未 boot=true）；首实例存活=true→true；控制组 boot=true 存活=true",
-      "ms": 2673
+      "detail": "第二实例 exit=0（263ms，未 boot=true）；首实例存活=true→true；控制组 boot=true 存活=true",
+      "ms": 2602
     }
   ],
   "states": [

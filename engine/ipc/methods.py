@@ -1,12 +1,14 @@
-"""6 个 RPC 方法实现（SP1-1 通信骨架 + SP1-2 编排器接入 + EN-WIRE W2 事件回流）。
+"""RPC 方法实现（SP1-1 通信骨架 + SP1-2 编排器接入 + EN-WIRE W2 事件回流）。
 
-与 contracts/engine-rpc.schema.json 的 methods 对齐：
-start_stage / pause / resume / cancel / get_status / answer_gate
+与 contracts/engine-rpc.schema.json 的 methods 对齐（v2：10 方法）：
+initialize / task_create / start_stage / pause / resume / cancel / get_status /
+answer_gate / provider_test / events_replay
 
 W2 集成：
 - register_all 可注入真实 StageRunner（StagePipeline.process）与 EventEmitter；
 - start_stage 创建四阶段编排器（可选注入 checkpoint 断点恢复）后以后台任务驱动
   run_current_stage，请求立即返回受理（耗时结果走事件，开发文档 §6.2）；
+- task_create 题面同步落盘（task_store 注入时）：崩溃/重启后 start_stage 自动水合恢复（R1）；
 - 阶段启动/完成发 stage.progress，writing 产物发 artifact.ready；
 - cancel 取消在跑的阶段任务（协作取消，沙箱子进程树由沙箱自身超时/强杀兜底）。
 """
@@ -15,7 +17,7 @@ import asyncio
 
 from engine.adapters.capabilities import probe_capabilities
 from engine.ipc.events import EventEmitter
-from engine.ipc.rpc import SCHEMA_UNSUPPORTED, RpcError
+from engine.ipc.rpc import INTERNAL_ERROR, SCHEMA_UNSUPPORTED, RpcError
 from engine.ipc.server import JsonRpcServer
 from engine.ipc.state import EngineState, TaskState
 from engine.orchestrator.graph import StageOrchestrator, StageRunner
@@ -47,19 +49,31 @@ def register_all(
     server: JsonRpcServer,
     state: EngineState,
     checkpoint=None,  # noqa: ANN001 - CheckpointStore | None（避免循环依赖，运行时鸭子类型）
+    task_store=None,  # noqa: ANN001 - 题面持久化存储（与 checkpoint 同库；None=不持久化，兼容测试路径）
     runner: StageRunner | None = None,
     events: EventEmitter | None = None,
     runtime_info: dict | None = None,  # W14：protocol_version/engine_version/tool_mode/isolation_mode
-    key_store=None,  # noqa: ANN001 - KeyStore | None（provider_test 用，Key 不经方法传递）
+    key_store=None,  # noqa: ANN001 - KeyStore（provider_test 用，Key 不经方法传递）
     probe_transport=None,  # noqa: ANN001 - httpx.AsyncBaseTransport | None（测试注入）
 ) -> EngineRuntime:
-    """注册全部 9 个 RPC 方法；可注入 checkpoint / runner / 事件 / 运行时信息 / 探测依赖。
+    """注册全部 10 个 RPC 方法；可注入 checkpoint / task_store / runner / 事件 / 运行时信息 / 探测依赖。
 
     返回 EngineRuntime：调用方在事件循环退出前 drain，避免后台阶段任务被静默丢弃。
     """
     runtime = EngineRuntime()
     running = runtime.running
     last_error: dict[str, str] = {}
+
+    def _ensure_task_inputs(task_id: str) -> None:
+        """题面水合：内存优先 → 持久化恢复（重启续跑）→ 无题面兼容空值。
+
+        重启后 state.tasks 为空：若题面已随 task_create 落盘则恢复（R1：崩溃/重启不丢题面）；
+        从未登记（骨架/压测路径）保持既有兼容语义（title=task_id、空题面）。
+        """
+        if task_id in state.tasks:
+            return
+        restored = task_store.load_task_input(task_id) if task_store is not None else None
+        state.tasks[task_id] = restored if restored is not None else {"title": str(task_id), "problem_text": ""}
 
     def _emit_progress(task_id: str, stage: str, progress: float) -> None:
         if events is None:
@@ -89,7 +103,11 @@ def register_all(
             state.task = TaskState(task_id=task_id, stage=stage, status="failed")
 
     async def task_create(params: dict):
-        """EN-PAPER：登记任务题面（题面贯通入口；start_stage 前必须调用）。"""
+        """EN-PAPER：登记任务题面（题面贯通入口；start_stage 前必须调用）。
+
+        题面同时落盘（task_store 注入时）：崩溃/重启后 start_stage 自动水合恢复，
+        不再依赖调用方补投（R1）。落盘失败 fail-loud（不得让「已登记」在重启后静默丢失）。
+        """
         task_id = params.get("task_id")
         title = params.get("title")
         problem_text = params.get("problem_text")
@@ -97,6 +115,11 @@ def register_all(
             raise ValueError("缺少 task_id/title/problem_text")
         if task_id in state.tasks:
             raise ValueError(f"任务已登记：{task_id}（重跑请换 task_id）")
+        if task_store is not None:
+            try:
+                task_store.save_task_input(str(task_id), str(title), str(problem_text))
+            except Exception as exc:  # noqa: BLE001 - 落盘失败收敛为可读 RPC 错误（内部错误域）
+                raise RpcError(INTERNAL_ERROR, f"任务题面落盘失败（重启恢复将不可用）：{exc}") from exc
         state.tasks[str(task_id)] = {"title": str(title), "problem_text": str(problem_text)}
         return {"task_id": str(task_id), "status": "created"}
 
@@ -114,13 +137,10 @@ def register_all(
             # EN-PAPER：同任务续跑——四阶段顺序推进（禁跳级），不重建编排器
             if existing.current_stage != stage:
                 raise ValueError(f"阶段顺序约束：当前应执行 {existing.current_stage}，收到 {stage}")
-            if task_id not in state.tasks:
-                state.tasks[task_id] = {"title": str(task_id), "problem_text": ""}  # 无题面模式兼容
+            _ensure_task_inputs(task_id)  # 防御对称：正常续跑路径内存已有题面（早返回）
             task = state.start_stage(task_id, stage)
         else:
-            if task_id not in state.tasks:
-                # 无题面模式兼容（骨架/压测路径）；题面贯通要求先 task_create
-                state.tasks[str(task_id)] = {"title": str(task_id), "problem_text": ""}
+            _ensure_task_inputs(task_id)  # 重启续跑据此恢复原题面（R1）；骨架/压测保持空题面兼容
             task = state.start_stage(task_id, stage)
             # SP1-2/W2：创建四阶段编排器（从 stage 开始），注入 checkpoint 与真实 runner
             state.orchestrator = StageOrchestrator(task_id, checkpoint=checkpoint, runner=runner)
