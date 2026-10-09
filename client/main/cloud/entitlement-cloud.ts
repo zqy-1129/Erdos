@@ -7,6 +7,7 @@
  */
 
 import { EntitlementService, type SnapshotFetcher, type EntitlementStateStore } from "../entitlement/service.ts";
+import type { OfflineLedger } from "../entitlement/offline-ledger.ts";
 import {
   isEntitlementPayload,
   type EntitlementSnapshot,
@@ -75,6 +76,8 @@ export interface CloudEntitlementOptions {
   onUnauthorized?: ((status: number) => void) | undefined;
   /** 权益本地状态存储（SP3-4 第二批：宽限/防重放门跨重启延续；缺省内存）。 */
   store?: EntitlementStateStore | null;
+  /** 离线流水账本（SP3-4 第三批：待补扣跨重启延续；缺省内存）。 */
+  ledger?: OfflineLedger | null;
   /** ms 时间戳时钟（与桥视图同源；缺省真实时钟）。 */
   clock?: () => number;
   /** 传输注入（测试/联调；透传 CloudHttpClient）。 */
@@ -100,6 +103,7 @@ export function createCloudEntitlementService(
     keyResolver: new JwksKeyResolver(http),
     uploader: new CloudOfflineSyncUploader(http),
     store: options.store ?? undefined,
+    ledger: options.ledger ?? undefined,
     clock: options.clock,
   });
 }

@@ -19,6 +19,7 @@ import { createSqliteSecretStore } from "./sqlite-secret-store.ts";
 import { createPlatformEncryptor } from "./safe-storage-encryptor.ts";
 import { createEncryptedTokenStore } from "./cloud/session-store.ts";
 import { createEncryptedEntitlementStateStore } from "./entitlement/state-store.ts";
+import { createEncryptedOfflineLedger } from "./entitlement/ledger-store.ts";
 import { createExportSaver } from "./save-export.ts";
 import { ensureDeviceFingerprint } from "./device-identity.ts";
 import { resolveAuthRuntime } from "./ipc/cloud-auth.ts";
@@ -103,9 +104,20 @@ function registerBridgeIpc(): void {
     console.warn("[client] 权益快照落盘不可用（SQLite 降级）：重启后需联网刷新恢复宽限");
   }
   console.log(`[client] 权益快照落盘：${entitlementStore ? "已启用（加密）" : "未启用（内存）"}`);
+  // SP3-4 第三批：离线流水账本加密落盘（待补扣跨重启延续；断网重启不丢记账、不透支）
+  const offlineLedger = secretStore
+    ? createEncryptedOfflineLedger({
+        secrets: secretStore,
+        encryptor: createPlatformEncryptor((message) => console.warn(`[client] ${message}`)),
+      })
+    : null;
+  if (!offlineLedger) {
+    console.warn("[client] 离线账本落盘不可用（SQLite 降级）：重启后待补扣记账丢失");
+  }
+  console.log(`[client] 离线账本落盘：${offlineLedger ? "已启用（加密）" : "未启用（内存）"}`);
   bridgeBackend = new BridgeBackend({
     secretStore,
-    auth: { runtime, fingerprint, platform: process.platform, sessionStore, entitlementStore },
+    auth: { runtime, fingerprint, platform: process.platform, sessionStore, entitlementStore, entitlementLedger: offlineLedger },
     // billing:export 落盘：原生保存对话框 + 写盘（取消不视为失败；写盘异常由桥归一为可读错误）
     saveExport: createExportSaver(() => mainWindow, "导出积分流水（CSV）"),
     // F-002 用量估算 / SP3-6 声明数据源：引擎留痕库（与 EngineHost home 同一约定）

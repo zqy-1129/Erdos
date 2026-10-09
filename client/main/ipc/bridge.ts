@@ -31,6 +31,7 @@ import {
   type ExportSaver,
 } from "./cloud-business.ts";
 import type { EntitlementStateStore } from "../entitlement/service.ts";
+import type { OfflineLedger } from "../entitlement/offline-ledger.ts";
 import type { FetchLike } from "../cloud/http.ts";
 import {
   complianceExportViewFromEngineTrail,
@@ -67,6 +68,8 @@ export interface BridgeAuthOptions {
   sessionStore?: TokenStore | null;
   /** 权益本地状态存储（SP3-4 第二批；缺省内存 = 重启后需联网刷新才恢复宽限）。 */
   entitlementStore?: EntitlementStateStore | null;
+  /** 离线流水账本（SP3-4 第三批；缺省内存 = 重启后待补扣记账丢失）。 */
+  entitlementLedger?: OfflineLedger | null;
 }
 
 /** 桥后端构造选项（FE-KEYIN 落库：密钥密文存储注入）。 */
@@ -147,6 +150,7 @@ export class BridgeBackend {
         getToken: () => cloudAuth.getToken(),
         onUnauthorized: () => this.invalidateSession(),
         entitlementStore: auth.entitlementStore ?? undefined,
+        entitlementLedger: auth.entitlementLedger ?? undefined,
         fetchImpl: auth.fetchImpl,
       });
       this.authMode = "cloud";

@@ -16,6 +16,7 @@ import { CloudApiError } from "../cloud/envelope.ts";
 import { CloudHttpClient, type FetchLike } from "../cloud/http.ts";
 import { createCloudEntitlementService } from "../cloud/entitlement-cloud.ts";
 import type { EntitlementService, EntitlementStateStore } from "../entitlement/service.ts";
+import type { OfflineLedger } from "../entitlement/offline-ledger.ts";
 import type { EntitlementStatus } from "../entitlement/types.ts";
 
 // ---------------------------------------------------------------------------
@@ -229,6 +230,8 @@ export interface CloudBusinessOptions {
   onUnauthorized?: ((status: number) => void) | undefined;
   /** 权益本地状态存储（SP3-4 第二批：宽限/防重放门跨重启延续；缺省内存）。 */
   entitlementStore?: EntitlementStateStore | null;
+  /** 离线流水账本（SP3-4 第三批：待补扣跨重启延续；缺省内存）。 */
+  entitlementLedger?: OfflineLedger | null;
   /** 传输注入（测试/联调）。 */
   fetchImpl?: FetchLike;
   timeoutMs?: number;
@@ -260,6 +263,7 @@ export class CloudBusinessBridge {
       getToken: options.getToken,
       onUnauthorized: options.onUnauthorized,
       store: options.entitlementStore ?? undefined,
+      ledger: options.entitlementLedger ?? undefined,
       clock: this.clock,
       fetchImpl: options.fetchImpl,
       timeoutMs: options.timeoutMs,
