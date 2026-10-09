@@ -3,10 +3,11 @@
  *
  * 追加式记账：同 exec_id 幂等；released（取消退还）不计入待补扣净值；
  * 联网对账（DF-005）将 pending 条目批量上报 /v1/points/offline-sync 后标记 uploaded。
- * 内存实现为参考实现；SQLite 落库在 SP3-4 本地数据栈接入时替换（接口稳定）。
+ * 内存实现为语义参考 + 加密落盘的内部实现（SP3-4 第三批：见 ledger-store.ts，
+ * 账本水合/序列化复用本类，避免两份语义漂移）。
  */
 
-import type { OfflineLedgerEntry, OfflineSyncItem } from "./types.ts";
+import type { OfflineLedgerEntry } from "./types.ts";
 
 export interface OfflineLedger {
   /** 追加一条离线流水；同 exec_id 幂等（返回既有条目，冲突字段不覆盖）。 */
@@ -24,13 +25,21 @@ export interface OfflineLedger {
   clear(): void;
 }
 
-/** 内存实现（SP3-4 前作为客户端默认存储；时钟可注入便于测试）。 */
+/**
+ * 内存实现（SP3-4 前作为客户端默认存储；时钟可注入便于测试）。
+ * 支持以既有条目水合（跨重启恢复，见 ledger-store.ts；形状校验由调用方负责）。
+ */
 export class InMemoryOfflineLedger implements OfflineLedger {
   private readonly entries = new Map<string, OfflineLedgerEntry>();
   private readonly clock: () => Date;
+  /** 语义版本号：仅真实变更递增（落盘外壳的写穿判定依据，避免壳层重复变更规则）。 */
+  private rev = 0;
 
-  constructor(clock: () => Date = () => new Date()) {
+  constructor(clock: () => Date = () => new Date(), initial: readonly OfflineLedgerEntry[] = []) {
     this.clock = clock;
+    for (const entry of initial) {
+      this.entries.set(entry.exec_id, { ...entry }); // 防御性复制：外部引用不参与内部状态
+    }
   }
 
   append(entry: Omit<OfflineLedgerEntry, "status" | "created_at" | "uploaded">): OfflineLedgerEntry {
@@ -45,6 +54,7 @@ export class InMemoryOfflineLedger implements OfflineLedger {
       uploaded: false,
     };
     this.entries.set(entry.exec_id, full);
+    this.rev += 1;
     return full;
   }
 
@@ -61,7 +71,11 @@ export class InMemoryOfflineLedger implements OfflineLedger {
     if (status === "released" && entry.uploaded) {
       return entry; // 已对账的消耗不可退还（服务端终态语义）
     }
+    if (entry.status === status) {
+      return entry; // 同态迁移：无变更
+    }
     entry.status = status;
+    this.rev += 1;
     return entry;
   }
 
@@ -72,27 +86,32 @@ export class InMemoryOfflineLedger implements OfflineLedger {
   pendingItems(): OfflineLedgerEntry[] {
     return [...this.entries.values()]
       .filter((e) => (e.status === "reserved" || e.status === "confirmed") && !e.uploaded)
-      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map((entry) => ({ ...entry })); // 防御性复制：外部变更不得绕过写穿
   }
 
   markUploaded(execIds: string[]): void {
     for (const execId of execIds) {
       const entry = this.entries.get(execId);
-      if (entry && !entry.uploaded) entry.uploaded = true;
+      if (entry && !entry.uploaded) {
+        entry.uploaded = true;
+        this.rev += 1;
+      }
     }
   }
 
-  clear(): void {
-    this.entries.clear();
+  /** 语义版本号（仅真实变更递增；落盘外壳据此判定写穿，已含幂等/终态/已对账守卫）。 */
+  revision(): number {
+    return this.rev;
   }
 
-  /** 转上报条目（SP3-5 云端集成的 /v1/points/offline-sync 请求体）。 */
-  toSyncItems(): OfflineSyncItem[] {
-    return this.pendingItems().map((e) => ({
-      exec_id: e.exec_id,
-      task_id: e.task_id,
-      stage: e.stage,
-      points: e.points,
-    }));
+  /** 全量条目快照（含已释放/已对账；落盘序列化用；插入序，防御性复制）。 */
+  allEntries(): OfflineLedgerEntry[] {
+    return [...this.entries.values()].map((entry) => ({ ...entry }));
+  }
+
+  clear(): void {
+    if (this.entries.size > 0) this.rev += 1; // 空账本清盘无变更（落盘外壳不写盘）
+    this.entries.clear();
   }
 }
