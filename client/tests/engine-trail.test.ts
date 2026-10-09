@@ -13,10 +13,12 @@ import { DatabaseSync } from "node:sqlite";
 
 import {
   complianceExportViewFromEngineTrail,
+  complianceSaveFromEngineTrail,
   createEngineTrailSource,
   exportDeclarationFromEngineTrail,
   readUsageEvents,
 } from "../main/engine-trail.ts";
+import type { DeclarationFileSaver } from "../main/engine-trail.ts";
 import { ComplianceDataError } from "../declaration/export.ts";
 import { estimateUsage } from "../shared/usage.ts";
 import { EngineHost } from "../main/engine-host/host.ts";
@@ -369,12 +371,159 @@ describe("声明导出（引擎留痕数据源）", () => {
 
       const docx = await complianceExportViewFromEngineTrail(dbPath, { ...base, format: "docx" });
       assert.equal(docx.filename, "AI工具使用声明_t-1.docx", "docx 文件名换后缀");
-      assert.ok(docx.content.includes("本页仅预览同源 Markdown"), "docx 应明确标注未生成二进制文件");
+      assert.ok(docx.content.includes("本页仅以同源 Markdown 预览"), "docx 应明确标注为预览而非二进制正文");
+      assert.ok(docx.content.includes("保存文件将生成真正的 .docx 文档"), "docx 应指引保存可获得真实二进制文档");
       assert.ok(docx.content.includes("deepseek-chat"), "docx 预览为同源 Markdown 渲染（含工具清单）");
 
       const unused = await complianceExportViewFromEngineTrail(dbPath, { ...base, format: "md", unusedAi: true });
       assert.deepEqual(unused.artifactHashes, [], "未使用 AI 声明不引用产物支撑材料");
       assert.ok(unused.content.includes("未使用"), "未使用 AI 版本正文模板");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 声明文件保存（SP3-6 收尾第二批：md/latex 文本 + docx 真实二进制落盘）
+// ---------------------------------------------------------------------------
+
+describe("声明文件保存（三格式真实落盘）", () => {
+  it("docx：落盘内容为真实 zip 二进制（PK 魔数）；滤镜/建议名/回显路径取自保存结果", async () => {
+    const { dir, dbPath } = createTrailDb({
+      events: seedEvents(),
+      artifacts: [
+        { task_id: "t-1", stage: "writing", kind: "paper", file_path: "paper.md", sha256: HEX64, size_bytes: 843 },
+      ],
+    });
+    try {
+      const requests: Array<Parameters<DeclarationFileSaver>[0]> = [];
+      const save: DeclarationFileSaver = async (request) => {
+        requests.push(request);
+        return { canceled: false, path: "/tmp/AI工具使用声明_t-1.docx" };
+      };
+      const view = await complianceSaveFromEngineTrail(
+        dbPath,
+        { taskId: "t-1", format: "docx", humanNote: "图表经本人核验。", unusedAi: false },
+        save,
+      );
+      assert.equal(requests.length, 1, "保存器应恰好被调用一次");
+      const request = requests[0];
+      assert.equal(request.suggestedName, "AI工具使用声明_t-1.docx");
+      assert.equal(request.filterName, "Word 文档");
+      assert.deepEqual(request.extensions, ["docx"]);
+      assert.ok(request.content instanceof Uint8Array, "docx 落盘内容应为二进制（非文本预览占位）");
+      assert.equal(
+        Buffer.from(request.content as Uint8Array).subarray(0, 2).toString("latin1"),
+        "PK",
+        "docx 应为真实 zip 文档（Word 可开由人工验收）",
+      );
+      assert.equal(view.savedPath, "/tmp/AI工具使用声明_t-1.docx");
+      assert.equal(view.filename, "AI工具使用声明_t-1.docx", "回显文件名取自实际保存路径");
+      assert.equal(view.canceled, false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("md/latex：文本内容含留痕事实；滤镜与扩展名正确；保存器无路径时回显建议名", async () => {
+    const { dir, dbPath } = createTrailDb({ events: seedEvents() });
+    try {
+      const captured: Array<Parameters<DeclarationFileSaver>[0]> = [];
+      const save: DeclarationFileSaver = async (request) => {
+        captured.push(request);
+        return { canceled: false, path: null };
+      };
+      const mdView = await complianceSaveFromEngineTrail(
+        dbPath,
+        { taskId: "t-1", format: "md", humanNote: "数据预处理由本人手动完成。", unusedAi: false },
+        save,
+      );
+      const mdRequest = captured[0];
+      assert.equal(mdRequest.suggestedName, "AI工具使用声明_t-1.md");
+      assert.equal(mdRequest.filterName, "Markdown 文件");
+      assert.deepEqual(mdRequest.extensions, ["md"]);
+      assert.equal(typeof mdRequest.content, "string", "md 为文本落盘");
+      assert.ok((mdRequest.content as string).includes("deepseek-chat"), "md 文本应含留痕工具清单");
+      assert.ok((mdRequest.content as string).includes("数据预处理由本人手动完成。"), "md 文本应含人工修改说明");
+      assert.equal(mdView.filename, "AI工具使用声明_t-1.md", "保存器未给路径时回显建议文件名");
+      assert.equal(mdView.savedPath, null);
+
+      const latexView = await complianceSaveFromEngineTrail(
+        dbPath,
+        { taskId: "t-1", format: "latex", humanNote: "说明", unusedAi: false },
+        save,
+      );
+      const latexRequest = captured[1];
+      assert.equal(latexRequest.suggestedName, "AI工具使用声明_t-1.tex", "latex 扩展名映射为 .tex");
+      assert.equal(latexRequest.filterName, "LaTeX 文件");
+      assert.deepEqual(latexRequest.extensions, ["tex"]);
+      assert.ok((latexRequest.content as string).startsWith("\\documentclass{article}"));
+      assert.equal(latexView.savedPath, null);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("取消 → 静默（canceled 且回显建议名）；写盘失败归一可读；门禁未过不触保存器", async () => {
+    const { dir, dbPath } = createTrailDb({ events: seedEvents() });
+    try {
+      const cancelView = await complianceSaveFromEngineTrail(
+        dbPath,
+        { taskId: "t-1", format: "md", humanNote: "说明", unusedAi: false },
+        async () => ({ canceled: true, path: null }),
+      );
+      assert.equal(cancelView.canceled, true);
+      assert.equal(cancelView.savedPath, null);
+      assert.equal(cancelView.filename, "AI工具使用声明_t-1.md", "取消时回显建议文件名");
+
+      await assert.rejects(
+        () =>
+          complianceSaveFromEngineTrail(
+            dbPath,
+            { taskId: "t-1", format: "md", humanNote: "说明", unusedAi: false },
+            async () => {
+              throw new Error("EACCES: permission denied, open '/root/x.md'");
+            },
+          ),
+        (error: unknown) =>
+          error instanceof Error && /^导出保存失败：EACCES/.test(error.message) && error.cause instanceof Error,
+      );
+
+      // 门禁先于保存：非法格式/空任务/空说明均不触保存器（fail-closed，避免误写文件）
+      let saveCalls = 0;
+      const countingSave: DeclarationFileSaver = async () => {
+        saveCalls += 1;
+        return { canceled: false, path: "/tmp/x.md" };
+      };
+      await assert.rejects(
+        () =>
+          complianceSaveFromEngineTrail(
+            dbPath,
+            { taskId: "t-1", format: "pdf", humanNote: "说明", unusedAi: false },
+            countingSave,
+          ),
+        /不支持的导出格式：pdf/,
+      );
+      await assert.rejects(
+        () =>
+          complianceSaveFromEngineTrail(
+            dbPath,
+            { taskId: "  ", format: "md", humanNote: "说明", unusedAi: false },
+            countingSave,
+          ),
+        /暂无任务/,
+      );
+      await assert.rejects(
+        () =>
+          complianceSaveFromEngineTrail(
+            dbPath,
+            { taskId: "t-1", format: "md", humanNote: "  ", unusedAi: false },
+            countingSave,
+          ),
+        /人工修改说明为必填项/,
+      );
+      assert.equal(saveCalls, 0, "任何门禁未过都不得触发保存器（不写盘）");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

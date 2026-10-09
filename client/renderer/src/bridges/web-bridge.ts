@@ -12,6 +12,7 @@ import type {
   BillingLedgerRow,
   BillingOverview,
   ComplianceExportResult,
+  ComplianceSaveResult,
   ContentItem,
   EntitlementView,
   ErdosBridge,
@@ -20,7 +21,7 @@ import type {
 } from "./bridge.ts";
 import { BRIDGE_CHANNELS } from "./bridge.ts";
 import type { EngineEvent, StageName } from "../../../shared/ipc.ts";
-import { exportDeclaration } from "../../../declaration/export.ts";
+import { DOCX_PREVIEW_SUFFIX, exportDeclaration, isDeclarationFormat } from "../../../declaration/export.ts";
 import type { TrailSource } from "../../../declaration/types.ts";
 import { estimateUsage } from "../../../shared/usage.ts";
 import type { UsageEstimateView } from "./bridge.ts";
@@ -306,12 +307,13 @@ export class WebDemoBridge implements ErdosBridge {
       case BRIDGE_CHANNELS.historyResume:
         return Promise.resolve({ taskId: String(body["taskId"]), resumable: true } as T);
       case BRIDGE_CHANNELS.complianceExport: {
-        const rawFormat = String(body["format"] ?? "md");
-        const format: "md" | "latex" | "docx" =
-          rawFormat === "latex" ? "latex" : rawFormat === "docx" ? "docx" : "md";
+        // 格式白名单与真实桥同口径（共享校验）；任务号由页面携带（空任务号同样拦截）
+        const format = String(body["format"] ?? "md");
+        if (!isDeclarationFormat(format)) {
+          return Promise.reject(new Error(`不支持的导出格式：${format}`)) as Promise<T>;
+        }
         const unusedAi = Boolean(body["unusedAi"]);
         const humanNote = String(body["humanNote"] ?? "");
-        // 任务号由页面携带（与主进程桥同口径：空任务号同样拦截，避免演示桥掩盖空任务路径）
         const taskId = String(body["taskId"] ?? "");
         if (!taskId) {
           return Promise.reject(new Error("暂无任务：请先在工作台运行任务后再生成声明")) as Promise<T>;
@@ -322,7 +324,7 @@ export class WebDemoBridge implements ErdosBridge {
             await exportDeclaration(DEMO_TRAIL, { taskId, format: "docx", humanNote, unusedAi });
             const md = await exportDeclaration(DEMO_TRAIL, { taskId, format: "md", humanNote, unusedAi });
             return {
-              content: `${String(md.content)}\n\n（Word 为二进制格式：演示环境仅预览同源 Markdown，不生成二进制文件。）`,
+              content: `${String(md.content)}\n\n${DOCX_PREVIEW_SUFFIX}（演示模式不写盘。）`,
               filename: `AI工具使用声明_${taskId}.docx`,
               // 未使用 AI 声明不引用产物支撑材料
               artifactHashes: unusedAi ? [] : md.data.artifactHashes.map((artifact) => artifact.sha256),
@@ -339,6 +341,27 @@ export class WebDemoBridge implements ErdosBridge {
             filename: exported.filename,
             artifactHashes: unusedAi ? [] : exported.data.artifactHashes.map((artifact) => artifact.sha256),
           };
+        })().then((value) => value as T);
+      }
+      case BRIDGE_CHANNELS.complianceSave: {
+        // 演示模式不写盘（与 billing:export 演示口径一致）：回显将保存的文件名，savedPath 为 null。
+        // 门禁与真实桥同口径：格式白名单（共享校验）、空任务号拦截、人工说明经 exportDeclaration 的 checkNote（同文案）。
+        const format = String(body["format"] ?? "md");
+        if (!isDeclarationFormat(format)) {
+          return Promise.reject(new Error(`不支持的导出格式：${format}`)) as Promise<T>;
+        }
+        const taskId = String(body["taskId"] ?? "");
+        if (!taskId) {
+          return Promise.reject(new Error("暂无任务：请先在工作台运行任务后再生成声明")) as Promise<T>;
+        }
+        return (async (): Promise<ComplianceSaveResult> => {
+          const exported = await exportDeclaration(DEMO_TRAIL, {
+            taskId,
+            format,
+            humanNote: String(body["humanNote"] ?? ""),
+            unusedAi: Boolean(body["unusedAi"]),
+          });
+          return { filename: exported.filename, savedPath: null, canceled: false };
         })().then((value) => value as T);
       }
       case "engine:start_stage": {

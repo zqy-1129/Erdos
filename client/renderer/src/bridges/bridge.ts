@@ -111,3 +111,12 @@ export interface ComplianceExportResult {
   /** 产物 sha256（US-007 声明含产物哈希）。 */
   artifactHashes: string[];
 }
+
+/** 声明文件保存结果（compliance:save）：真实保存路径或演示文件名；取消=用户主动放弃。 */
+export interface ComplianceSaveResult {
+  /** 建议/实际文件名（取消时为建议名）。 */
+  filename: string;
+  /** 实际保存路径（用户取消或演示模式为 null）。 */
+  savedPath: string | null;
+  canceled: boolean;
+}

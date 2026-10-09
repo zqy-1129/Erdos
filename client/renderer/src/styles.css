@@ -147,6 +147,7 @@ label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; fo
 .content-tags { margin-top: 8px; display: flex; gap: 6px; }
 
 /* ---------- 合规导出 ---------- */
+.compliance-actions .btn + .btn { margin-left: 8px; }
 .export-result { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-top: 16px; }
 .export-preview { background: #fafbfc; border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-size: 12px; max-height: 280px; overflow: auto; white-space: pre-wrap; }
 

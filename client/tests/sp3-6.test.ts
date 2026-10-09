@@ -10,7 +10,7 @@ import { describe, it } from "node:test";
 import { exportDeclaration, ComplianceDataError } from "../declaration/export.ts";
 import { summarizeTrail } from "../declaration/summary.ts";
 import type { ArtifactEntry, TrailEvent, TrailSource } from "../declaration/types.ts";
-import type { ComplianceExportResult } from "../renderer/src/bridges/bridge.ts";
+import type { ComplianceExportResult, ComplianceSaveResult } from "../renderer/src/bridges/bridge.ts";
 
 const SHA_A = "a".repeat(64);
 const SHA_B = "b".repeat(64);
@@ -237,6 +237,44 @@ describe("渲染层桥接入（web-bridge 合规通道）", () => {
     await assert.rejects(
       () => bridge.invoke(BRIDGE_CHANNELS.complianceExport, { format: "md", unusedAi: false, humanNote: "说明" }),
       /暂无任务/,
+    );
+
+    // 格式白名单（共享校验）：不支持格式拒绝，与真实桥同口径（非静默降级）
+    await assert.rejects(
+      () => bridge.invoke(BRIDGE_CHANNELS.complianceExport, { taskId: "demo-task", format: "pdf", unusedAi: false, humanNote: "说明" }),
+      /不支持的导出格式：pdf/,
+    );
+  });
+
+  it("保存通道（演示不写盘）：三格式文件名后缀正确、savedPath 为 null；空任务/空说明/非法格式平价拦截", async () => {
+    const { WebDemoBridge } = await import("../renderer/src/bridges/web-bridge.ts");
+    const { BRIDGE_CHANNELS } = await import("../renderer/src/bridges/bridge.ts");
+    const bridge = new WebDemoBridge();
+    const base = { taskId: "demo-task", unusedAi: false, humanNote: "图表由本人核验。" };
+
+    const md = await bridge.invoke<ComplianceSaveResult>(BRIDGE_CHANNELS.complianceSave, { ...base, format: "md" });
+    assert.equal(md.filename, "AI工具使用声明_demo-task.md");
+    assert.equal(md.savedPath, null, "演示模式不写盘：savedPath 为 null（与 billing:export 演示口径一致）");
+    assert.equal(md.canceled, false);
+
+    const latex = await bridge.invoke<ComplianceSaveResult>(BRIDGE_CHANNELS.complianceSave, { ...base, format: "latex" });
+    assert.equal(latex.filename, "AI工具使用声明_demo-task.tex", "latex 扩展名映射 .tex");
+
+    const docx = await bridge.invoke<ComplianceSaveResult>(BRIDGE_CHANNELS.complianceSave, { ...base, format: "docx" });
+    assert.equal(docx.filename, "AI工具使用声明_demo-task.docx");
+
+    // 门禁平价（与真实桥同文案）：任务号缺失、人工说明空、格式白名单
+    await assert.rejects(
+      () => bridge.invoke(BRIDGE_CHANNELS.complianceSave, { format: "md", unusedAi: false, humanNote: "说明" }),
+      /暂无任务/,
+    );
+    await assert.rejects(
+      () => bridge.invoke(BRIDGE_CHANNELS.complianceSave, { ...base, humanNote: " " }),
+      /人工修改说明为必填项/,
+    );
+    await assert.rejects(
+      () => bridge.invoke(BRIDGE_CHANNELS.complianceSave, { ...base, format: "pdf" }),
+      /不支持的导出格式：pdf/,
     );
   });
 });
