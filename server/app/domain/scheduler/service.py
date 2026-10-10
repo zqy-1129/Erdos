@@ -8,10 +8,16 @@
 from datetime import datetime
 
 from app.domain.alerts.ports import BusinessAlert
-from app.domain.alerts.severity import Severity, classify_reconcile_diff
+from app.domain.alerts.severity import (
+    MONTHLY_GRANT_METRIC,
+    Severity,
+    classify_reconcile_diff,
+)
 from app.domain.scheduler.ports import (
     AccountLedgerSource,
     ExpireSubscriptionRunner,
+    GrantOutcome,
+    MonthlyGrantRun,
     MonthlyGrantRunner,
     ReconcileDifference,
     ReconcileResult,
@@ -32,6 +38,24 @@ def reconcile_alert(result: ReconcileResult) -> BusinessAlert | None:
         severity=Severity.P2,
         message=f"积分对账差异 {len(result.differences)} 个账户（余额与流水净额不一致）",
         value=float(len(result.differences)),
+    )
+
+
+def monthly_grant_alert(outcome: GrantOutcome | None) -> BusinessAlert | None:
+    """月赠发放失败 -> P1 告警短句；未执行本批次或零失败返回 None。
+
+    定 P1 而不是 P2：失败意味着"已付费订阅的用户没拿到当月积分"，是权益承诺破损，
+    与容量水位类 P2 不同档（口径需 ARCH 追认，见交付快照）。短句只带计数，
+    明细 exec_id 走日志与积分流水回查，不落告警载荷。
+    """
+    if outcome is None or outcome.failed <= 0:
+        return None
+    total = outcome.failed + outcome.granted
+    return BusinessAlert(
+        key=MONTHLY_GRANT_METRIC,
+        severity=Severity.P1,
+        message=f"月赠发放失败 {outcome.failed}/{total} 人（exec_id 见服务端日志，按流水回查）",
+        value=float(outcome.failed),
     )
 
 
@@ -65,15 +89,19 @@ class SchedulerService:
     # ------------------------------------------------------------------
     # 月赠（幂等批次）
     # ------------------------------------------------------------------
-    async def run_monthly_grant(self, now: datetime) -> str:
-        """月赠任务：批次键 = 年月，重复触发只执行一次（卡死批次可重占）。"""
+    async def run_monthly_grant(self, now: datetime) -> MonthlyGrantRun:
+        """月赠任务：批次键 = 年月，重复触发只执行一次（卡死批次可重占）。
+
+        失败计数随结果一起交回调用方：发放失败此前只 `continue`，值班看不到"有几个人
+        没拿到月赠"，也就没人补发——所以口径串固定含 `failed:`，并由上层转 P1 告警。
+        """
         batch_key = f"{now.year}{now.month:02d}"
         if not await self._claim("monthly_grant", batch_key, now):
-            return "already_ran"
-        granted = await self._monthly_grant.grant_all_active(now)
-        result = f"granted:{granted}"
+            return MonthlyGrantRun(result="already_ran", outcome=None)
+        outcome = await self._monthly_grant.grant_all_active(now)
+        result = f"granted:{outcome.granted} failed:{outcome.failed}"
         await self._runs.mark_done("monthly_grant", batch_key, result, now)
-        return result
+        return MonthlyGrantRun(result=result, outcome=outcome)
 
     # ------------------------------------------------------------------
     # 订阅到期冻结（幂等批次）

@@ -85,7 +85,9 @@ async def trigger_monthly_grant(
     """手动触发月赠（与后台循环同一实现，批次键幂等）。"""
     settings: Settings = request.app.state.settings
     now = utc_now()
-    result = await scheduler_tasks.run_monthly_grant_task(session_factory, settings, now)
+    result = await scheduler_tasks.run_monthly_grant_task(
+        session_factory, settings, request.app.state.alert_outlet, now
+    )
     await record_audit(
         request,
         action="admin.scheduler_trigger",

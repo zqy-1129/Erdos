@@ -29,7 +29,11 @@ from app.domain.notification.ports import (
     VerificationCodeLimiter,
 )
 from app.domain.scheduler.ports import ReconcileResult
-from app.domain.scheduler.service import SchedulerService, reconcile_alert
+from app.domain.scheduler.service import (
+    SchedulerService,
+    monthly_grant_alert,
+    reconcile_alert,
+)
 from app.infra.notification_service import build_notification_service
 from app.infra.scheduler_runners import (
     SQLAlchemyExpireSubscriptionRunner,
@@ -57,12 +61,19 @@ def _service(session: AsyncSession, settings: Settings) -> SchedulerService:
 
 
 async def run_monthly_grant_task(
-    session_factory: async_sessionmaker[AsyncSession], settings: Settings, now: datetime
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    alerts: AlertOutlet,
+    now: datetime,
 ) -> str:
-    """月赠任务：批次键=年月，重复触发只发放一次。"""
+    """月赠任务：批次键=年月，重复触发只发放一次；发放失败在事务提交后外发 P1。"""
     async with UnitOfWork(session_factory) as uow:
-        result = await _service(uow.session, settings).run_monthly_grant(now)
-    return result
+        run = await _service(uow.session, settings).run_monthly_grant(now)
+
+    alert = monthly_grant_alert(run.outcome)
+    if alert is not None:
+        await alerts.emit(alert, now)
+    return run.result
 
 
 async def run_expire_subscriptions_task(

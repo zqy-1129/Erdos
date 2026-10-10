@@ -3,6 +3,7 @@
 直接操作订阅与积分表，供 SchedulerService 编排调用。
 """
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
@@ -12,6 +13,7 @@ from app.domain.points.ports import BalanceType
 from app.domain.points.service import PointsService
 from app.domain.scheduler.ports import (
     ExpireSubscriptionRunner,
+    GrantOutcome,
     MonthlyGrantRunner,
     RenewalReminderRunner,
     RenewalReminderTarget,
@@ -23,6 +25,12 @@ from app.repository.points import (
     SQLAlchemyPointAccountRepository,
 )
 
+logger = logging.getLogger("erdos.scheduler")
+
+# 告警与批次账本里只留前若干条失败 exec_id：明细随故障规模无界增长会把载荷撑爆，
+# 失败总数照实计数，全量明细看日志。
+GRANT_FAILURE_DETAIL_LIMIT = 20
+
 
 class SQLAlchemyMonthlyGrantRunner(MonthlyGrantRunner):
     """月赠执行器：遍历活跃订阅，逐个幂等发放月赠积分。"""
@@ -31,7 +39,7 @@ class SQLAlchemyMonthlyGrantRunner(MonthlyGrantRunner):
         self._session = session
         self._monthly_points = monthly_points
 
-    async def grant_all_active(self, now: datetime) -> int:
+    async def grant_all_active(self, now: datetime) -> GrantOutcome:
         rows = (
             (
                 await self._session.execute(
@@ -50,20 +58,29 @@ class SQLAlchemyMonthlyGrantRunner(MonthlyGrantRunner):
             None,  # type: ignore[arg-type]  # 无需 Settings
         )
         granted = 0
+        failed = 0
+        failures: list[str] = []
         for sub in rows:
+            exec_id = f"monthly:{sub.user_id}:{sub.plan}:{now.year}{now.month:02d}"
             try:
-                await points.grant_points(
-                    sub.user_id,
-                    self._monthly_points,
-                    exec_id=f"monthly:{sub.user_id}:{sub.plan}:{now.year}{now.month:02d}",
-                    balance_type=BalanceType.MONTHLY,
-                    source="subscription_monthly",
-                    now=now,
-                )
+                # 每人一个保存点：某个账户失败（余额行缺失、并发冲突）不能把整批的会话
+                # 拖进"待回滚"状态，否则后面所有人都跟着失败，而失败原因只有一个。
+                async with self._session.begin_nested():
+                    await points.grant_points(
+                        sub.user_id,
+                        self._monthly_points,
+                        exec_id=exec_id,
+                        balance_type=BalanceType.MONTHLY,
+                        source="subscription_monthly",
+                        now=now,
+                    )
                 granted += 1
             except Exception:
-                continue
-        return granted
+                failed += 1
+                logger.exception("月赠发放失败：user_id=%s exec_id=%s", sub.user_id, exec_id)
+                if len(failures) < GRANT_FAILURE_DETAIL_LIMIT:
+                    failures.append(exec_id)
+        return GrantOutcome(granted=granted, failed=failed, failures=tuple(failures))
 
 
 class SQLAlchemyExpireSubscriptionRunner(ExpireSubscriptionRunner):

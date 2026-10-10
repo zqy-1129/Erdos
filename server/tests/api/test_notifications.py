@@ -56,7 +56,7 @@ async def test_monthly_grant_endpoint(admin_client) -> None:
         "/v1/scheduler/monthly-grant", headers={"Authorization": "Bearer admin"}
     )
     assert r.status_code == 200
-    assert r.json()["data"]["result"] == "granted:0"
+    assert r.json()["data"]["result"] == "granted:0 failed:0"
 
 
 async def test_reconcile_difference_reaches_alert_channel(admin_client, admin_app) -> None:

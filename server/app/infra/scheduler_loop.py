@@ -80,7 +80,7 @@ async def _dispatch(
     settings: Settings = state.settings
     if name == "monthly_grant":
         return await scheduler_tasks.run_monthly_grant_task(
-            state.session_factory, settings, now
+            state.session_factory, settings, state.alert_outlet, now
         )
     if name == "expire_subscriptions":
         return await scheduler_tasks.run_expire_subscriptions_task(
