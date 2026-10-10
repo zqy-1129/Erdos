@@ -23,9 +23,11 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 function createTrailDb(dbPath: string, rows: Array<{ taskId: string; ts: string }>): void {
   const db = new DatabaseSync(dbPath);
   try {
+    db.exec("BEGIN"); // 批量插入包事务：避免逐条 fsync（大历史用例建库毫秒级完成）
     db.exec("CREATE TABLE audit_trail (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, ts TEXT NOT NULL)");
     const insert = db.prepare("INSERT INTO audit_trail (task_id, ts) VALUES (?, ?)");
     for (const row of rows) insert.run(row.taskId, row.ts);
+    db.exec("COMMIT");
   } finally {
     db.close();
   }
@@ -39,6 +41,7 @@ function createCheckpointsDb(
 ): void {
   const db = new DatabaseSync(dbPath);
   try {
+    db.exec("BEGIN"); // 批量插入包事务：避免逐条 fsync（大历史用例建库毫秒级完成）
     db.exec(
       "CREATE TABLE checkpoints (task_id TEXT NOT NULL, stage TEXT NOT NULL, status TEXT NOT NULL," +
         " step INTEGER NOT NULL DEFAULT 0, data TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL," +
@@ -56,6 +59,7 @@ function createCheckpointsDb(
       "INSERT INTO checkpoints (task_id, stage, status, step, data, updated_at) VALUES (?, ?, ?, 0, '{}', '2026-10-09T00:00:00Z')",
     );
     for (const checkpoint of checkpoints) insertCheckpoint.run(checkpoint.taskId, checkpoint.stage, checkpoint.status);
+    db.exec("COMMIT");
   } finally {
     db.close();
   }
@@ -214,6 +218,44 @@ describe("本地历史数据源（单元）", () => {
       );
       assert.equal(resolveResumeStage(checkpointsDb, "t1"), "solving");
       assert.equal(resolveResumeStage(checkpointsDb, "unknown"), null, "无检查点→null");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("性能守卫：大历史（500 任务 × 2 检查点）读取耗时有界（O(n) 全表扫描口径）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "erdos-history-perf-"));
+    try {
+      const trailDb = join(dir, "audit.db");
+      const checkpointsDb = join(dir, "checkpoints.db");
+      // 递增时间戳：perf-499 为最新（置顶断言依据）
+      const tasks = Array.from({ length: 500 }, (_, index) => ({
+        taskId: `perf-${index}`,
+        ts: new Date(Date.UTC(2026, 9, 9, 0, 0, 0) + index * 60_000).toISOString(),
+      }));
+      createTrailDb(trailDb, tasks);
+      createCheckpointsDb(
+        checkpointsDb,
+        tasks.map((task) => ({ taskId: task.taskId, title: `性能题 ${task.taskId}` })),
+        tasks.flatMap((task) => [
+          { taskId: task.taskId, stage: "analysis", status: "done" },
+          { taskId: task.taskId, stage: "modeling", status: "done" },
+        ]),
+      );
+
+      const started = Date.now();
+      const list = readLocalHistory(trailDb, checkpointsDb);
+      const elapsedMs = Date.now() - started;
+
+      assert.equal(list.length, 50, "默认 limit=50（长历史虚拟列表分页口径）");
+      assert.equal(list[0]?.taskId, "perf-499", "最新留痕置顶");
+      assert.equal(list[0]?.title, "性能题 perf-499");
+      assert.equal(list[0]?.status, "solving", "analysis+modeling 已过门禁 → 下一阶段 solving");
+      assert.equal(list[0]?.resumable, true);
+      assert.equal(resolveResumeStage(checkpointsDb, "perf-0"), "solving");
+      // 宽松上界：非基准测试，仅作回归护栏（防全表扫描退化为多次扫描/嵌套查询）；
+      // 本机实测中位 ≈2.4ms（500 任务 × 2 检查点，3 次采样）。
+      assert.ok(elapsedMs < 1500, `读取耗时应 <1500ms（实测 ${elapsedMs}ms）`);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
