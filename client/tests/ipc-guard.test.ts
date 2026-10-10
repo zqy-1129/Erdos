@@ -5,10 +5,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { isAllowedSenderUrl } from "../main/ipc/guard.ts";
+import { isAllowedSenderUrl, isAllowedExternalUrl } from "../main/ipc/guard.ts";
 
-const PROD = { dev: false, devServerUrl: "http://localhost:5173" };
-const DEV = { dev: true, devServerUrl: "http://localhost:5173" };
+const PROD = { dev: false, devServerUrl: "http://localhost:5173", rendererUrl: "file:///D:/Erdos/client/dist/index.html" };
+const DEV = { ...PROD, dev: true };
 
 describe("IPC 来源校验（W3 安全基线）", () => {
   it("生产渠道：file:// 产物页放行", () => {
@@ -38,5 +38,18 @@ describe("IPC 来源校验（W3 安全基线）", () => {
     assert.equal(isAllowedSenderUrl("", DEV), false);
     assert.equal(isAllowedSenderUrl(null, DEV), false);
     assert.equal(isAllowedSenderUrl(undefined, DEV), false);
+  });
+  it("拒绝其他本地文件与相似域名，只允许自身页面的查询/哈希路由", () => {
+    assert.equal(isAllowedSenderUrl(PROD.rendererUrl + "?mode=unit#/keys", PROD), true);
+    for (const url of ["file:///D:/evil.html", "file://other-host/D:/Erdos/client/dist/index.html", "http://localhost:5173.evil/", "http://localhost:51730/", "http://user:pass@localhost:5173/"]) {
+      assert.equal(isAllowedSenderUrl(url, DEV), false);
+    }
+    assert.equal(isAllowedSenderUrl(PROD.rendererUrl, { ...PROD, rendererUrl: undefined }), false);
+    assert.equal(isAllowedSenderUrl("bad url", PROD), false);
+    assert.equal(isAllowedSenderUrl("http://localhost:5173/", { ...DEV, devServerUrl: "invalid" }), false);
+  });
+  it("只向系统浏览器打开普通网页，不打开本地文件或执行协议", () => {
+    for (const url of ["https://docs.example/path", "http://127.0.0.1:8000/"]) assert.equal(isAllowedExternalUrl(url), true);
+    for (const url of ["file:///D:/evil.exe", "javascript:alert(1)", "data:text/html,test", "erdos://run", "https://user:pass@docs.example", "bad url"]) assert.equal(isAllowedExternalUrl(url), false);
   });
 });

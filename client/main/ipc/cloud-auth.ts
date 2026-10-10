@@ -232,11 +232,12 @@ export class CloudAuthBridge {
       platform: this.platform,
     });
     if (!built.ok) throw new AuthFailureError("invalid", built.message);
+    const revision = this.tokens.beginSessionChange();
     try {
       const pair = await this.auth.register(built.body);
       // buildRegisterBody 已将 trim 后账号写入 email/phone，会话视图沿用同一账号
       const username = input.username.trim();
-      this.tokens.adopt(pair, username);
+      this.tokens.adopt(pair, username, revision);
       return sessionViewOf(pair, username);
     } catch (error) {
       throw classifyAuthError(error);
@@ -272,6 +273,9 @@ export class CloudAuthBridge {
   getToken(): Promise<string | null> {
     return this.tokens.getToken();
   }
+
+  /** 业务 HTTP 请求捕获此版本，账号切换后取消旧响应。 */
+  sessionRevision(): number { return this.tokens.sessionRevision(); }
 
   /** 业务通道 401/403 清会话（回退匿名；挂 CloudHttpClient.onUnauthorized 防死循环 401）。 */
   clearSession(): void {

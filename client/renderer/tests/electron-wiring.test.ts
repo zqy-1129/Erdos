@@ -1,12 +1,17 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { pathToFileURL } from "node:url";
+import { resolve } from "node:path";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { sha256 } from "../../main/tamper-check.ts";
 const mocks = vi.hoisted(() => {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   const events = new Map<string, (...args: any[]) => unknown>();
   const updateEvents = new Map<string, (...args: any[]) => unknown>();
   const store = new Map<string, string>();
   const window = { webContents: { send: vi.fn() }, isMinimized: () => false, restore: vi.fn(), focus: vi.fn() };
-  return { handlers, events, updateEvents, window, encryptionAvailable: true, showErrorBox: vi.fn(),
+  return { handlers, events, updateEvents, window, encryptionAvailable: true, showErrorBox: vi.fn(), createWindow: vi.fn(() => window), engineOptions: [] as any[],
     store: { get: (k: string) => store.get(k) ?? null, set: (k: string, v: string) => store.set(k,v), has: (k: string) => store.has(k) },
     app: { getPath: () => "C:/erdos-unit-fixture", setPath: vi.fn(), getVersion: () => "0.1.0", isPackaged: false,
       requestSingleInstanceLock: () => true, whenReady: () => Promise.resolve(),
@@ -21,15 +26,16 @@ vi.mock("electron", () => ({ app: mocks.app, BrowserWindow: { getAllWindows: () 
   contextBridge: mocks.contextBridge, ipcRenderer: mocks.ipcRenderer,
   safeStorage: { isEncryptionAvailable: () => mocks.encryptionAvailable, encryptString: (v: string) => Buffer.from(v), decryptString: (v: Buffer) => v.toString() } }));
 vi.mock("electron-updater", () => ({ autoUpdater: mocks.updater }));
-vi.mock("../../main/window.ts", () => ({ createMainWindow: () => mocks.window }));
+vi.mock("../../main/window.ts", () => ({ createMainWindow: mocks.createWindow }));
 vi.mock("../../main/sqlite-secret-store.ts", () => ({ createSqliteSecretStore: () => mocks.store }));
 vi.mock("../../main/device-identity.ts", () => ({ ensureDeviceFingerprint: () => "unit-fingerprint" }));
 vi.mock("../../main/save-export.ts", () => ({ createExportSaver: () => async () => ({ canceled: true, path: null }), createFileSaver: () => async () => ({ canceled: true, path: null }) }));
 vi.mock("../../main/engine-host/host.ts", () => ({ EngineHost: class {
+  constructor(options: unknown) { mocks.engineOptions.push(options); }
   currentState = "idle"; stop = vi.fn(); reloadKey = vi.fn(async () => {});
   invoke = vi.fn(async () => ({ engine: "idle", task: null }));
 } }));
-afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); mocks.encryptionAvailable = true; });
+afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); mocks.encryptionAvailable = true; mocks.app.isPackaged = false; });
 describe("Electron 入口与预加载实际接线", () => {
   it("入口注册全部业务/引擎通道并拒绝非法来源", async () => {
     vi.stubEnv("ERDOS_API_BASE_URL", "");
@@ -37,7 +43,7 @@ describe("Electron 入口与预加载实际接线", () => {
     await import("../../main/index.ts"); await Promise.resolve(); await Promise.resolve();
     expect(mocks.handlers.has("keys:save")).toBe(true); expect(mocks.handlers.has("engine:start_stage")).toBe(true);
     expect(mocks.handlers.has("engine:event")).toBe(false);
-    const valid = { senderFrame: { url: "file:///C:/app/index.html" } };
+    const valid = { senderFrame: { url: pathToFileURL(resolve("dist/index.html")).href } };
     await expect(mocks.handlers.get("keys:list")!(valid, {})).resolves.toEqual([]);
     await expect(mocks.handlers.get("keys:list")!({ senderFrame: { url: "https://evil.example" } }, {})).rejects.toThrow("非法");
     await expect(mocks.handlers.get("engine:get_status")!({ senderFrame: { url: "https://evil.example" } }, {})).rejects.toThrow("非法");
@@ -63,6 +69,33 @@ describe("Electron 入口与预加载实际接线", () => {
     await import("../../main/index.ts"); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     expect(mocks.showErrorBox).toHaveBeenCalledWith("客户端初始化失败", expect.stringContaining("本地安全存储"));
     expect(mocks.app.exit).toHaveBeenCalledWith(1);
+  });
+  it("正式包缺引擎时在窗口创建前拒绝，不能用dev或smoke环境绕过", async () => {
+    vi.resetModules(); mocks.app.isPackaged = true; mocks.createWindow.mockClear();
+    vi.stubEnv("ERDOS_DEV", "1"); vi.stubEnv("ERDOS_SMOKE", "1");
+    vi.stubGlobal("process", { ...process, resourcesPath: "C:/erdos-unit-missing", argv: ["fixture", "--dev"] });
+    await import("../../main/index.ts"); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(mocks.createWindow).not.toHaveBeenCalled();
+    expect(mocks.showErrorBox).toHaveBeenCalledWith("引擎启动校验失败", expect.stringContaining("缺少捆绑引擎"));
+  });
+  it("正式入口接线使用哈希与版本绑定后的exe，关闭开发模式且不传Python参数", async () => {
+    const resources = mkdtempSync(resolve(tmpdir(), "erdos-packaged-wiring-"));
+    try {
+      const engine = resolve(resources, "engine"); mkdirSync(engine);
+      writeFileSync(resolve(engine, "engine.exe"), "fixture"); writeFileSync(resolve(engine, "version.txt"), "0.1.0");
+      writeFileSync(resolve(engine, "manifest.json"), JSON.stringify({ version: 1, engineVersion: "0.1.0", files: {
+        "engine.exe": sha256(Buffer.from("fixture")), "version.txt": sha256(Buffer.from("0.1.0")),
+      } }));
+      vi.resetModules(); mocks.app.isPackaged = true; mocks.createWindow.mockClear();
+      vi.stubEnv("ERDOS_DEV", "1"); vi.stubEnv("ERDOS_ENGINE_CMD", "fixture-evil.exe"); vi.stubEnv("ERDOS_API_BASE_URL", "");
+      vi.stubGlobal("__ERDOS_ENGINE_VERSION__", "0.1.0"); vi.stubGlobal("process", { ...process, platform: "win32", resourcesPath: resources });
+      await import("../../main/index.ts"); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+      expect(mocks.createWindow).toHaveBeenCalledWith(expect.objectContaining({ dev: false }));
+      expect(mocks.engineOptions.at(-1)).toMatchObject({ command: resolve(engine, "engine.exe"), args: [], cwd: engine });
+    } finally {
+      expect(resources.startsWith(resolve(tmpdir()) + (process.platform === "win32" ? "\\" : "/"))).toBe(true);
+      rmSync(resources, { recursive: true, force: true });
+    }
   });
   it("平台加密不可用禁止弱加密回退；正式更新源配置与渠道门禁", async () => {
     const { createPlatformEncryptor } = await import("../../main/safe-storage-encryptor.ts");

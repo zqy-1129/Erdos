@@ -205,6 +205,7 @@ export class BridgeBackend {
         resolveTaskId: execId => this.tasks?.taskForExec(execId) ?? "",
         baseUrl: auth.runtime.baseUrl,
         getToken: () => cloudAuth.getToken(),
+        getSessionRevision: () => cloudAuth.sessionRevision(),
         onUnauthorized: () => this.invalidateSession(),
         entitlementStore: auth.entitlementStore ?? undefined,
         entitlementLedger: auth.entitlementLedger ?? undefined,

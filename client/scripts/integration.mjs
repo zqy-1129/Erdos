@@ -38,8 +38,10 @@ async function ready() {
 try {
   const baseUrl = await ready();
   console.log("[integration] 测试证据目录：" + evidence);
-  const result = spawn(process.execPath, ["--test", "tests/product-cloud-live.test.ts", "tests/sp3-4-ledger-store.test.ts",
-    "tests/sp3-5-cloud-live.test.ts", "tests/sp3-5-cloud-business.test.ts"], {
+  const testArgs = process.argv.includes("--coverage") ? ["scripts/coverage.mjs"] :
+    ["--test", "tests/product-cloud-live.test.ts", "tests/sp3-4-ledger-store.test.ts",
+      "tests/sp3-5-cloud-live.test.ts", "tests/sp3-5-cloud-business.test.ts"];
+  const result = spawn(process.execPath, testArgs, {
     cwd: clientRoot, stdio: "inherit", windowsHide: true,
     env: { ...process.env, ERDOS_API_BASE_URL: baseUrl, ERDOS_CLIENT_TEST_API_URL: baseUrl },
   });
