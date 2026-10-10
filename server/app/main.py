@@ -32,6 +32,9 @@ from app.core.errors import AppError
 from app.core.logging import get_logger, setup_logging
 from app.domain.account.reset import PasswordResetService
 from app.domain.account.service import PasswordPolicy
+from app.infra.alert_outlet import BrokerAlertOutlet
+from app.infra.alert_webhook import AlertWebhookDispatcher
+from app.infra.audit_recorder import AuditRecorder
 from app.infra.auth import (
     BcryptPasswordHasher,
     DevCredentialVerifier,
@@ -51,9 +54,12 @@ from app.infra.message_bus import MessageBus
 from app.infra.metrics import metrics_response
 from app.infra.monitoring import MonitoringCollector, set_collector
 from app.infra.notification_sender import LogNotificationSender
+from app.infra.payment_channels import build_payment_channels
+from app.infra.payment_reconcile import OrderReconciler, run_order_reconcile_loop
 from app.infra.presence_aggregator import MinuteAggregator
 from app.infra.redis_state import build_code_limiter, build_lockout, build_redis_client
 from app.infra.sampling import run_monitoring_loop
+from app.infra.scheduler_loop import run_scheduler_loop
 
 
 def _default_introspector(
@@ -94,15 +100,23 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        task = asyncio.create_task(run_monitoring_loop(app))
-        # 在线分钟桶聚合后台落库（SP2-8 优化项 1：消除心跳单行漏斗）
-        agg_task = asyncio.create_task(
-            app.state.minute_aggregator.run_loop(config.presence_aggregate_interval_seconds)
-        )
+        tasks: list[asyncio.Task[None]] = [
+            asyncio.create_task(run_monitoring_loop(app)),
+            # 在线分钟桶聚合后台落库（SP2-8 优化项 1：消除心跳单行漏斗）
+            asyncio.create_task(
+                app.state.minute_aggregator.run_loop(config.presence_aggregate_interval_seconds)
+            ),
+        ]
+        # 支付查单兜底扫描（EC-N7/DEC-022）：周期为 0 时循环自行退出，兜底只剩轮询与管理端
+        if config.order_reconcile_interval_seconds > 0:
+            tasks.append(asyncio.create_task(run_order_reconcile_loop(app)))
+        # 三大调度任务的自动触发（月赠/到期冻结/对账；关闭时仅剩管理端手动触发）
+        if config.scheduler_enabled:
+            tasks.append(asyncio.create_task(run_scheduler_loop(app)))
         try:
             yield
         finally:
-            for t in (task, agg_task):
+            for t in tasks:
                 t.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await t
@@ -111,11 +125,17 @@ def create_app(
                 await app.state.minute_aggregator.flush_and_prune()
             await engine.dispose()
 
+    # 交互式文档与 OpenAPI 端点只在 dev/test 暴露：生产公开 /docs + /openapi.json 等于
+    # 把全部接口面、参数与错误码结构送给探测方（安全加固项，SP5-2 口径）。
+    docs_enabled = config.env in ("dev", "test")
     app = FastAPI(
         title="Erdos 云端服务端",
         version=__version__,
         description="Erdos 服务端（SP2-1 骨架）：统一信封、网关与数据访问层",
         lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
     )
     app.state.settings = config
     app.state.engine = engine
@@ -136,6 +156,23 @@ def create_app(
     # SP2-7 通知与调度：消息总线 + 通知发送器（dev 日志渠道）+ 验证码限流器（进程级）
     app.state.message_bus = MessageBus()
     app.state.notification_sender = LogNotificationSender()
+    # 业务告警出口（对账差异/资金差异/审计写入失败等）：告警事件落库 + 看板 SSE + Webhook 外发，静默窗口去重
+    app.state.alert_outlet = BrokerAlertOutlet(
+        session_factory,
+        app.state.event_broker,
+        AlertWebhookDispatcher.from_settings(config),
+    )
+    # 关键操作审计埋点（登录/购买/权益变更/许可签发/离线对账/管理员操作）
+    app.state.audit_recorder = AuditRecorder(session_factory)
+    # SP2-5 查单兜底（EC-N7/DEC-022）：渠道注册表 + 编排器；mock 渠道仅 dev/test 注册
+    app.state.payment_channels = build_payment_channels(config)
+    app.state.order_reconciler = OrderReconciler(
+        session_factory,
+        app.state.payment_channels,
+        config,
+        app.state.license_signer,
+        app.state.alert_outlet,
+    )
     # Redis 跨进程状态（SP2-7 多实例迁移）：配置 ERDOS_REDIS_URL 时防爆破/验证码限流
     # 自动切换；未配置或 redis 包缺失回退进程内实现（可用性优先）。
     redis_client = build_redis_client(config.redis_url)
@@ -161,8 +198,9 @@ def create_app(
         daily_limit=config.account_reset_daily_limit,
     )
     if config.env not in ("dev", "test") and not config.auth_enforce:
-        get_logger("erdos.main").warning(
-            "auth_enforce=False 与生产环境不匹配：外网部署必须置为 True（SP2-2 红线）"
+        raise RuntimeError(
+            f"env={config.env} 必须开启鉴权：auth_enforce=False 会让所有 /v1 接口匿名可达"
+            "（公开白名单只在 enforce=True 下才有意义）。请设 ERDOS_AUTH_ENFORCE=true。"
         )
     app.state.monitoring = collector  # 运行监测采集器（中间件/引擎钩子共享）
     app.state.monitoring_last = None  # 最新采样（overview 缓存；采样器启动前为 None）

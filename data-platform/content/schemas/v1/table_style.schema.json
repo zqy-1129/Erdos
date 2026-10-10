@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/table_style.schema.json",
+  "title": "Erdos table_style v1 draft",
+  "type": "object",
+  "properties": {
+    "style_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "competition_id": {
+      "$ref": "_common.json#/definitions/competitionId"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "schema_version": {
+      "$ref": "_common.json#/definitions/schemaVersionInt"
+    },
+    "font_family": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "font_size": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number",
+          "minimum": 0
+        }
+      ]
+    },
+    "borders": {
+      "type": "string",
+      "enum": [
+        "three_line",
+        "grid",
+        "none"
+      ]
+    },
+    "caption_style": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "review_status": {
+      "$ref": "_common.json#/definitions/reviewStatus"
+    },
+    "is_fixture": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional metadata only; cannot override defined fields."
+    }
+  },
+  "required": [
+    "style_id",
+    "competition_id",
+    "version",
+    "schema_version",
+    "font_family",
+    "font_size",
+    "borders",
+    "caption_style",
+    "review_status"
+  ],
+  "additionalProperties": false
+}

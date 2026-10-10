@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/figure_spec.schema.json",
+  "title": "Erdos figure_spec v1 draft",
+  "type": "object",
+  "properties": {
+    "spec_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "task_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "kind": {
+      "type": "string",
+      "minLength": 1
+    },
+    "data_ref": {
+      "$ref": "_common.json#/definitions/relPath"
+    },
+    "data_sha256": {
+      "$ref": "_common.json#/definitions/sha256"
+    },
+    "data_origin": {
+      "const": "current_task"
+    },
+    "columns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "coords": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "unit": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1
+    },
+    "style_ref": {
+      "$ref": "_common.json#/definitions/assetRef"
+    },
+    "caption_context": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "schema_version": {
+      "$ref": "_common.json#/definitions/schemaVersionInt"
+    },
+    "is_fixture": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional metadata only; cannot override defined fields."
+    }
+  },
+  "required": [
+    "spec_id",
+    "task_id",
+    "kind",
+    "data_ref",
+    "data_sha256",
+    "data_origin",
+    "columns",
+    "coords",
+    "unit",
+    "purpose",
+    "style_ref",
+    "caption_context",
+    "schema_version"
+  ],
+  "additionalProperties": false
+}

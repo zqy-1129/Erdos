@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "release_id": {
+      "type": "string",
+      "pattern": "^cumcm-2010-2025-[a-z0-9-]+$"
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "page": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "usage_purpose": {
+      "enum": [
+        "team_internal",
+        "internal_audit"
+      ]
+    }
+  },
+  "required": [
+    "release_id",
+    "source_sha256",
+    "page",
+    "usage_purpose"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

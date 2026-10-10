@@ -65,11 +65,16 @@ class SQLAlchemyNotificationLogRepository(NotificationLogRepository):
             created_at=record.created_at,
             sent_at=record.sent_at,
         )
-        self._session.add(row)
         try:
-            await self._session.flush()
+            async with self._session.begin_nested():  # 撞幂等键只撤本次插入
+                self._session.add(row)
+                await self._session.flush()
         except IntegrityError:
-            await self._session.rollback()
+            # 并发窗口：另一路已按同一 message_id 落库。整会话 rollback 会把调用方
+            # 同事务里的其它写入一起抹掉（scheduler.claim、monitoring.upsert_minute
+            # 改前是同一个坑），这里只交回 None 让上层按"已处理"复用既有记录。
+            # add() 必须也在保存点内：留在外面的话这次失败的实例会挂在会话里，
+            # 后续任何操作都以 PendingRollbackError 收场。
             return None
         return _record(row)
 

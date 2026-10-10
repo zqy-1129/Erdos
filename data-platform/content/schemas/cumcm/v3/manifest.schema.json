@@ -1,0 +1,50 @@
+{
+  "type": "object",
+  "properties": {
+    "competition_id": {
+      "const": "cumcm"
+    },
+    "release_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "const": 3
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "path",
+          "sha256",
+          "size"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "competition_id",
+    "release_id",
+    "version",
+    "files"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/cumcm/v3/manifest.schema.json"
+}

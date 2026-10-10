@@ -1,0 +1,110 @@
+{
+  "type": "object",
+  "properties": {
+    "problem_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "year": {
+      "type": "integer",
+      "minimum": 2010,
+      "maximum": 2025
+    },
+    "code": {
+      "enum": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "statement_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "pattern": "^asset-[0-9a-f]{64}$"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "asset_id",
+          "version",
+          "sha256"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "attachment_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "pattern": "^asset-[0-9a-f]{64}$"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "asset_id",
+          "version",
+          "sha256"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "type_tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      }
+    },
+    "classification_status": {
+      "enum": [
+        "candidate",
+        "source_checked",
+        "verified",
+        "rejected",
+        "abstained"
+      ]
+    }
+  },
+  "required": [
+    "problem_id",
+    "year",
+    "code",
+    "title",
+    "statement_refs",
+    "attachment_refs",
+    "type_tags",
+    "classification_status"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

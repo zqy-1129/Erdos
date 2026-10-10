@@ -20,6 +20,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
+from engine.gates.hard_checks import check_stage
 from engine.trail.redact import redact_sensitive  # 检查点脱敏（密钥域红线，公共实现）
 
 # 四阶段固定顺序（禁止跳级）
@@ -208,6 +209,8 @@ class StageOrchestrator:
         self._runner = runner or _default_stage_runner
         self._state = OrchestratorState(task_id=task_id)
         self._gate_waiting = False
+        # SP1-3 硬检查驳回原因（供上层发 gate.failed 事件；None=本次无硬检查失败）
+        self.last_hard_reject: str | None = None
         self._seeded = False
         self._seed: dict[str, Any] = {}
         self._graph = build_orchestrator_graph(self._runner).compile(
@@ -237,7 +240,13 @@ class StageOrchestrator:
     # 阶段推进
     # ------------------------------------------------------------------
     async def run_current_stage(self) -> dict:
-        """执行当前阶段直至门禁挂起；挂起未决时重复调用幂等返回当前产出。"""
+        """执行当前阶段直至门禁挂起；挂起未决时重复调用幂等返回当前产出。
+
+        SP1-3 硬检查（真实模式）：阶段产出先经代码级判定，违规即复用既有人工 reject 语义
+        自动驳回——本次门禁已被消费，故 _gate_waiting 必须回落 False（不得谎报"在等人工门禁"），
+        下一次 run_current_stage 按 reject 语义重跑当前阶段。骨架模式（默认 runner）不判定，
+        与 answer_gate 的骨架/真实模式分野保持一致。
+        """
         if self._gate_waiting:
             result = self._state.stages.get(self._state.current_stage)
             return result.data if result else {}
@@ -245,9 +254,19 @@ class StageOrchestrator:
         result = await self._graph.ainvoke(invoke_input, self._config)
         self._sync(result)
         current = self._state.stages.get(self._state.current_stage)
-        if current is not None:
-            self._persist_current(current.data)  # 阶段完成即落检查点（脱敏后）
         self._gate_waiting = True
+        self.last_hard_reject = None
+        if current is not None:
+            stage = self._state.current_stage
+            violations = (
+                [] if self._runner is _default_stage_runner else check_stage(stage, current.data)
+            )
+            if violations:
+                reason = ("硬检查不通过：" + "；".join(violations))[:2000]
+                self.last_hard_reject = reason
+                await self.answer_gate("reject", feedback=reason)
+                return current.data
+            self._persist_current(current.data)  # 阶段完成即落检查点（脱敏后）
         return current.data if current is not None else {}
 
     async def answer_gate(self, decision: str, feedback: str = "") -> dict:

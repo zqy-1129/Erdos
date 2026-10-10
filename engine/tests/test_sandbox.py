@@ -1,9 +1,15 @@
-"""沙箱执行器单元测试（SP1-4）：正常执行 / 超时强杀 / 逃逸防护 / 环境隔离。"""
+"""沙箱执行器单元测试（SP1-4）：正常执行 / 超时强杀 / 逃逸防护 / 环境隔离 / 执行体解析。"""
 
-
+import sys
+import time
+from pathlib import Path
 
 from engine.sandbox.base import validate_artifact_path
-from engine.sandbox.subprocess_sandbox import SubprocessSandbox
+from engine.sandbox.subprocess_sandbox import (
+    SubprocessSandbox,
+    _probe_interpreter,
+    resolve_python,
+)
 
 
 async def test_execute_normal_code(tmp_path) -> None:
@@ -78,3 +84,50 @@ async def test_env_isolation_no_key(tmp_path) -> None:
     )
     assert "NO_KEY" in result.stdout  # Key 未传入沙箱
     del os.environ["TEST_FAKE_API_KEY"]
+
+
+# ---- 执行体解析（EN-BOX 红线：不依赖 PATH 上的裸 "python"）----
+
+
+async def test_probe_accepts_current_interpreter() -> None:
+    """探测通过：当前解释器可用于执行。"""
+    assert await _probe_interpreter(sys.executable) is True
+
+
+async def test_probe_rejects_missing_binary() -> None:
+    """探测拒绝：不存在的二进制不进入候选（商店 stub 类故障在此被排除）。"""
+    assert await _probe_interpreter("erdos-not-a-real-binary-xyz") is False
+
+
+async def test_default_resolution_prefers_current_interpreter(monkeypatch) -> None:
+    """默认解析优先用当前解释器（PATH 上的 python 可能是商店占位 stub）。"""
+    monkeypatch.delenv("ERDOS_SANDBOX_PYTHON", raising=False)
+    assert await resolve_python() == sys.executable
+
+
+async def test_explicit_override_never_falls_back_silently(monkeypatch) -> None:
+    """显式配置的执行体不可用时如实返回 None，不静默换用其他解释器。"""
+    monkeypatch.setenv("ERDOS_SANDBOX_PYTHON", "erdos-not-a-real-binary-xyz")
+    assert await resolve_python() is None
+
+
+async def test_unavailable_interpreter_fails_fast(tmp_path) -> None:
+    """执行体缺失 → 结构化错误快速返回（旧实现会挂满 timeout 预算）。"""
+    sandbox = SubprocessSandbox(timeout=60, python="erdos-not-a-real-binary-xyz")
+    started = time.monotonic()
+    result = await sandbox.execute(code="print(1)", files={}, work_dir=tmp_path)
+    elapsed = time.monotonic() - started
+    assert result.exit_code == -1
+    assert result.error and "未找到可用的 Python 执行体" in result.error
+    assert result.timed_out is False
+    assert elapsed < 10, f"应快速失败，实际耗时 {elapsed:.1f}s"
+
+
+async def test_execute_with_relative_work_dir(tmp_path, monkeypatch) -> None:
+    """相对 work_dir 必须可用：曾把脚本路径二次拼接，代码没跑却返回"成功"形状。"""
+    monkeypatch.chdir(tmp_path)
+    sandbox = SubprocessSandbox(timeout=30)
+    result = await sandbox.execute("print('rel-ok')", {}, Path("rel/work"))
+    assert result.exit_code == 0, f"exit={result.exit_code} stderr={result.stderr[:200]}"
+    assert "rel-ok" in result.stdout
+    assert result.error is None

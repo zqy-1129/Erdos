@@ -1,0 +1,51 @@
+# 模板库种子（v0）：4 套定版（CUMCM/MCM × LaTeX/Word）
+#
+# 用途：SP4-4 paper_templates 表种子（F-008 论文模板库）。
+# 字段对齐《数据模型设计》8.2 与 server ports.TemplateRecord：
+#   business_id / competition / format / oss_key / sha256 / version / changelog / tier
+# tier 口径（见 content_service）：free = 免费可见；member_only = 需活跃订阅。
+#   v0 假设：国赛两套 free（引流主线）、美赛两套 member_only（付费差异化）；PRD 如有明确口径以其为准。
+# oss_key 为 OSS 上传前占位：templates/{business_id}.{ext}，与产物文件名同构（上传即 前缀+文件名）。
+# 许可提示：LaTeX 套基于社区开源模板体系转换，对外发布前需完成上游 License 核验（ARCH / 法务）。
+# 编译环境：LaTeX 套需 xelatex 编译（两遍出目录）；Word 套由 make_docx_templates.py 生成。
+version: v0
+templates:
+  - business_id: cumcm-latex-official-v1
+    competition: cumcm
+    format: latex
+    tier: free
+    version: 1
+    oss_key: templates/cumcm-latex-official-v1.zip
+    changelog: CUMCM 国赛 LaTeX 模板 v1：摘要页/目录/三级标题/三线表/参考文献/附录，xelatex 编译；基于社区开源模板转换并对照官方论文格式规范核验
+    package: zip
+    source_dir: templates/12_CUMCM国赛/zh-latex
+
+  - business_id: cumcm-docx-official-v1
+    competition: cumcm
+    format: docx
+    tier: free
+    version: 1
+    oss_key: templates/cumcm-docx-official-v1.docx
+    changelog: CUMCM 国赛 Word 模板 v1：标题页/摘要/目录域/三级标题/三线表/参考文献/附录，由构建脚本按官方格式规范生成
+    package: file
+    file: out/templates/cumcm-docx-official-v1.docx
+
+  - business_id: mcm-latex-official-v1
+    competition: mcm
+    format: latex
+    tier: member_only
+    version: 1
+    oss_key: templates/mcm-latex-official-v1.zip
+    changelog: MCM/ICM 美赛 LaTeX 模板 v1：Summary Sheet/目录/章节骨架/参考文献/附录，xelatex 编译；基于社区开源模板转换
+    package: zip
+    source_dir: templates/01_MCM_ICM美赛/en-latex
+
+  - business_id: mcm-docx-official-v1
+    competition: mcm
+    format: docx
+    tier: member_only
+    version: 1
+    oss_key: templates/mcm-docx-official-v1.docx
+    changelog: MCM/ICM 美赛 Word 模板 v1：Summary Sheet/目录域/章节骨架/参考文献/附录，由构建脚本生成
+    package: file
+    file: out/templates/mcm-docx-official-v1.docx

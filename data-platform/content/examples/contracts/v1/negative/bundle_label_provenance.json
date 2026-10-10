@@ -1,0 +1,789 @@
+{
+  "$fixture": true,
+  "problems": [
+    {
+      "problem_id": "cumcm-2024-B",
+      "competition_id": "cumcm",
+      "year": 2024,
+      "problem_code": "B",
+      "problem_types": [
+        "optimization",
+        "prediction",
+        "statistical_analysis"
+      ],
+      "method_tags": [
+        "integer_programming"
+      ],
+      "data_tags": [
+        "tabular"
+      ],
+      "domain_tags": [
+        "manufacturing"
+      ],
+      "subproblems": [
+        {
+          "subproblem_id": "cumcm-2024-B:q1",
+          "problem_types": [
+            "optimization"
+          ],
+          "method_tags": [
+            "integer_programming"
+          ],
+          "confidence": 0.9,
+          "label_status": "pending_review",
+          "source": null,
+          "provenance": {
+            "kind": "unknown",
+            "evidence": null,
+            "note": "开发夹具，尚未提取或人工确认"
+          }
+        },
+        {
+          "subproblem_id": "cumcm-2024-B:q2",
+          "problem_types": [
+            "prediction",
+            "statistical_analysis"
+          ],
+          "confidence": null,
+          "label_status": "unknown",
+          "provenance": {
+            "kind": "unknown",
+            "evidence": null,
+            "note": "开发夹具，尚未提取或人工确认"
+          },
+          "method_tags": [
+            "time_series"
+          ],
+          "data_tags": [
+            "time_series"
+          ]
+        }
+      ],
+      "source_refs": [],
+      "source_sha256": null,
+      "attachments": [],
+      "schema_version": 1,
+      "review_status": "pending_review",
+      "profile_version": 1,
+      "confidence": 0.9,
+      "label_status": "approved",
+      "provenance": {
+        "kind": "unknown",
+        "evidence": null,
+        "note": "开发夹具，尚未提取或人工确认"
+      },
+      "source_asset_ref": null
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "cumcm-2024-B-case-001",
+      "problem_id": "cumcm-2024-B",
+      "competition_id": "cumcm",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "extractor_version": "v0.1",
+      "schema_version": 1,
+      "profile_version": 1,
+      "review_status": "pending_review",
+      "license": {
+        "internal_analysis": true,
+        "distribute_original": false,
+        "distribute_profile": false,
+        "send_to_third_party_model": false
+      },
+      "structure": [],
+      "writing": [],
+      "length": {
+        "zh_chars": null,
+        "en_words": null,
+        "statistical_basis": null,
+        "missing": [],
+        "zh_parts": {
+          "body": null,
+          "abstract": null,
+          "toc": null,
+          "appendix": null
+        },
+        "en_parts": {
+          "body": null,
+          "abstract": null,
+          "toc": null,
+          "appendix": null
+        },
+        "section_ratios": []
+      },
+      "figures": [],
+      "resolution_status": "resolved",
+      "publication_status": "staging",
+      "source_asset_ref": {
+        "asset_id": "cumcm-case-001-paper",
+        "version": 1,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "license_evidence": {
+        "record_id": "fixture-internal-review",
+        "relative_path": "fixtures/authorization.json"
+      }
+    },
+    {
+      "case_id": "cumcm-2024-B-case-002",
+      "problem_id": "cumcm-2024-B",
+      "competition_id": "cumcm",
+      "source_sha256": null,
+      "extractor_version": null,
+      "schema_version": 1,
+      "profile_version": 1,
+      "review_status": "unknown",
+      "license": {
+        "internal_analysis": false,
+        "distribute_original": false,
+        "distribute_profile": false,
+        "send_to_third_party_model": false
+      },
+      "structure": [],
+      "writing": [],
+      "length": {
+        "zh_chars": null,
+        "en_words": null,
+        "statistical_basis": null,
+        "missing": [
+          "未授权"
+        ],
+        "zh_parts": {
+          "body": null,
+          "abstract": null,
+          "toc": null,
+          "appendix": null
+        },
+        "en_parts": {
+          "body": null,
+          "abstract": null,
+          "toc": null,
+          "appendix": null
+        },
+        "section_ratios": []
+      },
+      "figures": [],
+      "resolution_status": "resolved",
+      "publication_status": "staging",
+      "source_asset_ref": null,
+      "license_evidence": null
+    }
+  ],
+  "assets": [
+    {
+      "asset_id": "cumcm-case-001-paper",
+      "role": "case_paper",
+      "competition_id": "cumcm",
+      "owner_id": "cumcm-2024-B-case-001",
+      "version": 1,
+      "oss_key": "content/cumcm/cases/cumcm-2024-B-case-001/v1/paper.pdf",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 123456,
+      "media_type": "application/pdf",
+      "license_status": "internal_only",
+      "schema_version": 1,
+      "license": {
+        "internal_analysis": true,
+        "distribute_original": false,
+        "distribute_profile": false,
+        "send_to_third_party_model": false
+      },
+      "license_evidence": {
+        "record_id": "fixture-internal-review",
+        "relative_path": "fixtures/authorization.json"
+      }
+    },
+    {
+      "asset_id": "cumcm-layout-latex",
+      "role": "template_layout",
+      "competition_id": "cumcm",
+      "owner_id": "cumcm-default",
+      "version": 1,
+      "oss_key": "fixtures/cumcm/cumcm-layout-latex.json",
+      "sha256": "5c59c76c9f0fc02c0f8794069ca2dbd82b5f449e52f2e48bba1d5b09c33d6ef1",
+      "size_bytes": 10,
+      "media_type": "application/zip",
+      "license_status": "internal_only",
+      "license": {
+        "internal_analysis": true,
+        "distribute_original": false,
+        "distribute_profile": false,
+        "send_to_third_party_model": false
+      },
+      "license_evidence": {
+        "record_id": "fixture-review",
+        "relative_path": "fixtures/authorization.json"
+      },
+      "schema_version": 1,
+      "format": "latex"
+    },
+    {
+      "asset_id": "cumcm-layout-docx",
+      "role": "template_layout",
+      "competition_id": "cumcm",
+      "owner_id": "cumcm-default",
+      "version": 1,
+      "oss_key": "fixtures/cumcm/cumcm-layout-docx.json",
+      "sha256": "ce0893c1ebdd158469767b0c037e784fcbe7ff06b2ffd27761685ceec972078a",
+      "size_bytes": 10,
+      "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "license_status": "internal_only",
+      "license": {
+        "internal_analysis": true,
+        "distribute_original": false,
+        "distribute_profile": false,
+        "send_to_third_party_model": false
+      },
+      "license_evidence": {
+        "record_id": "fixture-review",
+        "relative_path": "fixtures/authorization.json"
+      },
+      "schema_version": 1,
+      "format": "docx"
+    },
+    {
+      "asset_id": "cumcm-outline",
+      "role": "template_outline",
+      "competition_id": "cumcm",
+      "owner_id": "cumcm-outline",
+      "version": 1,
+      "oss_key": "fixtures/cumcm/cumcm-outline.json",
+      "sha256": "735e623bf288b29cf96ea3e269a3d3a7169fdab96bc397ae5214b6dd2ff87176",
+      "size_bytes": 10,
+      "media_type": "application/json",
+      "license_status": "internal_only",
+      "license": {
+        "internal_analysis": true,
+        "distribute_original": false,
+        "distribute_profile": false,
+        "send_to_third_party_model": false
+      },
+      "license_evidence": {
+        "record_id": "fixture-review",
+        "relative_path": "fixtures/authorization.json"
+      },
+      "schema_version": 1
+    },
+    {
+      "asset_id": "cumcm-policy",
+      "role": "writing_policy",
+      "competition_id": "cumcm",
+      "owner_id": "cumcm-default",
+      "version": 1,
+      "oss_key": "fixtures/cumcm/cumcm-policy.json",
+      "sha256": "2171172da7c6e162fb55afe0c178b1f41f9b652322007cdb03df5925a034279d",
+      "size_bytes": 10,
+      "media_type": "application/json",
+      "license_status": "internal_only",
+      "license": {
+        "internal_analysis": true,
+        "distribute_original": false,
+        "distribute_profile": false,
+        "send_to_third_party_model": false
+      },
+      "license_evidence": {
+        "record_id": "fixture-review",
+        "relative_path": "fixtures/authorization.json"
+      },
+      "schema_version": 1
+    },
+    {
+      "asset_id": "cumcm-figure",
+      "role": "figure_style",
+      "competition_id": "cumcm",
+      "owner_id": "cumcm-figure",
+      "version": 1,
+      "oss_key": "fixtures/cumcm/cumcm-figure.json",
+      "sha256": "7676476536c298b5946e6d855f01ea21acd58f17aaadd7deb64ea9d45e5054f8",
+      "size_bytes": 10,
+      "media_type": "application/json",
+      "license_status": "internal_only",
+      "license": {
+        "internal_analysis": true,
+        "distribute_original": false,
+        "distribute_profile": false,
+        "send_to_third_party_model": false
+      },
+      "license_evidence": {
+        "record_id": "fixture-review",
+        "relative_path": "fixtures/authorization.json"
+      },
+      "schema_version": 1
+    },
+    {
+      "asset_id": "cumcm-table",
+      "role": "table_style",
+      "competition_id": "cumcm",
+      "owner_id": "cumcm-table",
+      "version": 1,
+      "oss_key": "fixtures/cumcm/cumcm-table.json",
+      "sha256": "2ca054dce33a9adf3c59e5d4fe8105aa93c36b9f82250c20a9de31b7217049e5",
+      "size_bytes": 10,
+      "media_type": "application/json",
+      "license_status": "internal_only",
+      "license": {
+        "internal_analysis": true,
+        "distribute_original": false,
+        "distribute_profile": false,
+        "send_to_third_party_model": false
+      },
+      "license_evidence": {
+        "record_id": "fixture-review",
+        "relative_path": "fixtures/authorization.json"
+      },
+      "schema_version": 1
+    },
+    {
+      "asset_id": "cumcm-rules",
+      "role": "ruleset",
+      "competition_id": "cumcm",
+      "owner_id": "cumcm-2026",
+      "version": 1,
+      "oss_key": "fixtures/cumcm/cumcm-rules.json",
+      "sha256": "02cd1e8408dd6e726b60e8cc9e4a88cb943f7a9a1d0bb92be4c10db5881db724",
+      "size_bytes": 10,
+      "media_type": "application/json",
+      "license_status": "internal_only",
+      "license": {
+        "internal_analysis": true,
+        "distribute_original": false,
+        "distribute_profile": false,
+        "send_to_third_party_model": false
+      },
+      "license_evidence": {
+        "record_id": "fixture-review",
+        "relative_path": "fixtures/authorization.json"
+      },
+      "schema_version": 1
+    },
+    {
+      "asset_id": "cumcm-wp",
+      "role": "writing_profile",
+      "competition_id": "cumcm",
+      "owner_id": "cumcm-optimization-wp1",
+      "version": 1,
+      "oss_key": "fixtures/cumcm/cumcm-wp.json",
+      "sha256": "6aae43ad2fd93d67e8b4a18cba7411c8c54d1eccd8979c26b9099236756232e5",
+      "size_bytes": 10,
+      "media_type": "application/json",
+      "license_status": "internal_only",
+      "license": {
+        "internal_analysis": true,
+        "distribute_original": false,
+        "distribute_profile": false,
+        "send_to_third_party_model": false
+      },
+      "license_evidence": {
+        "record_id": "fixture-review",
+        "relative_path": "fixtures/authorization.json"
+      },
+      "schema_version": 1
+    },
+    {
+      "asset_id": "cumcm-case-001-profile",
+      "role": "case_profile",
+      "competition_id": "cumcm",
+      "owner_id": "cumcm-2024-B-case-001",
+      "version": 1,
+      "oss_key": "fixtures/cumcm/case-profile.json",
+      "sha256": "bbe16d93cbd718e54d5ebc3948f76224b983dfa8496c471eb69558e60b8ef6e5",
+      "size_bytes": 15,
+      "media_type": "application/json",
+      "license_status": "internal_only",
+      "license": {
+        "internal_analysis": true,
+        "distribute_original": false,
+        "distribute_profile": false,
+        "send_to_third_party_model": false
+      },
+      "license_evidence": {
+        "record_id": "fixture-internal-review",
+        "relative_path": "fixtures/authorization.json"
+      },
+      "schema_version": 1
+    }
+  ],
+  "release": {
+    "release_id": "cumcm-release-1",
+    "version": 1,
+    "competition_id": "cumcm",
+    "schema_version": 1,
+    "published_status": "staging",
+    "items": [
+      {
+        "asset_id": "cumcm-case-001-paper",
+        "version": 1,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "role": "case_paper",
+        "change": "add"
+      },
+      {
+        "asset_id": "cumcm-layout-latex",
+        "version": 1,
+        "sha256": "5c59c76c9f0fc02c0f8794069ca2dbd82b5f449e52f2e48bba1d5b09c33d6ef1",
+        "role": "template_layout",
+        "change": "add"
+      },
+      {
+        "asset_id": "cumcm-layout-docx",
+        "version": 1,
+        "sha256": "ce0893c1ebdd158469767b0c037e784fcbe7ff06b2ffd27761685ceec972078a",
+        "role": "template_layout",
+        "change": "add"
+      },
+      {
+        "asset_id": "cumcm-outline",
+        "version": 1,
+        "sha256": "735e623bf288b29cf96ea3e269a3d3a7169fdab96bc397ae5214b6dd2ff87176",
+        "role": "template_outline",
+        "change": "add"
+      },
+      {
+        "asset_id": "cumcm-policy",
+        "version": 1,
+        "sha256": "2171172da7c6e162fb55afe0c178b1f41f9b652322007cdb03df5925a034279d",
+        "role": "writing_policy",
+        "change": "add"
+      },
+      {
+        "asset_id": "cumcm-figure",
+        "version": 1,
+        "sha256": "7676476536c298b5946e6d855f01ea21acd58f17aaadd7deb64ea9d45e5054f8",
+        "role": "figure_style",
+        "change": "add"
+      },
+      {
+        "asset_id": "cumcm-table",
+        "version": 1,
+        "sha256": "2ca054dce33a9adf3c59e5d4fe8105aa93c36b9f82250c20a9de31b7217049e5",
+        "role": "table_style",
+        "change": "add"
+      },
+      {
+        "asset_id": "cumcm-rules",
+        "version": 1,
+        "sha256": "02cd1e8408dd6e726b60e8cc9e4a88cb943f7a9a1d0bb92be4c10db5881db724",
+        "role": "ruleset",
+        "change": "add"
+      },
+      {
+        "asset_id": "cumcm-wp",
+        "version": 1,
+        "sha256": "6aae43ad2fd93d67e8b4a18cba7411c8c54d1eccd8979c26b9099236756232e5",
+        "role": "writing_profile",
+        "change": "add"
+      },
+      {
+        "asset_id": "cumcm-case-001-profile",
+        "version": 1,
+        "sha256": "bbe16d93cbd718e54d5ebc3948f76224b983dfa8496c471eb69558e60b8ef6e5",
+        "role": "case_profile",
+        "change": "add"
+      }
+    ],
+    "dependencies": [],
+    "removed": []
+  },
+  "is_fixture": true,
+  "families": [
+    {
+      "family_id": "cumcm-default",
+      "competition_id": "cumcm",
+      "family_version": 1,
+      "schema_version": 1,
+      "publication_status": "staging",
+      "ruleset_id": "cumcm-2026",
+      "ruleset_version": 1,
+      "ruleset_status": "pending_verification",
+      "ruleset_ref": {
+        "asset_id": "cumcm-rules",
+        "version": 1,
+        "sha256": "02cd1e8408dd6e726b60e8cc9e4a88cb943f7a9a1d0bb92be4c10db5881db724"
+      },
+      "language": "zh",
+      "layout_refs": [
+        {
+          "format": "latex",
+          "asset_ref": {
+            "asset_id": "cumcm-layout-latex",
+            "version": 1,
+            "sha256": "5c59c76c9f0fc02c0f8794069ca2dbd82b5f449e52f2e48bba1d5b09c33d6ef1"
+          }
+        },
+        {
+          "format": "docx",
+          "asset_ref": {
+            "asset_id": "cumcm-layout-docx",
+            "version": 1,
+            "sha256": "ce0893c1ebdd158469767b0c037e784fcbe7ff06b2ffd27761685ceec972078a"
+          }
+        }
+      ],
+      "base_outline_ref": {
+        "asset_id": "cumcm-outline",
+        "version": 1,
+        "sha256": "735e623bf288b29cf96ea3e269a3d3a7169fdab96bc397ae5214b6dd2ff87176"
+      },
+      "writing_policy_ref": {
+        "asset_id": "cumcm-policy",
+        "version": 1,
+        "sha256": "2171172da7c6e162fb55afe0c178b1f41f9b652322007cdb03df5925a034279d"
+      },
+      "figure_style_ref": {
+        "asset_id": "cumcm-figure",
+        "version": 1,
+        "sha256": "7676476536c298b5946e6d855f01ea21acd58f17aaadd7deb64ea9d45e5054f8"
+      },
+      "table_style_ref": {
+        "asset_id": "cumcm-table",
+        "version": 1,
+        "sha256": "2ca054dce33a9adf3c59e5d4fe8105aa93c36b9f82250c20a9de31b7217049e5"
+      },
+      "review_status": "pending_review"
+    }
+  ],
+  "rulesets": [
+    {
+      "ruleset_id": "cumcm-2026",
+      "competition_id": "cumcm",
+      "version": 1,
+      "schema_version": 1,
+      "edition": 2026,
+      "round": null,
+      "track": null,
+      "verification_status": "pending_verification",
+      "verified_at": null,
+      "sources": [],
+      "constraints": []
+    }
+  ],
+  "outlines": [
+    {
+      "outline_id": "cumcm-outline",
+      "competition_id": "cumcm",
+      "version": 1,
+      "schema_version": 1,
+      "sections": [
+        {
+          "section_type": "abstract",
+          "title": "摘要",
+          "repeat": "once",
+          "optional": false
+        },
+        {
+          "section_type": "model",
+          "title": "子问题建模与求解",
+          "repeat": "per_subproblem",
+          "optional": false
+        }
+      ]
+    }
+  ],
+  "writing_profiles": [
+    {
+      "writing_profile_id": "cumcm-optimization-wp1",
+      "competition_id": "cumcm",
+      "type_id": "optimization",
+      "version": 1,
+      "schema_version": 1,
+      "sample_count": 1,
+      "sources": [
+        {
+          "case_id": "cumcm-2024-B-case-001",
+          "profile_version": 1,
+          "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "statistics": {
+        "section_order": [
+          "restatement",
+          "model",
+          "solve",
+          "analysis"
+        ],
+        "length": [
+          {
+            "unit": "zh_chars",
+            "median": null,
+            "quantiles": null,
+            "statistical_basis": null
+          }
+        ],
+        "figure_frequency": []
+      },
+      "missing_fallback": {
+        "fallback_ref": {
+          "asset_id": "cumcm-policy",
+          "version": 1,
+          "sha256": "2171172da7c6e162fb55afe0c178b1f41f9b652322007cdb03df5925a034279d"
+        },
+        "note": "夹具没有真实统计；小样本回退基础写作策略"
+      },
+      "review_status": "pending_review"
+    }
+  ],
+  "figure_styles": [
+    {
+      "style_id": "cumcm-figure",
+      "competition_id": "cumcm",
+      "version": 1,
+      "schema_version": 1,
+      "fonts": {
+        "family": "Times New Roman",
+        "size": 10.5,
+        "axis_label_size": 9
+      },
+      "colors": [
+        "#000000",
+        "#1f77b4",
+        "#d62728"
+      ],
+      "line_width": 1.0,
+      "caption_style": "图名居中于图下，编号按章",
+      "numbering": "图 1",
+      "output_format": [
+        "png",
+        "pdf"
+      ],
+      "review_status": "pending_review"
+    }
+  ],
+  "table_styles": [
+    {
+      "style_id": "cumcm-table",
+      "competition_id": "cumcm",
+      "version": 1,
+      "schema_version": 1,
+      "font_family": null,
+      "font_size": null,
+      "borders": "three_line",
+      "caption_style": null,
+      "review_status": "pending_review"
+    }
+  ],
+  "figure_specs": [
+    {
+      "spec_id": "task-001-fig-1",
+      "task_id": "task-001",
+      "kind": "line",
+      "data_ref": "artifacts/result1.csv",
+      "data_sha256": "35856d0b0bfafe5f5cd01c177039ae54cfa244930c4741edb53759d79d008965",
+      "data_origin": "current_task",
+      "columns": [
+        "t",
+        "y"
+      ],
+      "coords": [
+        "x=t",
+        "y=y"
+      ],
+      "unit": "s / 件",
+      "purpose": "新任务结果对比",
+      "style_ref": {
+        "asset_id": "cumcm-figure",
+        "version": 1,
+        "sha256": "7676476536c298b5946e6d855f01ea21acd58f17aaadd7deb64ea9d45e5054f8"
+      },
+      "caption_context": "开发演示，不包含历史结果",
+      "schema_version": 1
+    }
+  ],
+  "task_contexts": [
+    {
+      "task_id": "task-001",
+      "competition_id": "cumcm",
+      "family_id": "cumcm-default",
+      "family_version": 1,
+      "format": "latex",
+      "ruleset_id": "cumcm-2026",
+      "ruleset_version": 1,
+      "ruleset_status": "pending_verification",
+      "rules_compliance": "unverified",
+      "local_resources": [
+        {
+          "asset_ref": {
+            "asset_id": "cumcm-layout-latex",
+            "version": 1,
+            "sha256": "5c59c76c9f0fc02c0f8794069ca2dbd82b5f449e52f2e48bba1d5b09c33d6ef1"
+          },
+          "relative_path": "cache/cumcm-layout-latex.json",
+          "verified": true
+        },
+        {
+          "asset_ref": {
+            "asset_id": "cumcm-outline",
+            "version": 1,
+            "sha256": "735e623bf288b29cf96ea3e269a3d3a7169fdab96bc397ae5214b6dd2ff87176"
+          },
+          "relative_path": "cache/cumcm-outline.json",
+          "verified": true
+        },
+        {
+          "asset_ref": {
+            "asset_id": "cumcm-policy",
+            "version": 1,
+            "sha256": "2171172da7c6e162fb55afe0c178b1f41f9b652322007cdb03df5925a034279d"
+          },
+          "relative_path": "cache/cumcm-policy.json",
+          "verified": true
+        },
+        {
+          "asset_ref": {
+            "asset_id": "cumcm-figure",
+            "version": 1,
+            "sha256": "7676476536c298b5946e6d855f01ea21acd58f17aaadd7deb64ea9d45e5054f8"
+          },
+          "relative_path": "cache/cumcm-figure.json",
+          "verified": true
+        },
+        {
+          "asset_ref": {
+            "asset_id": "cumcm-table",
+            "version": 1,
+            "sha256": "2ca054dce33a9adf3c59e5d4fe8105aa93c36b9f82250c20a9de31b7217049e5"
+          },
+          "relative_path": "cache/cumcm-table.json",
+          "verified": true
+        },
+        {
+          "asset_ref": {
+            "asset_id": "cumcm-rules",
+            "version": 1,
+            "sha256": "02cd1e8408dd6e726b60e8cc9e4a88cb943f7a9a1d0bb92be4c10db5881db724"
+          },
+          "relative_path": "cache/cumcm-rules.json",
+          "verified": true
+        },
+        {
+          "asset_ref": {
+            "asset_id": "cumcm-case-001-profile",
+            "version": 1,
+            "sha256": "bbe16d93cbd718e54d5ebc3948f76224b983dfa8496c471eb69558e60b8ef6e5"
+          },
+          "relative_path": "cache/cumcm-case-001-profile.json",
+          "verified": true
+        }
+      ],
+      "candidate_profiles": [
+        {
+          "case_id": "cumcm-2024-B-case-001",
+          "profile_version": 1,
+          "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "profile_asset_ref": {
+            "asset_id": "cumcm-case-001-profile",
+            "version": 1,
+            "sha256": "bbe16d93cbd718e54d5ebc3948f76224b983dfa8496c471eb69558e60b8ef6e5"
+          }
+        }
+      ],
+      "style_ref": {
+        "asset_id": "cumcm-figure",
+        "version": 1,
+        "sha256": "7676476536c298b5946e6d855f01ea21acd58f17aaadd7deb64ea9d45e5054f8"
+      },
+      "schema_version": 1,
+      "model_execution": "local_only"
+    }
+  ]
+}

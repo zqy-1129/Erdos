@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.deps import get_session_factory, require_principal
+from app.api.deps import get_session_factory, record_audit, record_audit_in_tx, require_principal
 from app.core.clock import utc_now
 from app.core.config import Settings
 from app.core.envelope import Envelope, ok
@@ -228,6 +228,23 @@ async def reserve(
             ),
             now,
         )
+        if not result.already_reserved:
+            # 许可签发留痕：无幂等键、随业务同事务（提交后再写会多一次单写锁，实测 P95 +71%）
+            await record_audit_in_tx(
+                request,
+                uow.session,
+                action="points.license_issued",
+                actor_id=principal.subject,
+                resource_type="grant",
+                resource_id=payload.exec_id,
+                detail={
+                    "stage": payload.stage,
+                    "points": payload.points,
+                    "task_id": payload.task_id,
+                    "key_version": result.grant.key_version,
+                },
+                now=now,
+            )
         view = ReserveView(
             balance=_balance_view(result.balance),
             grant=GrantView(
@@ -317,6 +334,20 @@ async def offline_sync(
                 for it in result.items
             ],
         )
+    await record_audit(
+        request,
+        action="points.offline_reconciled",
+        actor_id=principal.subject,
+        resource_type="offline_sync",
+        detail={
+            "submitted": len(payload.items),
+            "applied": result.applied,
+            "duplicate": result.duplicate,
+            "insufficient": result.insufficient,
+            "frozen": result.frozen,
+        },
+        now=now,
+    )
     return ok(view, request_id_var.get())
 
 

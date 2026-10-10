@@ -1,5 +1,6 @@
 """趋势指标仓储落库实现（分钟桶 upsert 含并发竞态兜底，同 presence 模式）。"""
 
+from collections.abc import Sequence
 from datetime import date, datetime
 
 from sqlalchemy import delete, select
@@ -13,6 +14,19 @@ from app.domain.metrics.ports import (
     UsersTrendRepository,
 )
 from app.repository.models import PresenceMinuteAgg, UsersDailyStats
+
+
+def _daily_points(rows: Sequence[UsersDailyStats]) -> list[DailyStatPoint]:
+    """行模型 → 日快照视图（list_between / list_all 共用）。"""
+    return [
+        DailyStatPoint(
+            stat_date=row.stat_date,
+            total_users=row.total_users,
+            new_users=row.new_users,
+            active_users=row.active_users,
+        )
+        for row in rows
+    ]
 
 
 class SQLAlchemyOnlineTrendRepository(OnlineTrendRepository):
@@ -72,15 +86,12 @@ class SQLAlchemyUsersTrendRepository(UsersTrendRepository):
             .order_by(UsersDailyStats.stat_date)
         )
         rows = (await self._session.execute(stmt)).scalars().all()
-        return [
-            DailyStatPoint(
-                stat_date=row.stat_date,
-                total_users=row.total_users,
-                new_users=row.new_users,
-                active_users=row.active_users,
-            )
-            for row in rows
-        ]
+        return _daily_points(rows)
+
+    async def list_all(self) -> list[DailyStatPoint]:
+        stmt = select(UsersDailyStats).order_by(UsersDailyStats.stat_date)
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return _daily_points(rows)
 
     async def apply_daily_delta(
         self,

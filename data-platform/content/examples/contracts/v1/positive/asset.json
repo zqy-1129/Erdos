@@ -1,0 +1,24 @@
+{
+  "asset_id": "cumcm-case-001-paper",
+  "role": "case_paper",
+  "competition_id": "cumcm",
+  "owner_id": "cumcm-2024-B-case-001",
+  "version": 1,
+  "oss_key": "content/cumcm/cases/cumcm-2024-B-case-001/v1/paper.pdf",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "size_bytes": 123456,
+  "media_type": "application/pdf",
+  "license_status": "internal_only",
+  "schema_version": 1,
+  "license": {
+    "internal_analysis": true,
+    "distribute_original": false,
+    "distribute_profile": false,
+    "send_to_third_party_model": false
+  },
+  "license_evidence": {
+    "record_id": "fixture-internal-review",
+    "relative_path": "fixtures/authorization.json"
+  },
+  "is_fixture": true
+}

@@ -94,7 +94,8 @@ async def test_duplicate_gate_answer_rejected_in_real_mode(tmp_path) -> None:
     store = SQLiteCheckpointStore(db)
 
     async def runner(task_id: str, stage: str) -> dict:
-        return {"stage": stage}
+        # insights 为满足 SP1-3 硬检查的阶段契约字段（本用例只跑到 analysis）
+        return {"stage": stage, "insights": ["决策变量与目标"]}
 
     orch = StageOrchestrator("t1", checkpoint=store, runner=runner)
     await orch.run_current_stage()

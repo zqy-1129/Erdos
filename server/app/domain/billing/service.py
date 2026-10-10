@@ -1,10 +1,11 @@
-"""计费订阅域服务（SP2-5 资金域核心）：下单 / 回调入账 / 退款规则 / 月赠调度。
+"""计费订阅域服务（SP2-5 资金域核心）：下单 / 回调入账 / 查单兜底 / 退款规则 / 月赠调度。
 
 资金域红线（对齐《数据模型设计》与执行计划 SP2-5）：
 - 金额一律整数分（禁止浮点数）；
 - 订单状态机 created → paid / closed / refunded，终态不可迁移；
 - 下单以 idempotency_key 幂等；回调以 payment_no 唯一约束幂等；
-- 重复回调不重复发放权益；
+- 重复回调不重复发放权益；查单兜底复用同一条入账链，不另起发放逻辑；
+- 关单必须有渠道"未收款"的正向证据，查单失败（UNKNOWN）既不关单也不入账；
 - 月赠按 last_monthly_grant_at 幂等（每人每月只入账一次）；
 - 退款规则（PRD F-005）：订阅 7 天内未使用任何权益可退，积分包不退。
 """
@@ -19,6 +20,7 @@ from app.domain.billing.ports import (
     CallbackRecord,
     CallbackRepository,
     CallbackResult,
+    ChannelPayment,
     CreateOrderRequest,
     CreateOrderResult,
     MonthlyGrantResult,
@@ -41,6 +43,16 @@ def callback_digest(secret: str, payment_no: str, order_id: str) -> str:
     """支付回调签名摘要：HMAC-SHA256(payment_no|order_id) 的 hex（与支付网关共享密钥）。"""
     message = f"{payment_no}|{order_id}".encode()
     return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+
+
+def channel_evidence_digest(payment_no: str, order_id: str, amount_cents: int) -> str:
+    """查单兜底入账的凭据摘要： sha256(payment_no|order_id|金额分)。
+
+    渠道查单结果由驱动侧完成验签后才成为凭据，这里只留下"当时查到的事实"的指纹，
+    与回调的 HMAC 口径区分开，便于事后核对补账来源。
+    """
+    message = f"{payment_no}|{order_id}|{amount_cents}".encode()
+    return hashlib.sha256(message).hexdigest()
 
 
 class BillingService:
@@ -68,17 +80,14 @@ class BillingService:
     async def list_products(self) -> list[ProductRecord]:
         return await self._products.list_active()
 
-    async def get_order(self, order_id: str, now: datetime) -> OrderRecord | None:
-        """查询订单（客户端轮询兜底补账）；created 且过期时主动关单。"""
-        order = await self._orders.get(order_id)
-        if order is None:
-            return None
-        if order.status == OrderStatus.CREATED.value and now > order.expires_at:
-            await self._orders.transition(
-                order.id, OrderStatus.CREATED.value, OrderStatus.CLOSED.value, now
-            )
-            return await self._orders.get(order_id)
-        return order
+    async def get_order(self, order_id: str) -> OrderRecord | None:
+        """只读订单查询。
+
+        本方法过去会在"过期"时顺手关单，但过期不等于没收款——回调丢失时正是这条路径把已付款
+        订单关成终态、让补账无路可走（PRD DF-003 要求 T+5 分钟兜底补账）。关单现在只在
+        查单兜底拿到渠道"未收款"证据后执行（close_unpaid）。
+        """
+        return await self._orders.get(order_id)
 
     # ------------------------------------------------------------------
     # 下单：幂等 + 30 分钟关单
@@ -133,6 +142,11 @@ class BillingService:
         入账规则：
         - 积分包：向积分账户购买余额入账（exec_id = order:{order_id}）；
         - 订阅：创建/续费订阅（叠加周期），并触发首期月赠。
+
+        过期语义（EC-N7/DEC-022 修订）：回调能进到这里说明 HMAC 验签已通过，即渠道确认收到钱，
+        因此**不再因超过 30 分钟支付时限而拒收**——旧实现先占用 payment_no 唯一约束再抛
+        CONFLICT，重放只会走幂等分支，等于把已收的款永久吞掉且无人知晓。订单已被关单
+        （closed 为终态，不可迁移）时同样入账失败，但会返回 difference 交调用方落差异台账并告警。
         """
         # 幂等：payment_no 已处理过 -> 跳过
         existing_cb = await self._callbacks.find_by_payment_no(callback.payment_no)
@@ -146,7 +160,7 @@ class BillingService:
         if order is None:
             raise AppError(NOT_FOUND, detail="订单不存在")
 
-        # 记录回调（payment_no 唯一约束兜底并发重复）
+        # 记录回调（payment_no 唯一约束兜底并发重复）；终态订单也要留下收款凭据
         cb_record = await self._callbacks.append(
             CallbackRecord(
                 id="",
@@ -164,17 +178,15 @@ class BillingService:
                 raise AppError(NOT_FOUND, detail="订单不存在")
             return CallbackResult(order=latest, applied=False)
 
-        # 订单状态迁移：created -> paid
+        # 订单状态迁移：created -> paid；非 created 一律不重复发放权益
         if order.status != OrderStatus.CREATED.value:
-            # 已关单/已退款/已支付：不重复入账
-            return CallbackResult(order=order, applied=False)
-
-        # 关单检查：订单已超过支付时限（30 分钟），先关单再拒绝入账
-        if now > order.expires_at:
-            await self._orders.transition(
-                order.id, OrderStatus.CREATED.value, OrderStatus.CLOSED.value, now
+            difference = (
+                f"订单已关单（closed 终态）但渠道确认已收款：payment_no={callback.payment_no}，"
+                f"金额 {order.price_cents} 分，需人工退款处置"
+                if order.status == OrderStatus.CLOSED.value
+                else None
             )
-            raise AppError(CONFLICT, detail="订单已超时关单，无法入账")
+            return CallbackResult(order=order, applied=False, difference=difference)
 
         paid_order = await self._orders.transition(
             order.id, OrderStatus.CREATED.value, OrderStatus.PAID.value, now
@@ -189,6 +201,59 @@ class BillingService:
         await self._grant_entitlement(order.user_id, product, paid_order.id, now)
 
         return CallbackResult(order=paid_order, applied=True)
+
+    # ------------------------------------------------------------------
+    # 查单兜底入账（EC-N7 / DEC-022）：渠道确认收款后复用回调幂等链
+    # ------------------------------------------------------------------
+    async def settle_from_channel(
+        self, order_id: str, payment: ChannelPayment, channel_name: str, now: datetime
+    ) -> CallbackResult:
+        """按渠道查单结果补账：走与回调同一条 payment_no 幂等入账链，绝不另起一套发放逻辑。
+
+        金额红线：渠道回包金额必须等于订单价，不符即拒入账并返回 difference（防"付 A 单的钱
+        记到 B 单"与改价回调）。payment_no 带渠道前缀，避免跨渠道流水号撞车。
+        """
+        order = await self._orders.get(order_id)
+        if order is None:
+            raise AppError(NOT_FOUND, detail="订单不存在")
+
+        if payment.amount_cents != order.price_cents:
+            return CallbackResult(
+                order=order,
+                applied=False,
+                difference=(
+                    f"渠道回包金额与订单价不符：渠道 {payment.amount_cents} 分 ≠ "
+                    f"订单 {order.price_cents} 分（payment_no={payment.payment_no}），未入账待人工核"
+                ),
+            )
+
+        channel_payment_no = f"{channel_name}:{payment.payment_no}"
+        return await self.handle_callback(
+            order.user_id,
+            CallbackRecord(
+                id="",
+                payment_no=channel_payment_no,
+                order_id=order.id,
+                raw_digest=channel_evidence_digest(
+                    channel_payment_no, order.id, payment.amount_cents
+                ),
+                received_at=now,
+                processed=False,
+            ),
+            now,
+        )
+
+    async def close_unpaid(self, order_id: str, now: datetime) -> OrderRecord | None:
+        """关单：仅在渠道明确回答"未收款"且已过支付时限时执行（created → closed 原子迁移）。"""
+        order = await self._orders.get(order_id)
+        if order is None:
+            return None
+        if order.status != OrderStatus.CREATED.value or now <= order.expires_at:
+            return order
+        await self._orders.transition(
+            order.id, OrderStatus.CREATED.value, OrderStatus.CLOSED.value, now
+        )
+        return await self._orders.get(order_id)
 
     async def _grant_entitlement(
         self, user_id: str, product: ProductRecord, order_id: str, now: datetime

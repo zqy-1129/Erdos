@@ -1,8 +1,9 @@
-"""调度器域端口与数据载体（SP2-7）：月赠 / 订阅到期冻结 / 每日对账。
+"""调度器域端口与数据载体（SP2-7）：月赠 / 订阅到期冻结 / 续费提醒 / 每日对账。
 
 关键约束：
 - 调度任务带锁与幂等批次键（重复触发只执行一次）；
-- 对账差异全量发现并触发告警（禁止静默忽略）。
+- 对账差异全量发现并触发告警（禁止静默忽略）；
+- 续费提醒的"只提醒一次"落在通知的 message_id 幂等上，不靠任务侧的记忆。
 """
 
 from dataclasses import dataclass
@@ -34,7 +35,7 @@ class ReconcileDifference:
 
 @dataclass(frozen=True, slots=True)
 class ReconcileResult:
-    """对账结果：差异列表 + 是否告警。"""
+    """对账结果：差异列表 + 是否存在需告警的差异。"""
 
     differences: tuple[ReconcileDifference, ...]
     alerted: bool
@@ -43,12 +44,22 @@ class ReconcileResult:
 class SchedulerRunRepository(Protocol):
     """调度批次仓储端口（task_name + batch_key 幂等）。"""
 
-    async def claim(self, task_name: str, batch_key: str, now: datetime) -> bool:
-        """尝试认领批次（唯一约束兜底）；返回 False 表示已执行过。"""
+    async def claim(
+        self, task_name: str, batch_key: str, now: datetime, *, stale_after_seconds: int = 0
+    ) -> bool:
+        """尝试认领批次（唯一约束兜底）；返回 False 表示本批次已被占用。
+
+        stale_after_seconds>0 时允许重占"running 但已卡死"的批次（上次执行崩在半路），
+        否则崩溃会让当月月赠永久不再发放；重复发放的安全性在积分流水 exec_id 上。
+        """
         ...
 
     async def mark_done(self, task_name: str, batch_key: str, result: str, now: datetime) -> None:
         """标记批次完成。"""
+        ...
+
+    async def prune_before(self, cutoff: datetime) -> int:
+        """删除 started_at < cutoff 的批次行，返回删除行数（账本必须有尽头）。"""
         ...
 
 
@@ -77,4 +88,25 @@ class ExpireSubscriptionRunner(Protocol):
 
     async def expire_overdue(self, now: datetime) -> int:
         """到期订阅标记 expired 并冻结积分账户，返回冻结人数。"""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class RenewalReminderTarget:
+    """一条到期前需提醒的订阅。
+
+    `email` 可为 None：注销前未填邮箱或仅手机注册的用户确实存在，提醒发不出去。
+    端口把"发不出去"这件事如实交给调用方计数与落日志，不在仓储层静默丢弃。
+    """
+
+    user_id: str
+    email: str | None
+    end_at: datetime
+
+
+class RenewalReminderRunner(Protocol):
+    """续费提醒候选集端口（《服务端架构》调度器："到期前 3 天进入提醒队列"）。"""
+
+    async def list_due(self, now: datetime, within_days: int) -> list[RenewalReminderTarget]:
+        """返回 end_at 落在 (now, now + within_days] 的活跃订阅提醒目标。"""
         ...

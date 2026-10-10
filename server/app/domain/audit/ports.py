@@ -16,7 +16,8 @@ class AuditEvent:
     resource_id: str | None
     detail: dict[str, Any] | None
     client_ip: str | None
-    request_key: str
+    # 幂等去重键；None 表示这条事件不做去重（高频路径如许可签发，撞唯一约束会污染业务事务）
+    request_key: str | None
 
 
 @dataclass(frozen=True, slots=True)

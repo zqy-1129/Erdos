@@ -22,7 +22,7 @@ jobs:
       - name: Install
         run: pip install -e ".[dev]"
       - name: Ruff
-        run: ruff check app tests
+        run: ruff check app tests scripts
       - name: Mypy
         run: mypy app
       - name: Dependency boundary (langchain engine-only)
@@ -31,7 +31,8 @@ jobs:
             echo "::error::langchain/langgraph 仅允许出现在 engine/（客户端引擎子进程），服务端与契约层禁止引入"
             exit 1
           fi
-      - name: Pytest (coverage >= 80%)
+          # 分层/BYOK/金额三条红线的机器拦截在 tests/unit/test_arch_boundary.py（随 pytest 执行）
+      - name: Pytest (coverage >= 85%)
         run: |
           set -o pipefail
           pytest --tb=short 2>&1 | tee pytest.log

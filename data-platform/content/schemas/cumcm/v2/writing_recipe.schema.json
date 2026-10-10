@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/cumcm/v2/writing_recipe.schema.json",
+  "title": "Erdos cumcm v2 写作方案（writing_recipe）",
+  "type": "object",
+  "required": ["recipe_id", "competition_id", "version", "problem_types", "stage", "prerequisite_results", "steps", "length_basis", "evidence", "missing_fallback"],
+  "properties": {
+    "recipe_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+    "competition_id": {"type": "string"},
+    "version": {"type": "integer", "minimum": 1},
+    "schema_version": {"type": "integer"},
+    "problem_types": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "applicable_conditions": {"type": "string"},
+    "stage": {"type": "string"},
+    "goal": {"type": "string"},
+    "prerequisite_results": {"type": "array", "items": {"type": "string"}},
+    "steps": {"type": "array", "items": {"type": "object"}, "minItems": 1},
+    "variable_explanation_requirements": {"type": "string"},
+    "length_basis": {"type": "object"},
+    "verification_approach": {"type": "string"},
+    "common_mistakes": {"type": "array", "items": {"type": "string"}},
+    "missing_fallback": {"type": "object"},
+    "evidence": {"type": "array", "items": {"type": "object"}},
+    "kind": {"type": "string", "enum": ["fact", "suggestion"]},
+    "review_status": {"type": "string", "enum": ["pending_review", "approved", "rejected", "unknown"]}
+  },
+  "additionalProperties": false
+}

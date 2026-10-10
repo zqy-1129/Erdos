@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.deps import get_event_broker, get_session_factory
+from app.api.deps import get_event_broker, get_session_factory, record_audit
 from app.core.clock import utc_now
 from app.core.config import Settings
 from app.core.envelope import Envelope, ok
@@ -144,6 +144,15 @@ async def login(
                 payload={"device_id": payload.device_id},
             )
     except AppError as exc:
+        # 失败/锁定同样要留痕：业务事务已回滚，审计走独立事务才活得下来
+        await record_audit(
+            request,
+            action="auth.login_denied",
+            actor_id=payload.username,
+            resource_type="auth",
+            detail={"code": exc.spec.code, "device_id": payload.device_id},
+            now=now,
+        )
         if exc.spec.code == ACCOUNT_LOCKED.code:
             await broker.publish(
                 EVENTS_TOPIC,
@@ -156,6 +165,14 @@ async def login(
                 },
             )
         raise
+    await record_audit(
+        request,
+        action="auth.login",
+        actor_id=payload.username,
+        resource_type="auth",
+        detail={"device_id": payload.device_id},
+        now=now,
+    )
     await broker.publish(
         EVENTS_TOPIC,
         {

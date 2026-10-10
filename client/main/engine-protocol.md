@@ -26,6 +26,15 @@ spawn("python", ["-m", "engine"], {
 | 引擎 → 主进程 | stdout | JSON-RPC 2.0 响应 + NDJSON 事件（按 `jsonrpc`/`event` 字段分流） |
 | 引擎 → 主进程 | stderr | 引擎日志（不承载协议；诊断含拒启原因/沙箱镜像警告，经 secret-masker 落盘） |
 
+- **编码基线（UTF-8 + LF）**：三条管道一律按 UTF-8 交换，NDJSON 行结束符为 LF。引擎在进程入口
+  强制重配 stdio 编码（`engine/ipc/stdio.py`），主进程无需设置码页，也**不得**依赖
+  `PYTHONIOENCODING`；Windows 控制台默认码页常为 cp936/GBK，若不强制，中文题面、门禁意见与
+  工具摘要会被编成非 UTF-8 字节，主进程按 utf8 解码即得乱码并静默丢弃事件。
+  **本条的机器判据是 `contracts/engine-rpc.schema.json` 的 `transport` 段（唯一权威）**：
+  引擎侧守护见 `engine/tests/test_contract_alignment.py`（configure_stdio 参数逐字取自契约），
+  客户端侧见 `client/tests/contract-transport.test.ts`（LF/UTF-8 写出与读入、单行上限取自契约）。
+  改本节文字若不同步 `transport` 段，两侧守护会红。
+
 ## 3. Key 注入（SP1-5 红线）
 
 - **一次性注入**：引擎拉起后，主进程将解密后的 API Key 经 stdin 写入一行，引擎内存持有；

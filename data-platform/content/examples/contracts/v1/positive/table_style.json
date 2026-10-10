@@ -1,0 +1,12 @@
+{
+  "style_id": "cumcm-table",
+  "competition_id": "cumcm",
+  "version": 1,
+  "schema_version": 1,
+  "font_family": null,
+  "font_size": null,
+  "borders": "three_line",
+  "caption_style": null,
+  "review_status": "pending_review",
+  "is_fixture": true
+}

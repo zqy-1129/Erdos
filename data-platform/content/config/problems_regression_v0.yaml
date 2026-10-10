@@ -1,0 +1,136 @@
+# problems 回归集种子（v0）：10 道 CUMCM 真题源映射
+#
+# 用途：SP4-4 problems 表种子数据 + SP1-7 引擎回归题面（一次交付两用）。
+# 溯源红线：source/attachments 均指向 D:/Erdos_data 原始文件（公开来源下载），
+#           逐条核对公开来源后升级版本号；sha256 由 build 脚本计算落来源清单。
+# 字段对齐《数据模型设计》8.1：business_id/competition/year/problem_code/title/tags/
+#           prompt_zh/prompt_en/attachments/scoring/dataset_hint/visibility
+#
+# version: 种子版本（v0 为回归集 10 道；扩充至 ≥60 条时升 v1）
+version: v0
+dataset_root: D:/Erdos_data   # 可用环境变量 ERDOS_DATA_ROOT 覆盖
+
+problems:
+  - business_id: cumcm-2018-B
+    competition: cumcm
+    year: 2018
+    problem_code: B
+    engine_regression_category: prediction   # 对齐 engine/regression/problems.py（保持 3/2/3/2 分布）；题目实际偏优化，待 EN 复核
+    title: 智能RGV的动态调度策略
+    tags: [优化, 动态调度]
+    source: problems/12_CUMCM国赛/CUMCM2018Problems/2018-B-Chinese/CUMCM-2018-Problem-B-Chinese.doc
+    attachments:
+      - problems/12_CUMCM国赛/CUMCM2018Problems/2018-B-Chinese/CUMCM-2018-Problem-B-Chinese-Appendix1.doc
+      - problems/12_CUMCM国赛/CUMCM2018Problems/2018-B-Chinese/CUMCM-2018-Problem-B-Chinese-Appendix-2.rar
+
+  - business_id: cumcm-2019-A
+    competition: cumcm
+    year: 2019
+    problem_code: A
+    engine_regression_category: evaluation
+    title: 高压油管的压力控制
+    tags: [机理, 压力控制]
+    source: problems/12_CUMCM国赛/CUMCM2019Problems/A-2019中文/CUMCM-2019-Problem-A-Chinese.pdf
+    attachments:
+      - problems/12_CUMCM国赛/CUMCM2019Problems/A-2019中文/附件1-凸轮边缘曲线.xlsx
+      - problems/12_CUMCM国赛/CUMCM2019Problems/A-2019中文/附件2-针阀运动曲线.xlsx
+      - problems/12_CUMCM国赛/CUMCM2019Problems/A-2019中文/附件3-弹性模量与压力.xlsx
+
+  - business_id: cumcm-2020-A
+    competition: cumcm
+    year: 2020
+    problem_code: A
+    engine_regression_category: optimization
+    title: 炉温曲线
+    tags: [机理, 参数优化]
+    source: problems/12_CUMCM国赛/CUMCM2020Problems/A/2020A-炉温曲线.docx
+    attachments:
+      - problems/12_CUMCM国赛/CUMCM2020Problems/A/result.csv
+      - problems/12_CUMCM国赛/CUMCM2020Problems/A/附件.xlsx
+
+  - business_id: cumcm-2020-B
+    competition: cumcm
+    year: 2020
+    problem_code: B
+    engine_regression_category: mechanism
+    title: 穿越沙漠
+    tags: [优化, 路径规划]
+    source: problems/12_CUMCM国赛/CUMCM2020Problems/B/2020B-穿越沙漠.docx
+    attachments:
+      - problems/12_CUMCM国赛/CUMCM2020Problems/B/Result.xlsx
+      - problems/12_CUMCM国赛/CUMCM2020Problems/B/附件.docx
+
+  - business_id: cumcm-2021-B
+    competition: cumcm
+    year: 2021
+    problem_code: B
+    engine_regression_category: optimization
+    title: 乙醇偶合制备C4烯烃
+    tags: [优化, 化工工艺]
+    source: problems/12_CUMCM国赛/CUMCM2021Problems/B/CUMCM2021-B.pdf
+    attachments:
+      - problems/12_CUMCM国赛/CUMCM2021Problems/B/附件1.xlsx
+      - problems/12_CUMCM国赛/CUMCM2021Problems/B/附件2.xlsx
+
+  - business_id: cumcm-2022-A
+    competition: cumcm
+    year: 2022
+    problem_code: A
+    engine_regression_category: prediction
+    title: 波浪能最大输出功率设计
+    tags: [优化, 功率优化]
+    source: problems/12_CUMCM国赛/CUMCM2022Problems/A题.pdf
+    attachments:
+      - problems/12_CUMCM国赛/CUMCM2022Problems/result1-1.xlsx
+      - problems/12_CUMCM国赛/CUMCM2022Problems/result1-2.xlsx
+      - problems/12_CUMCM国赛/CUMCM2022Problems/result3.xlsx
+      - problems/12_CUMCM国赛/CUMCM2022Problems/附件1.gif
+      - problems/12_CUMCM国赛/CUMCM2022Problems/附件2.gif
+      - problems/12_CUMCM国赛/CUMCM2022Problems/附件3.xlsx
+      - problems/12_CUMCM国赛/CUMCM2022Problems/附件4.xlsx
+
+  - business_id: cumcm-2022-B
+    competition: cumcm
+    year: 2022
+    problem_code: B
+    engine_regression_category: evaluation
+    title: 无人机遂行编队飞行中的纯方位无源定位
+    tags: [机理, 定位]
+    source: problems/12_CUMCM国赛/CUMCM2022Problems/B题.pdf
+    attachments: []
+
+  - business_id: cumcm-2023-A
+    competition: cumcm
+    year: 2023
+    problem_code: A
+    engine_regression_category: optimization
+    title: 定日镜场的优化设计
+    tags: [优化, 光学建模]
+    source: problems/12_CUMCM国赛/CUMCM2023Problems/A题/A题.pdf
+    attachments:
+      - problems/12_CUMCM国赛/CUMCM2023Problems/A题/result2.xlsx
+      - problems/12_CUMCM国赛/CUMCM2023Problems/A题/result3.xlsx
+      - problems/12_CUMCM国赛/CUMCM2023Problems/A题/附件.xlsx
+
+  - business_id: cumcm-2023-B
+    competition: cumcm
+    year: 2023
+    problem_code: B
+    engine_regression_category: mechanism
+    title: 多波束测线问题
+    tags: [几何建模, 优化]
+    source: problems/12_CUMCM国赛/CUMCM2023Problems/B题/B题.pdf
+    attachments:
+      - problems/12_CUMCM国赛/CUMCM2023Problems/B题/result1.xlsx
+      - problems/12_CUMCM国赛/CUMCM2023Problems/B题/result2.xlsx
+      - problems/12_CUMCM国赛/CUMCM2023Problems/B题/附件.xlsx
+
+  - business_id: cumcm-2024-B
+    competition: cumcm
+    year: 2024
+    problem_code: B
+    engine_regression_category: prediction
+    title: 生产过程中的决策问题
+    tags: [评价, 决策优化]
+    source: problems/12_CUMCM国赛/CUMCM2024Problems/B题/B题.pdf
+    attachments: []

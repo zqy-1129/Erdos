@@ -1,0 +1,25 @@
+name: data-content-ci
+on:
+  pull_request:
+    paths: ["data-platform/content/**", "server/app/domain/entitlement/ports.py", ".github/workflows/data-content-ci.yml"]
+  push:
+    branches: [develop, main]
+    paths: ["data-platform/content/**", "server/app/domain/entitlement/ports.py", ".github/workflows/data-content-ci.yml"]
+jobs:
+  independent-regressions:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.11"]
+    defaults:
+      run:
+        working-directory: data-platform/content
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install isolated schema dependencies
+        run: python -X utf8 scripts/clone_setup.py install-deps --schemas-only
+      - name: Independent unit and negative regressions (private integrations explicitly skipped)
+        run: python -X utf8 -m unittest discover -s tests -p "test_*.py" -v

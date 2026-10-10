@@ -1,0 +1,422 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/_common.json",
+  "title": "Erdos 内容契约共享定义 v1",
+  "description": "十九赛事数据体系共用定义。所有 schema 通过本地相对 $ref 引用本文件。",
+  "definitions": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "小写 64 位十六进制 sha256"
+    },
+    "competitionId": {
+      "type": "string",
+      "enum": [
+        "mcm",
+        "huashu",
+        "statistics",
+        "mathorcup",
+        "renzheng",
+        "teddy",
+        "wuyi",
+        "electrician",
+        "apmcm_zh",
+        "zhongqing",
+        "shenzhen",
+        "cumcm",
+        "cpmcm",
+        "shuwei",
+        "apmcm_en",
+        "xiaomeisai",
+        "yangtze",
+        "dongbei",
+        "huazhong"
+      ],
+      "description": "十九赛事稳定 ID（沿用 cumcm/mcm；不含通用 00_通用模板）"
+    },
+    "problemType": {
+      "type": "string",
+      "enum": [
+        "optimization",
+        "prediction",
+        "evaluation",
+        "mechanism",
+        "classification",
+        "statistical_analysis",
+        "unknown"
+      ],
+      "description": "工作题型（非官方分类）；unknown 表示待判定"
+    },
+    "reviewStatus": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "pending_review",
+        "approved",
+        "rejected",
+        "unknown"
+      ],
+      "description": "内容审核状态"
+    },
+    "labelStatus": {
+      "type": "string",
+      "enum": [
+        "pending_review",
+        "approved",
+        "rejected",
+        "unknown"
+      ],
+      "description": "标签/标注审核状态"
+    },
+    "confidence": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "置信度 0–1；缺失用 null，不用 0 伪造"
+    },
+    "relPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*(?:^|/)\\.(?:/|$))(?!.*//)[^/\\\\:\\x00-\\x1f]+(?:/[^/\\\\:\\x00-\\x1f]+)*$",
+      "description": "Portable root-relative path: forward slashes; no drive, URI, traversal, query, encoding or control characters."
+    },
+    "ossKey": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/relPath"
+        },
+        {
+          "pattern": "^[^%?#]+$"
+        }
+      ],
+      "description": "Portable object key, no URI, query or percent encoding."
+    },
+    "licenseScope": {
+      "type": "object",
+      "properties": {
+        "internal_analysis": {
+          "type": "boolean"
+        },
+        "distribute_original": {
+          "type": "boolean"
+        },
+        "distribute_profile": {
+          "type": "boolean"
+        },
+        "send_to_third_party_model": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "internal_analysis",
+        "distribute_original",
+        "distribute_profile",
+        "send_to_third_party_model"
+      ],
+      "additionalProperties": false,
+      "description": "四维授权范围；未获许可默认 false"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO8601/Z 时间戳（format 由校验器显式启用）"
+    },
+    "entityId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
+      "description": "稳定业务 ID；year/problem_code 组合如 cumcm-2024-B"
+    },
+    "schemaVersionInt": {
+      "const": 1,
+      "description": "This draft is schema v1; unsupported versions are rejected."
+    },
+    "assetRef": {
+      "type": "object",
+      "properties": {
+        "asset_id": {
+          "$ref": "_common.json#/definitions/entityId"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "$ref": "_common.json#/definitions/sha256"
+        }
+      },
+      "required": [
+        "asset_id",
+        "version",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "source_sha256": {
+          "$ref": "_common.json#/definitions/sha256"
+        },
+        "locator_type": {
+          "type": "string",
+          "enum": [
+            "page",
+            "text_span"
+          ]
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "source_sha256",
+        "locator_type",
+        "start",
+        "end"
+      ],
+      "additionalProperties": false
+    },
+    "licenseEvidence": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "record_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "relative_path": {
+              "$ref": "_common.json#/definitions/relPath"
+            }
+          },
+          "required": [
+            "record_id",
+            "relative_path"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "publication": {
+      "type": "string",
+      "enum": [
+        "staging",
+        "published",
+        "withdrawn"
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "rule",
+            "llm",
+            "import",
+            "unknown"
+          ]
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "_common.json#/definitions/evidence"
+            }
+          ]
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "evidence",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "tagList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "pageRange": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minItems": 2,
+          "uniqueItems": false,
+          "maxItems": 2
+        }
+      ]
+    },
+    "sectionType": {
+      "type": "string",
+      "enum": [
+        "abstract",
+        "restatement",
+        "assumptions",
+        "symbols",
+        "analysis",
+        "model",
+        "solve",
+        "validation",
+        "sensitivity",
+        "discussion",
+        "conclusion",
+        "references",
+        "appendix",
+        "toc",
+        "other"
+      ]
+    },
+    "countParts": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "abstract": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "toc": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "appendix": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        }
+      },
+      "required": [
+        "body",
+        "abstract",
+        "toc",
+        "appendix"
+      ],
+      "additionalProperties": false
+    },
+    "lengthStats": {
+      "type": "object",
+      "properties": {
+        "unit": {
+          "type": "string",
+          "enum": [
+            "zh_chars",
+            "en_words"
+          ]
+        },
+        "median": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number",
+              "minimum": 0
+            }
+          ]
+        },
+        "quantiles": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0
+              },
+              "minItems": 3,
+              "uniqueItems": false,
+              "maxItems": 3
+            }
+          ]
+        },
+        "statistical_basis": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        }
+      },
+      "required": [
+        "unit",
+        "median",
+        "quantiles",
+        "statistical_basis"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -8,6 +8,7 @@
 """
 
 import json
+import time
 from collections.abc import Awaitable, Callable
 from hashlib import sha256
 from pathlib import Path
@@ -74,6 +75,15 @@ def _extract_section(text: str, name: str) -> str:
 def _default_llm() -> _LLM:
     fake = FakeLLM()
     return fake.chat
+
+
+def _duration(reply: dict[str, Any]) -> float | None:
+    """模型端口上报的耗时（真实测量值）；未上报记 None 而不是 0.0。
+
+    留痕里 0 与「真的很快」不可区分（F-007 精度红线）；None 由记录器落库时省略该字段。
+    """
+    value = reply.get("duration_ms")
+    return None if value is None else float(value)
 
 
 _SOLVE_SCRIPT = """\
@@ -184,6 +194,7 @@ class StagePipeline:
             "question_focused": True,
             "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
+            "duration_ms": _duration(reply),
         }
 
     async def _modeling(self, task_id: str) -> dict[str, Any]:
@@ -203,6 +214,7 @@ class StagePipeline:
             "variables": ["slope", "intercept"],
             "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
+            "duration_ms": _duration(reply),
         }
 
     async def _solving(self, task_id: str) -> dict[str, Any]:
@@ -230,6 +242,7 @@ class StagePipeline:
             "artifacts": result.artifacts,
             "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
+            "duration_ms": _duration(reply),
         }
 
     async def _solving_tool_loop(self, task_id: str, registry: Any, solve_llm: Any, operations: Any) -> dict[str, Any]:
@@ -249,11 +262,13 @@ class StagePipeline:
             work_root=self._work_root,
             delta_sink=self._delta_sink,
         )
+        loop_started = time.monotonic()
         outcome = await loop.run(task_prompt)
         usage = outcome.get("usage", {})
         return {
             "stage": "solving",
             "mode": "tool_loop",
+            "duration_ms": round((time.monotonic() - loop_started) * 1000, 1),
             "status": outcome["status"],
             "results": outcome["results"],
             "repair_count": outcome["repair_count"],
@@ -323,4 +338,5 @@ class StagePipeline:
             "paper_path": str(paper_path),
             "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
+            "duration_ms": _duration(reply),
         }

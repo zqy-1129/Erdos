@@ -1,0 +1,117 @@
+{
+  "type": "object",
+  "properties": {
+    "component_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "kind": {
+      "enum": [
+        "figure",
+        "table",
+        "formula"
+      ]
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "page": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "anchor_block_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "anchor_text": {
+      "type": "string"
+    },
+    "anchor_bbox": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "number"
+      }
+    },
+    "coordinate_system": {
+      "const": "pdf_points_bottom_left"
+    },
+    "asset_ref": {
+      "type": "object",
+      "properties": {
+        "asset_id": {
+          "type": "string",
+          "pattern": "^asset-[0-9a-f]{64}$"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "asset_id",
+        "version",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "evidence_scope": {
+      "enum": [
+        "complete_page",
+        "isolated_region"
+      ]
+    },
+    "includes_neighbor_content": {
+      "type": "boolean"
+    },
+    "isolation_status": {
+      "type": "string"
+    },
+    "semantic_status": {
+      "enum": [
+        "pending_source_review",
+        "candidate",
+        "source_checked",
+        "verified",
+        "rejected",
+        "abstained"
+      ]
+    },
+    "latex": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "data_reconstructed": {
+      "const": false
+    }
+  },
+  "required": [
+    "component_id",
+    "kind",
+    "source_sha256",
+    "page",
+    "anchor_block_id",
+    "anchor_text",
+    "anchor_bbox",
+    "coordinate_system",
+    "asset_ref",
+    "evidence_scope",
+    "includes_neighbor_content",
+    "isolation_status",
+    "semantic_status",
+    "latex",
+    "data_reconstructed"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

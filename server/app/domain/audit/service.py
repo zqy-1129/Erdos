@@ -11,7 +11,9 @@ class AuditService:
         self._repo = repo
 
     async def record(self, event: AuditEvent) -> AuditEventView:
-        """写入审计事件（幂等：同 Idempotency-Key 只入账一次）。"""
-        if await self._repo.exists_by_request_key(event.request_key):
+        """写入审计事件（幂等：有 Idempotency-Key 时同键只入账一次）。"""
+        if event.request_key is not None and await self._repo.exists_by_request_key(
+            event.request_key
+        ):
             raise AppError(CONFLICT, detail="该 Idempotency-Key 对应请求已处理")
         return await self._repo.add_event(event)

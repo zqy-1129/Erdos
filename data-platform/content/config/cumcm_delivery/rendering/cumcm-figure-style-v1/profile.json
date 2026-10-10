@@ -1,0 +1,77 @@
+{
+  "profile_id": "cumcm-figure-style",
+  "version": 1,
+  "kind": "self_authored_rendering_suggestion",
+  "official_requirement": false,
+  "fonts": {
+    "chinese": "SimSun",
+    "latin": "Times New Roman",
+    "axis_points": 9,
+    "legend_points": 8,
+    "caption": "supplied by document_node outside plot"
+  },
+  "canvas": {
+    "single_column_width_mm": 160,
+    "default_height_mm": 95,
+    "raster_dpi": 300,
+    "background": "white",
+    "tight_layout": true
+  },
+  "series": {
+    "palette": [
+      "#0072B2",
+      "#D55E00",
+      "#009E73",
+      "#CC79A7",
+      "#E69F00",
+      "#56B4E9"
+    ],
+    "line_width_points": 1.3,
+    "marker_size_points": 4,
+    "markers": [
+      "o",
+      "s",
+      "^",
+      "D"
+    ],
+    "line_styles": [
+      "solid",
+      "dashed",
+      "dashdot"
+    ],
+    "color_is_not_the_only_encoding": true
+  },
+  "axes": {
+    "unit_required": true,
+    "unit_source": "current dataset/result_card; dimensionless/category must be explicit",
+    "grid": "light major grid only",
+    "scientific_notation": "declare multiplier and unit"
+  },
+  "legend": {
+    "text": "series meaning and unit",
+    "placement": "avoid covering observations",
+    "consistent_series_order": true
+  },
+  "export": {
+    "formats": [
+      "png",
+      "pdf",
+      "svg"
+    ],
+    "verify_font_embedding_or_outlines": true,
+    "verify_no_clipping": true,
+    "plot_data_sha_required": true,
+    "computation_run_id_required": true
+  },
+  "caption": {
+    "placement": "below figure in assembled paper",
+    "fields": [
+      "figure number",
+      "meaningful title",
+      "units",
+      "current computation/source identity"
+    ]
+  },
+  "missing_inputs": "skip plot; request real current task computation; never manufacture historical values",
+  "client_pinning": "save profile_id, version and canonical SHA with current document; do not silently change rendering advice mid-task"
+}

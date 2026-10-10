@@ -1,0 +1,42 @@
+{
+  "writing_profile_id": "cumcm-optimization-wp1",
+  "competition_id": "cumcm",
+  "type_id": "optimization",
+  "version": 1,
+  "schema_version": 1,
+  "sample_count": 1,
+  "sources": [
+    {
+      "case_id": "cumcm-2024-B-case-001",
+      "profile_version": 1,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "statistics": {
+    "section_order": [
+      "restatement",
+      "model",
+      "solve",
+      "analysis"
+    ],
+    "length": [
+      {
+        "unit": "zh_chars",
+        "median": null,
+        "quantiles": null,
+        "statistical_basis": null
+      }
+    ],
+    "figure_frequency": []
+  },
+  "missing_fallback": {
+    "fallback_ref": {
+      "asset_id": "cumcm-policy",
+      "version": 1,
+      "sha256": "2171172da7c6e162fb55afe0c178b1f41f9b652322007cdb03df5925a034279d"
+    },
+    "note": "夹具没有真实统计；小样本回退基础写作策略"
+  },
+  "review_status": "pending_review",
+  "is_fixture": true
+}

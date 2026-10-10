@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/cumcm/v2/block.schema.json",
+  "title": "Erdos cumcm v2 结构块（block）",
+  "type": "object",
+  "required": ["block_id", "parse_run_id", "block_type", "page", "order", "text", "locations", "review_status"],
+  "properties": {
+    "block_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+    "parse_run_id": {"type": "string"},
+    "parent_section_id": {"type": ["string", "null"]},
+    "level": {"type": ["integer", "null"], "minimum": 0},
+    "order": {"type": "integer", "minimum": 1},
+    "block_type": {"type": "string", "enum": ["heading", "paragraph", "equation", "figure", "figure_caption", "table", "table_caption", "reference", "code", "page_header", "page_footer", "watermark", "other"]},
+    "page": {"type": "integer", "minimum": 1},
+    "printed_page": {"type": ["integer", "null"], "minimum": 1},
+    "text": {"type": "string"},
+    "payload": {"type": "object"},
+    "locations": {"type": "array", "items": {"$ref": "#/definitions/location"}},
+    "source_asset_ref": {"$ref": "#/definitions/assetRef"},
+    "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "review_status": {"type": "string", "enum": ["pending_review", "approved", "rejected", "unknown"]}
+  },
+  "definitions": {
+    "location": {
+      "type": "object",
+      "required": ["page", "bbox"],
+      "properties": {
+        "page": {"type": "integer", "minimum": 1},
+        "bbox": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}, "minItems": 4, "maxItems": 4},
+        "bbox_note": {"type": "string"}
+      }
+    },
+    "assetRef": {
+      "type": "object",
+      "required": ["asset_id", "version", "sha256"],
+      "properties": {
+        "asset_id": {"type": "string"},
+        "version": {"type": "integer", "minimum": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  },
+  "additionalProperties": false
+}

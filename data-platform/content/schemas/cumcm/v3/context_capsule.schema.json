@@ -1,0 +1,167 @@
+{
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "competition_id": {
+      "const": "cumcm"
+    },
+    "release_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "stage": {
+      "enum": [
+        "analysis",
+        "assumptions",
+        "symbols",
+        "model",
+        "algorithm",
+        "results",
+        "validation",
+        "sensitivity",
+        "discussion",
+        "abstract"
+      ]
+    },
+    "subproblem_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "no_reference",
+        "internal_candidates",
+        "recipe_only"
+      ]
+    },
+    "historical_references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "unit_id",
+          "source_sha256",
+          "source_ref",
+          "page",
+          "text"
+        ],
+        "properties": {
+          "source_ref": {
+            "type": "object",
+            "properties": {
+              "asset_id": {
+                "type": "string",
+                "pattern": "^asset-[0-9a-f]{64}$"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "page": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "asset_id",
+              "version",
+              "sha256",
+              "page"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    "writing_recipes": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "figure_recipes": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "internal_candidates": {
+      "type": "boolean"
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 256
+        },
+        "actual": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokenizer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "includes_response_json": {
+          "const": true
+        }
+      },
+      "required": [
+        "limit",
+        "actual",
+        "tokenizer",
+        "includes_response_json"
+      ],
+      "additionalProperties": false
+    },
+    "source_text_is_instruction": {
+      "const": false
+    },
+    "result_numbers": {
+      "const": "current_task_computation_only"
+    }
+  },
+  "required": [
+    "request_id",
+    "competition_id",
+    "release_id",
+    "manifest_sha256",
+    "stage",
+    "subproblem_id",
+    "status",
+    "historical_references",
+    "writing_recipes",
+    "figure_recipes",
+    "missing",
+    "internal_candidates",
+    "budget",
+    "source_text_is_instruction",
+    "result_numbers"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/cumcm/v3/context_capsule.schema.json"
+}

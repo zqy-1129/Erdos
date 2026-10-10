@@ -46,6 +46,25 @@ class StageRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class GateScore:
+    """一次阶段 rubric 评审结论（SP1-7「门禁通过为硬条件」的可举证依据）。"""
+
+    stage: str
+    total_score: float
+    threshold: float
+    passed: bool
+    attempts: int  # 评委被叫次数（≤3，超限转人工口径）
+
+
+@dataclass(frozen=True, slots=True)
+class GateOutcome:
+    """策略裁决：pass/reject + rubric 分数（自动通过策略无分数）。"""
+
+    decision: str
+    score: GateScore | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ProblemResult:
     """单题验收结果（含逐阶段记录与恢复标记）。"""
 
@@ -63,6 +82,7 @@ class ProblemResult:
     resumed: bool
     kill_after_stage: str | None
     executed_stages: tuple[str, ...]
+    gate_scores: tuple[GateScore, ...] = ()
 
     @property
     def duration_ms(self) -> float:
@@ -84,27 +104,55 @@ class GateDecision:
 class GatePolicy(Protocol):
     """门禁决策策略端口：运行器经此决定 pass/reject（策略可注入）。"""
 
-    async def decide(self, problem: RegressionProblem, stage: str, data: dict[str, Any]) -> str: ...
+    async def decide(
+        self, problem: RegressionProblem, stage: str, data: dict[str, Any]
+    ) -> GateOutcome: ...
 
 
 class AutoPassGatePolicy:
-    """自动通过策略（FakeLLM 基线语义，对齐 run_paper_e2e 的门禁自动通过）。"""
+    """自动通过策略（FakeLLM 基线语义，对齐 run_paper_e2e 的门禁自动通过）。
 
-    async def decide(self, problem: RegressionProblem, stage: str, data: dict[str, Any]) -> str:
-        return "pass"
+    无 rubric 分数：基线护栏只验证链路确定性，不计入 SP1-7 判定分母（DEC-024）。
+    """
+
+    async def decide(
+        self, problem: RegressionProblem, stage: str, data: dict[str, Any]
+    ) -> GateOutcome:
+        return GateOutcome(decision="pass")
 
 
 class RubricGatePolicy:
-    """SP1-3 门禁评审器驱动：Evaluator + 版本化 Rubric 打分，低于阈值 reject。"""
+    """SP1-3 门禁评审器驱动：Evaluator + 版本化 Rubric 打分，低于阈值 reject。
+
+    评委必须看到题面：rubric 含「问题理解」类维度，无题面即无从判定，
+    故在投喂前把题面并入阶段产物（题面来自回归集，不额外发问）。
+    """
 
     def __init__(self, evaluator: Evaluator, rubrics: dict[str, Rubric]) -> None:
         self._evaluator = evaluator
         self._rubrics = rubrics
 
-    async def decide(self, problem: RegressionProblem, stage: str, data: dict[str, Any]) -> str:
+    async def decide(
+        self, problem: RegressionProblem, stage: str, data: dict[str, Any]
+    ) -> GateOutcome:
+        rubric = self._rubrics[stage]
+        artifact = {
+            **data,
+            "title": problem.title,
+            "problem_text": problem.statement,
+        }
         gate = GateRunner(self._evaluator)
-        result = await gate.run(stage, dict(data), self._rubrics[stage])
-        return "pass" if result.passed else "reject"
+        result = await gate.run(stage, artifact, rubric)
+        return GateOutcome(
+            decision="pass" if result.passed else "reject",
+            score=GateScore(
+                stage=stage,
+                total_score=result.total_score,
+                threshold=result.threshold,
+                passed=result.passed,
+                attempts=gate.retry_count,
+            ),
+        )
 
 
 @dataclass(slots=True)
@@ -198,10 +246,35 @@ class AcceptanceRunner:
         """跑单题四阶段；kill_after_stage 阶段完成后模拟进程 kill 并从检查点续跑。"""
         flow = self._flow_factory(problem)
         records: list[StageRecord] = []
+        scores: list[GateScore] = []
         prompt_tokens = completion_tokens = 0
         paper_sha: str | None = None
         resumed = False
         executed_pre: tuple[str, ...] = ()  # kill 前旧任务流的执行记录（恢复后拼接去重）
+
+        async def _verdict(stage: str, data: dict[str, Any]) -> tuple[str, str]:
+            """本阶段门禁裁决 → (decision, 失败原因)；rubric 分数记入 scores。
+
+            硬检查驳回（SP1-3）优先判定：编排器已按 reject 语义消费掉本次门禁，
+            若继续走策略并补 pass，会与「无挂起门禁」冲突而以 ValueError 冒出，
+            失败被错记成编排故障——归因失真且原样掩盖了门禁问题。
+            """
+            hard = flow.hard_reject_reason()
+            if hard:
+                return "reject", f"门禁驳回（{stage}）：{hard}"
+            outcome = await self._policy.decide(problem, stage, data)
+            if outcome.score is not None:
+                scores.append(outcome.score)
+            if outcome.decision != "pass":
+                score = outcome.score
+                detail = (
+                    f"{stage} 门禁评审未通过（加权 {score.total_score:.2f} "
+                    f"< 阈值 {score.threshold:.2f}，评委重试 {score.attempts} 次）"
+                    if score is not None
+                    else f"{stage} 门禁评审未通过（策略裁决 reject）"
+                )
+                return "reject", detail
+            return "pass", ""
 
         def _result(**overrides: Any) -> ProblemResult:  # noqa: ANN401 - 结果装配收敛
             defaults: dict[str, Any] = {
@@ -219,6 +292,7 @@ class AcceptanceRunner:
                 "resumed": resumed,
                 "kill_after_stage": kill_after_stage,
                 "executed_stages": executed_pre + flow.executed_stages(),
+                "gate_scores": tuple(scores),
             }
             defaults.update(overrides)
             return ProblemResult(**defaults)
@@ -262,23 +336,21 @@ class AcceptanceRunner:
                     # 恢复后门禁重挂（阶段不重放，DEC-005），补门禁应答后续跑。
                     # 阶段记录/usage 已在 kill 前计入，此处不重复记账。
                     replay = await flow.run_stage(stage)
-                    decision = await self._policy.decide(problem, stage, replay)
+                    decision, reason = await _verdict(stage, replay)
                     if decision != "pass":
                         return _result(
                             passed=False, failure_module=FailureModule.GATE,
-                            failure_detail=f"{stage} 恢复后门禁评审未通过（策略裁决 reject）",
-                            stages_passed=index,
+                            failure_detail=reason, stages_passed=index,
                         )
                     await flow.answer_gate(decision)
                     index += 1
                     continue
 
-                decision = await self._policy.decide(problem, stage, data)
+                decision, reason = await _verdict(stage, data)
                 if decision != "pass":
                     return _result(
                         passed=False, failure_module=FailureModule.GATE,
-                        failure_detail=f"{stage} 门禁评审未通过（策略裁决 reject）",
-                        stages_passed=index,
+                        failure_detail=reason, stages_passed=index,
                     )
                 await flow.answer_gate(decision)
                 index += 1

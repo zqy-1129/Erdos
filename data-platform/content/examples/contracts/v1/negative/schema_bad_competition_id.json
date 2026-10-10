@@ -1,0 +1,24 @@
+{
+  "problem_id": "cumcm-2024-B",
+  "competition_id": "nope-not-a-real-competition",
+  "year": 2024,
+  "problem_code": "B",
+  "problem_types": [
+    "optimization"
+  ],
+  "subproblems": [],
+  "schema_version": 1,
+  "review_status": "pending_review",
+  "profile_version": 1,
+  "confidence": null,
+  "label_status": "unknown",
+  "provenance": {
+    "kind": "unknown",
+    "evidence": null,
+    "note": "开发夹具，尚未提取或人工确认"
+  },
+  "source_sha256": null,
+  "source_asset_ref": null,
+  "method_tags": [],
+  "is_fixture": true
+}

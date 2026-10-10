@@ -17,6 +17,7 @@ from app.core.config import Settings
 from app.core.errors import CONFLICT, NOT_FOUND, AppError
 from app.domain.billing.ports import (
     CallbackRecord,
+    ChannelPayment,
     CreateOrderRequest,
 )
 from app.domain.billing.service import BillingService
@@ -240,8 +241,12 @@ async def test_create_order_unknown_product(session_factory, settings) -> None:
 # ----------------------------------------------------------------------
 # 边界 / 异常补充（关单、重复退款、退款未支付、回调订单不存在）
 # ----------------------------------------------------------------------
-async def test_callback_rejects_expired_order(session_factory, settings) -> None:
-    """关单：订单超时（30 分钟）后回调应拒绝入账并关单。"""
+async def test_callback_settles_expired_but_open_order(session_factory, settings) -> None:
+    """EC-N7 回归（吞款修复）：有效签名的迟到回调必须补账，不因过期被吞。
+
+    旧实现先占用 payment_no 唯一约束、再抛 CONFLICT 并关单，重放只走幂等跳过分支，
+    结果是"钱收了、权益没发、也没人知道"。回调能进到这里说明验签已过，即渠道确认收款。
+    """
     async with UnitOfWork(session_factory) as uow:
         await _seed_products(uow.session)
         svc = _svc(uow.session, settings)
@@ -249,22 +254,23 @@ async def test_callback_rejects_expired_order(session_factory, settings) -> None
         order = await svc.create_order(
             CreateOrderRequest("u1", "pack_400", "mock", "key-1"), now
         )
-        # 31 分钟后回调
+        # 31 分钟后回调（已超过 30 分钟支付时限，但订单仍是 created）
         late = now + timedelta(minutes=31)
-        with pytest.raises(AppError) as ei:
-            await svc.handle_callback(
-                "u1",
-                CallbackRecord(id="", payment_no="pay-1", order_id=order.order.id, raw_digest="x", received_at=late, processed=False),
-                late,
-            )
-        assert ei.value.spec is CONFLICT
-        # 订单已关单
-        closed = await SQLAlchemyOrderRepository(uow.session).get(order.order.id)
-        assert closed.status == "closed"
+        result = await svc.handle_callback(
+            "u1",
+            CallbackRecord(id="", payment_no="pay-1", order_id=order.order.id, raw_digest="x",
+                           received_at=late, processed=False),
+            late,
+        )
+        assert result.applied is True
+        assert result.order.status == "paid"
+        assert result.difference is None
+        balance = await SQLAlchemyPointAccountRepository(uow.session).get("u1")
+        assert balance is not None and balance.purchased_balance == 400
 
 
-async def test_get_order_closes_expired(session_factory, settings) -> None:
-    """查询关单：created 且过期时，查询应主动关单。"""
+async def test_callback_on_closed_order_reports_difference(session_factory, settings) -> None:
+    """已关单（终态）却收到有效回调：不入账、不迁移终态，但必须返回差异交调用方记账告警。"""
     async with UnitOfWork(session_factory) as uow:
         await _seed_products(uow.session)
         svc = _svc(uow.session, settings)
@@ -272,9 +278,78 @@ async def test_get_order_closes_expired(session_factory, settings) -> None:
         order = await svc.create_order(
             CreateOrderRequest("u1", "pack_400", "mock", "key-1"), now
         )
-        late = now + timedelta(minutes=31)
-        fetched = await svc.get_order(order.order.id, late)
-        assert fetched.status == "closed"
+        await SQLAlchemyOrderRepository(uow.session).transition(
+            order.order.id, "created", "closed", now
+        )
+        result = await svc.handle_callback(
+            "u1",
+            CallbackRecord(id="", payment_no="pay-late", order_id=order.order.id,
+                           raw_digest="x", received_at=now, processed=False),
+            now,
+        )
+        assert result.applied is False
+        assert result.difference is not None and "已关单" in result.difference
+        # closed 保持终态（口径：差异走人工退款，不开 closed→paid 例外）
+        assert result.order.status == "closed"
+
+
+async def test_settle_from_channel_requires_amount_match(session_factory, settings) -> None:
+    """查单补账金额红线：渠道回包金额 ≠ 订单价一律不入账，返回差异待人工核。"""
+    async with UnitOfWork(session_factory) as uow:
+        await _seed_products(uow.session)
+        svc = _svc(uow.session, settings)
+        now = datetime.now(UTC)
+        order = await svc.create_order(
+            CreateOrderRequest("u1", "pack_400", "mock", "key-1"), now
+        )
+        result = await svc.settle_from_channel(
+            order.order.id,
+            ChannelPayment(payment_no="wx-1", amount_cents=1),  # 应为 1800 分
+            "wechat",
+            now,
+        )
+        assert result.applied is False
+        assert result.difference is not None and "金额" in result.difference
+        latest = await SQLAlchemyOrderRepository(uow.session).get(order.order.id)
+        assert latest.status == "created"
+        assert await SQLAlchemyPointAccountRepository(uow.session).get("u1") is None
+
+
+async def test_settle_from_channel_is_idempotent(session_factory, settings) -> None:
+    """查单补账走同一条 payment_no 幂等链：同一笔收款重复查单只入账一次。"""
+    async with UnitOfWork(session_factory) as uow:
+        await _seed_products(uow.session)
+        svc = _svc(uow.session, settings)
+        now = datetime.now(UTC)
+        order = await svc.create_order(
+            CreateOrderRequest("u1", "pack_400", "mock", "key-1"), now
+        )
+        payment = ChannelPayment(payment_no="wx-9", amount_cents=1800)
+        first = await svc.settle_from_channel(order.order.id, payment, "wechat", now)
+        second = await svc.settle_from_channel(order.order.id, payment, "wechat", now)
+        assert first.applied is True and second.applied is False
+        balance = await SQLAlchemyPointAccountRepository(uow.session).get("u1")
+        assert balance is not None and balance.purchased_balance == 400
+
+
+async def test_get_order_does_not_close_without_evidence(session_factory, settings) -> None:
+    """只读查询不再盲关单：过期不等于没收款，关单必须有渠道"未收款"证据。"""
+    async with UnitOfWork(session_factory) as uow:
+        await _seed_products(uow.session)
+        svc = _svc(uow.session, settings)
+        now = datetime.now(UTC)
+        order = await svc.create_order(
+            CreateOrderRequest("u1", "pack_400", "mock", "key-1"), now
+        )
+        fetched = await svc.get_order(order.order.id)
+        assert fetched is not None and fetched.status == "created"
+
+        # 未过期 → 即便渠道确认未收款也不关单
+        still_open = await svc.close_unpaid(order.order.id, now)
+        assert still_open is not None and still_open.status == "created"
+        # 已过期 + 渠道确认未收款 → 关单
+        closed = await svc.close_unpaid(order.order.id, now + timedelta(minutes=31))
+        assert closed is not None and closed.status == "closed"
 
 
 async def test_refund_unpaid_order_rejected(session_factory, settings) -> None:

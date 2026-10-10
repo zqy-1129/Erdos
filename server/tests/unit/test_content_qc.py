@@ -48,7 +48,7 @@ def test_qc_problems_missing_field() -> None:
 def test_qc_problems_sha256_mismatch(tmp_path) -> None:
     """附件 sha256 不一致：检出。"""
     f = tmp_path / "data.txt"
-    f.write_text("hello")
+    f.write_text("hello", encoding="utf-8")
     good_sha = hashlib.sha256(b"hello").hexdigest()
     bad_sha = "0" * 64
     problems = [
@@ -85,9 +85,15 @@ def test_run_qc_full(tmp_path) -> None:
 
     data_dir = tmp_path / "content"
     data_dir.mkdir()
-    (data_dir / "problems.json").write_text(json.dumps([_problem()], ensure_ascii=False))
-    (data_dir / "templates.json").write_text(json.dumps([_template()], ensure_ascii=False))
-    (data_dir / "cases.json").write_text(json.dumps([_case()], ensure_ascii=False))
+    (data_dir / "problems.json").write_text(
+        json.dumps([_problem()], ensure_ascii=False), encoding="utf-8"
+    )
+    (data_dir / "templates.json").write_text(
+        json.dumps([_template()], ensure_ascii=False), encoding="utf-8"
+    )
+    (data_dir / "cases.json").write_text(
+        json.dumps([_case()], ensure_ascii=False), encoding="utf-8"
+    )
     report = run_qc(data_dir)
     assert report.passed is True
     assert report.problems == 1

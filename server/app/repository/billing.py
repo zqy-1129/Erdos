@@ -6,7 +6,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -190,6 +190,41 @@ class SQLAlchemyOrderRepository(OrderRepository):
         if int(getattr(result, "rowcount", 0) or 0) != 1:
             return None
         return await self.get(order_id)
+
+    async def list_reconcilable(
+        self,
+        *,
+        created_before: datetime,
+        closed_before: datetime,
+        closed_after: datetime,
+        limit: int,
+    ) -> list[OrderRecord]:
+        """待兜底订单：到点未支付（查单补账/关单）+ 复核窗口内已关单（收款复核）。"""
+        rows = (
+            (
+                await self._session.execute(
+                    select(Order)
+                    .where(
+                        or_(
+                            and_(
+                                Order.status == "created",
+                                Order.created_at <= created_before,
+                            ),
+                            and_(
+                                Order.status == "closed",
+                                Order.updated_at <= closed_before,
+                                Order.updated_at >= closed_after,
+                            ),
+                        )
+                    )
+                    .order_by(Order.created_at)
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [_order(row) for row in rows]
 
 
 class SQLAlchemySubscriptionRepository(SubscriptionRepository):

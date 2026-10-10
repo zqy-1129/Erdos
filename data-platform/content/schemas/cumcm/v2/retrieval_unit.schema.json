@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/cumcm/v2/retrieval_unit.schema.json",
+  "title": "Erdos cumcm v2 检索单元（retrieval_unit）",
+  "type": "object",
+  "required": ["unit_id", "version", "case_id", "case_version", "problem_id", "stage", "retrieval_text", "ordered_block_refs", "source_evidence", "rank"],
+  "properties": {
+    "unit_id": {"type": "string"},
+    "version": {"type": "integer", "minimum": 1},
+    "case_id": {"type": "string"},
+    "case_version": {"type": "integer", "minimum": 1},
+    "problem_id": {"type": ["string", "null"]},
+    "subproblem_links": {"type": "array", "items": {"type": "object"}},
+    "stage": {"type": "string"},
+    "role": {"type": "string"},
+    "applicable_conditions": {"type": "string"},
+    "retrieval_text": {"type": "string"},
+    "formula_refs": {"type": "array", "items": {"type": "object"}},
+    "symbol_defs": {"type": "array", "items": {"type": "object"}},
+    "figure_refs": {"type": "array", "items": {"type": "object"}},
+    "table_refs": {"type": "array", "items": {"type": "object"}},
+    "ordered_block_refs": {"type": "array", "items": {"type": "string"}},
+    "source_evidence": {"type": "object"},
+    "quality_status": {"type": "string"},
+    "usage_status": {"type": "string"},
+    "rank": {"type": "number"}
+  },
+  "additionalProperties": false
+}

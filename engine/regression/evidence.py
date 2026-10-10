@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from engine.orchestrator.graph import STAGES
 from engine.regression.problems import RegressionProblem
 from engine.regression.runner import AcceptanceReport, ProblemResult
 
@@ -40,9 +41,16 @@ class EvidenceWriter:
         return path
 
     def write_summary(
-        self, report: AcceptanceReport, title: str = "SP1-7 回归基线报告"
+        self,
+        report: AcceptanceReport,
+        title: str = "SP1-7 回归基线报告",
+        extra: dict[str, Any] | None = None,
     ) -> tuple[Path, Path]:
-        """写入 summary.json 与 report.md；返回两个文件路径。"""
+        """写入 summary.json 与 report.md；返回两个文件路径。
+
+        extra：本轮评审口径与评委用量等运行级信息（如 gate_mode / judge_usage），
+        由驱动脚本如实登记，判定报告附录可直接引用。
+        """
         summary = {
             "generated_at": _now_iso(),
             "total": len(report.results),
@@ -53,6 +61,7 @@ class EvidenceWriter:
             "by_category_baseline": report.by_category("fakellm"),
             "failure_by_module_baseline": report.failure_by_module("fakellm"),
             "decision": str(report.decision()),
+            **(extra or {}),
         }
         summary_path = self._root / "summary.json"
         summary_path.write_text(
@@ -102,16 +111,52 @@ def render_markdown(report: AcceptanceReport, *, title: str = "SP1-7 回归基�
         "",
         "## 4. 逐题明细",
         "",
-        "| 题目 | 题型 | 通道 | 结果 | 归因 | 恢复 | 阶段耗时合计(ms) | prompt tokens | completion tokens | 产物哈希 |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| 题目 | 题型 | 通道 | 结果 | 归因 | 恢复 | 阶段耗时合计(ms) | prompt tokens | "
+        "completion tokens | 产物哈希 | 门禁评分 |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in report.results:
         lines.append(
             f"| {r.business_id} | {r.category} | {r.channel} | {'通过' if r.passed else '失败'} "
             f"| {r.failure_module or '-'} | {'是' if r.resumed else '-'} | {r.duration_ms} "
-            f"| {r.prompt_tokens} | {r.completion_tokens} | {r.paper_sha256 or '-'} |"
+            f"| {r.prompt_tokens} | {r.completion_tokens} | {r.paper_sha256 or '-'} "
+            f"| {_scores_cell(r)} |"
         )
+
+    scored = [r for r in report.results if r.gate_scores]
+    if scored:
+        lines += [
+            "",
+            "## 5. rubric 评审明细",
+            "",
+            "每格为「加权总分/阈值（评委调用次数）」；空格表示该阶段未进入评审。",
+            "",
+            "| 题目 | " + " | ".join(STAGES) + " |",
+            "|---" * (len(STAGES) + 1) + "|",
+        ]
+        for r in scored:
+            by_stage = {g.stage: g for g in r.gate_scores}
+            cells = [
+                (
+                    f"{by_stage[s].total_score:.2f}/{by_stage[s].threshold:.2f}"
+                    f"（{by_stage[s].attempts}）{'✓' if by_stage[s].passed else '✗'}"
+                )
+                if s in by_stage
+                else " "
+                for s in STAGES
+            ]
+            lines.append(f"| {r.business_id} | " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
+
+
+def _scores_cell(result: ProblemResult) -> str:
+    """逐题明细的门禁评分摘要（无 rubric 分数时标注评审口径）。"""
+    if not result.gate_scores:
+        return "自动通过（无 rubric 分数）"
+    return " ".join(
+        f"{g.stage[:4]} {g.total_score:.2f}{'✓' if g.passed else '✗'}"
+        for g in result.gate_scores
+    )
 
 
 def _now_iso() -> str:

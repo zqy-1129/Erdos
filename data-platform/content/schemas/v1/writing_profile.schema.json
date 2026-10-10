@@ -1,0 +1,175 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/writing_profile.schema.json",
+  "title": "Erdos writing_profile v1 draft",
+  "type": "object",
+  "properties": {
+    "writing_profile_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "competition_id": {
+      "$ref": "_common.json#/definitions/competitionId"
+    },
+    "type_id": {
+      "$ref": "_common.json#/definitions/problemType"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "schema_version": {
+      "$ref": "_common.json#/definitions/schemaVersionInt"
+    },
+    "sample_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "case_id": {
+            "$ref": "_common.json#/definitions/entityId"
+          },
+          "profile_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_sha256": {
+            "$ref": "_common.json#/definitions/sha256"
+          }
+        },
+        "required": [
+          "case_id",
+          "profile_version",
+          "source_sha256"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "statistics": {
+      "type": "object",
+      "properties": {
+        "section_order": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "abstract",
+              "restatement",
+              "assumptions",
+              "symbols",
+              "analysis",
+              "model",
+              "solve",
+              "validation",
+              "sensitivity",
+              "discussion",
+              "conclusion",
+              "references",
+              "appendix",
+              "toc",
+              "other"
+            ]
+          },
+          "minItems": 0,
+          "uniqueItems": false
+        },
+        "length": {
+          "type": "array",
+          "items": {
+            "$ref": "_common.json#/definitions/lengthStats"
+          },
+          "minItems": 0,
+          "uniqueItems": false
+        },
+        "figure_frequency": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "kind",
+              "count"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "uniqueItems": false
+        }
+      },
+      "required": [
+        "section_order",
+        "length",
+        "figure_frequency"
+      ],
+      "additionalProperties": false
+    },
+    "missing_fallback": {
+      "type": "object",
+      "properties": {
+        "fallback_ref": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "_common.json#/definitions/assetRef"
+            }
+          ]
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        }
+      },
+      "required": [
+        "fallback_ref",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "review_status": {
+      "$ref": "_common.json#/definitions/reviewStatus"
+    },
+    "is_fixture": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional metadata only; cannot override defined fields."
+    }
+  },
+  "required": [
+    "writing_profile_id",
+    "competition_id",
+    "type_id",
+    "version",
+    "schema_version",
+    "sample_count",
+    "sources",
+    "statistics",
+    "missing_fallback",
+    "review_status"
+  ],
+  "additionalProperties": false
+}

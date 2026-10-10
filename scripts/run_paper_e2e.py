@@ -32,6 +32,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from engine.ipc.stdio import configure_stdio
 from engine.orchestrator.graph import STAGES
 from engine.regression.rpc_flow import RpcTaskFlow
 
@@ -102,6 +103,7 @@ async def _run(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    configure_stdio()  # 驱动脚本同样按 UTF-8 输出中文进度，与 Windows 控制台码页解耦
     args = _parse_args()
     if args.api_key and not (args.base_url and args.model):
         sys.exit("Key 模式需要 --base-url 与 --model（引擎拒启红线：禁猜测端点）")
