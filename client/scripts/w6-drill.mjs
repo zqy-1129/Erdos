@@ -1,7 +1,7 @@
 /**
  * W6 · J-1024 三进程汇合联调预演（10-24 硬门前置，可无人值守重复执行）。
  *
- * 覆盖联调清单（对齐手册 W6 步骤①②，除真实 Key 通道外全部脚本化）：
+ * 覆盖联调清单（对齐手册 W6 步骤①②；Key/厂商端点通道均已脚本化，10-24 现场复跑）：
  *   ⓪ 契约清单核对（方法：schema ↔ client ↔ engine 三方；事件：schema ↔ client，引擎侧由
  *     engine/tests/test_contract_alignment.py 守护——本批已实测 4 例通过）
  *   ① 引擎启动与握手（spawn → initialize → ready，EC-T6 ≤10s）
@@ -15,11 +15,14 @@
  *     崩溃前留痕不得减少）
  *   ⑨ 单实例（同一 userData：第二实例被锁拒绝且未进入 boot；控制组：不同 userData 可正常启动）
  *   ⑩ 真实 Key 通道（--with-key；mock 厂商端点 200/401）：验证「首行注入 → Authorization → /models 探测」
- *      （10-24 待签认项；真实厂商端点以运行时替换 base_url 补测）
+ *      （10-24 待签认项；不判定 Key 无效：红线口径）
+ *   ⑪ 厂商端点通道（--with-vendor；外部真实/模拟厂商端点，10-24 现场复跑同一断言）：环境变量
+ *      LLM_BASE_URL / LLM_API_KEY / LLM_MODEL_ID（必填）、LLM_PROVIDER（选填，默认 dashscope-compat）；
+ *      密钥仅经环境变量注入与首行传递——不落盘、不入证据（证据仅存脱敏 keyMasked）
  *   --with-solving（可选）：solving 阶段专项（真实沙箱执行，实测约 60~120s；10-24 待签认项）
  *
  * 用法（client/ 目录）：
- *   node scripts/w6-drill.mjs [--skip-singleton] [--skip-engine] [--with-solving] [--with-key] [--out <evidence.json>]
+ *   node scripts/w6-drill.mjs [--skip-singleton] [--skip-engine] [--with-solving] [--with-key] [--with-vendor] [--out <evidence.json>]
  * 前置：engine/.venv（或 ERDOS_ENGINE_PYTHON 覆盖）；⑨ 需已构建 dist（npm run build）。
  * 退出码：0=全项通过；1=存在失败步骤；2=前置缺失。
  * 证据：JSON 默认写 reports/w6-drill-<日期>.json（steps/状态轨迹/事件统计/版本/计时；
@@ -36,6 +39,7 @@ import { fileURLToPath } from "node:url";
 
 import { EngineHost } from "../main/engine-host/host.ts";
 import { readRecentTasks } from "../main/engine-trail.ts";
+import { maskSecret, maskText } from "../main/secret-masker.ts";
 import { ENGINE_EVENT_NAMES, RPC_METHODS } from "../shared/ipc.ts";
 
 const require = createRequire(import.meta.url);
@@ -48,6 +52,7 @@ const skipSingleton = argv.includes("--skip-singleton");
 const skipEngine = argv.includes("--skip-engine");
 const withSolving = argv.includes("--with-solving");
 const withKey = argv.includes("--with-key");
+const withVendor = argv.includes("--with-vendor");
 const outIndex = argv.indexOf("--out");
 const stamp = new Date().toISOString().slice(0, 10);
 const outPath = outIndex >= 0 && argv[outIndex + 1] ? argv[outIndex + 1] : join(repoRoot, "reports", `w6-drill-${stamp}.json`);
@@ -472,6 +477,93 @@ async function runKeyChannelSection() {
   };
 }
 
+// ---- ⑪ 厂商端点通道（--with-vendor；外部真实/模拟厂商端点，10-24 现场复跑口径） --
+/**
+ * 从环境变量读取外部厂商配置（密钥不落盘、不入证据、不进日志——仅首行注入驻内存）：
+ *   LLM_BASE_URL / LLM_API_KEY / LLM_MODEL_ID（必填）· LLM_PROVIDER（选填，默认 dashscope-compat）
+ *   LLM_TIMEOUT 仅作用于模型调用，不参与 /models 探测（探测超时为引擎侧固定 2s），本段不读取。
+ *
+ * 断言与本 drill ⑩（mock）同口径：provider_test ok===true；真实端点不可控，故不含 401 对照分支。
+ * 探测未通过如实记录（端点不可达/未授权/超时）——不判定 Key 无效（红线口径）。
+ */
+async function runVendorChannelSection() {
+  const baseUrl = (process.env.LLM_BASE_URL ?? "").trim();
+  const apiKey = (process.env.LLM_API_KEY ?? "").trim();
+  const model = (process.env.LLM_MODEL_ID ?? "").trim();
+  const provider = (process.env.LLM_PROVIDER ?? "dashscope-compat").trim();
+  /** 出口文本统一脱敏：maskText 词表 + 逐字替换本 Key（覆盖词表不匹配的自定义格式）。 */
+  const scrub = (text) => {
+    let result = maskText(String(text ?? ""));
+    if (apiKey !== "") result = result.replaceAll(apiKey, maskSecret(apiKey));
+    return result;
+  };
+  if (baseUrl === "" || apiKey === "" || model === "") {
+    step(
+      "⑪ 厂商端点通道（真实/模拟厂商复跑）",
+      false,
+      "缺配置：需 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL_ID 环境变量（密钥仅经环境注入，不入证据）",
+    );
+    return null;
+  }
+  let hostName = "unknown";
+  try {
+    hostName = new URL(baseUrl).host; // 证据仅记 host（不落完整 URL）
+  } catch {
+    /* 非法 URL：探测侧会失败，host 记 unknown */
+  }
+  const vendorHome = mkdtempSync(join(tmpdir(), "erdos-w6-vendor-"));
+  // 引擎 Key 模式装配要求（引擎 __main__：ERDOS_MODEL_BASE_URL/NAME）；finally 恢复现场
+  const prevBaseUrl = process.env.ERDOS_MODEL_BASE_URL;
+  const prevModelName = process.env.ERDOS_MODEL_NAME;
+  let host = null;
+  let result = null;
+  try {
+    process.env.ERDOS_MODEL_BASE_URL = baseUrl;
+    process.env.ERDOS_MODEL_NAME = model;
+    host = new EngineHost({
+      command: enginePython,
+      args: ["-m", "engine"],
+      cwd: repoRoot,
+      home: vendorHome,
+      key: () => apiKey, // 首行一次性注入（明文仅驻内存；不落日志/证据）
+      onEvent: () => {},
+      onStateChange: () => {},
+      onLog: () => {}, // 引擎日志可能含上游回显——一律丢弃，杜绝明文外泄
+      onProtocolError: (err) => console.warn(`[drill] 协议错误：${scrub(err.message)}`),
+    });
+    await host.reloadKey(); // spawn（首行注入）→ initialize → ready
+    result = await host.invoke("provider_test", { base_url: baseUrl, model, provider });
+    const ok = result?.ok === true;
+    step(
+      "⑪ 厂商端点通道（真实/模拟厂商复跑：首行注入 → Authorization → /models 探测）",
+      ok,
+      `host=${hostName}；model=${model}；provider=${provider}；ok=${result?.ok}` +
+        `（models_endpoint=${result?.models_endpoint}，tool_mode=${result?.tool_mode}）` +
+        (ok ? "" : "；探测未通过（端点不可达/未授权/超时）——不判定 Key 无效：红线口径") +
+        `；key=${maskSecret(apiKey)}`,
+    );
+  } catch (err) {
+    step("⑪ 厂商端点通道", false, scrub(err instanceof Error ? err.message : String(err)));
+  } finally {
+    if (host !== null && host.childPid !== null) host.stop();
+    if (host !== null) await waitUntil(() => host.childPid === null, 5_000);
+    rmSync(vendorHome, { recursive: true, force: true });
+    if (prevBaseUrl === undefined) delete process.env.ERDOS_MODEL_BASE_URL;
+    else process.env.ERDOS_MODEL_BASE_URL = prevBaseUrl;
+    if (prevModelName === undefined) delete process.env.ERDOS_MODEL_NAME;
+    else process.env.ERDOS_MODEL_NAME = prevModelName;
+  }
+  return {
+    host: hostName,
+    model,
+    provider,
+    ok: result?.ok ?? null,
+    modelsEndpoint: result?.models_endpoint ?? null,
+    toolMode: result?.tool_mode ?? null,
+    keyMasked: maskSecret(apiKey), // 证据仅存脱敏形式
+  };
+}
+
 // ---- 主流程 ---------------------------------------------------------------
 console.log(`[drill] W6 联调预演开始（引擎 home=${home}）`);
 runContractCheck();
@@ -491,6 +583,19 @@ if (!withKey) {
   } catch (err) {
     // 兜底：段内未捕获异常不得中断主流程与证据落盘
     step("⑩ 真实 Key 通道", false, err instanceof Error ? err.message : String(err));
+  }
+}
+let vendorChannelEvidence = null;
+if (!withVendor) {
+  step("⑪ 厂商端点通道", true, "按参数跳过（--with-vendor 启用；10-24 现场复跑项）", true);
+} else if (enginePython === null) {
+  step("⑪ 厂商端点通道", true, "跳过：未找到引擎环境", true);
+} else {
+  try {
+    vendorChannelEvidence = await runVendorChannelSection();
+  } catch (err) {
+    // 兜底：段内未捕获异常不得中断主流程与证据落盘（消息统一脱敏）
+    step("⑪ 厂商端点通道", false, maskText(err instanceof Error ? err.message : String(err)));
   }
 }
 if (skipSingleton) {
@@ -533,6 +638,7 @@ const evidence = {
   solvingMs,
   sandboxWarnings,
   keyChannel: keyChannelEvidence,
+  vendorChannel: vendorChannelEvidence,
   steps,
   states,
   eventCount: events.length,

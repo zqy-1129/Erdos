@@ -34,6 +34,7 @@ export default tseslint.config(
         clearInterval: "readonly",
         fetch: "readonly", // Node 22 原生（预检脚本探测服务端健康）
         AbortController: "readonly",
+        URL: "readonly", // Node 原生（drill 厂商端点模式：仅记录 host，不落完整 URL）
       },
     },
   },
