@@ -1,0 +1,149 @@
+{
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "competition_id": {
+      "const": "cumcm"
+    },
+    "release_id": {
+      "type": "string",
+      "pattern": "^cumcm-2010-2025-[a-z0-9-]+$"
+    },
+    "historical_year_range": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "integer",
+        "minimum": 2010,
+        "maximum": 2025
+      }
+    },
+    "subproblem": {
+      "type": "object",
+      "properties": {
+        "subproblem_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "problem_types": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "optimization",
+              "prediction",
+              "evaluation",
+              "statistical_analysis",
+              "mechanism",
+              "simulation",
+              "unknown"
+            ]
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "deliverables": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "method_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "data_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "domain_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "dependency_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "current_results": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "goal"
+      ],
+      "additionalProperties": false
+    },
+    "stage": {
+      "enum": [
+        "analysis",
+        "assumptions",
+        "symbols",
+        "model",
+        "algorithm",
+        "results",
+        "validation",
+        "sensitivity",
+        "discussion",
+        "abstract"
+      ]
+    },
+    "language": {
+      "enum": [
+        "zh"
+      ]
+    },
+    "top_k": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20
+    },
+    "token_budget": {
+      "type": "integer",
+      "minimum": 256,
+      "maximum": 16000
+    },
+    "usage_purpose": {
+      "enum": [
+        "consumer",
+        "internal_audit",
+        "third_party_model"
+      ]
+    }
+  },
+  "required": [
+    "competition_id",
+    "release_id",
+    "subproblem",
+    "stage"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/cumcm/v3/retrieve_request.schema.json"
+}

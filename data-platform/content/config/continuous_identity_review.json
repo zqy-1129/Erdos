@@ -1,0 +1,56 @@
+{
+  "problems": [
+    {
+      "source_rel": "papers_pending_auth/01_MCM_ICM美赛/2023年/A/2023_MCM_Problem_A.pdf",
+      "source_sha256": "73e8df4b97666b38e8c7d8a01c4536817592e7dc1d5881087b6acafcea22e780",
+      "page": 1,
+      "terms": [
+        "2023 MCM",
+        "Drought-Stricken Plant Communities"
+      ],
+      "reviewer": "Codex",
+      "review_scope": "Header/title and topic identity only; not full paper or permission review",
+      "problem_id": "mcm-2023-A"
+    },
+    {
+      "source_rel": "problems/13_华为杯研赛/2023年中国研究生数学建模竞赛赛题/A题/A题：WLAN网络信道接入机制建模.pdf",
+      "source_sha256": "bd1e69e44974e5290cbfcc752f486c8111de3cbe11662725ee0b0c07644954f9",
+      "page": 1,
+      "terms": [
+        "2023",
+        "WLAN"
+      ],
+      "reviewer": "Codex",
+      "review_scope": "Header/title and topic identity only; not full paper or permission review",
+      "problem_id": "cpmcm-2023-A"
+    }
+  ],
+  "cases": [
+    {
+      "source_rel": "papers_pending_auth/01_MCM_ICM美赛/2023年/A/A23003361.pdf",
+      "source_sha256": "6928fbb8714eb3459114cf3ca83eec74b4dd5de3ada8462b6ac8456a6d545352",
+      "page": 1,
+      "terms": [
+        "2023",
+        "Surviving Drought"
+      ],
+      "reviewer": "Codex",
+      "review_scope": "Header/title and topic identity only; not full paper or permission review",
+      "case_id": "mcm-2023-A-23003361",
+      "problem_id": "mcm-2023-A"
+    },
+    {
+      "source_rel": "CPMCM/04-25年优秀论文/2023年研究生数学建模竞赛优秀论文选/A23100070049.pdf",
+      "source_sha256": "d33556a20cd948a1a64b448a798d7bd5199ed33e64b8b42f9c9066718709cc1a",
+      "page": 2,
+      "terms": [
+        "WLAN",
+        "信道接入机制建模"
+      ],
+      "reviewer": "Codex",
+      "review_scope": "Header/title and topic identity only; not full paper or permission review",
+      "case_id": "cpmcm-2023-A-23100070049",
+      "problem_id": "cpmcm-2023-A"
+    }
+  ]
+}

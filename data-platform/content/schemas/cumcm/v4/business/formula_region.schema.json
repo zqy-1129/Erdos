@@ -1,0 +1,200 @@
+{
+  "type": "object",
+  "properties": {
+    "formula_region_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "page": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "bbox": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "number"
+      }
+    },
+    "coordinate_system": {
+      "const": "pdf_points_bottom_left"
+    },
+    "region_type": {
+      "enum": [
+        "embedding",
+        "isolated"
+      ]
+    },
+    "detector_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "source_page_ref": {
+      "type": "object",
+      "properties": {
+        "asset_id": {
+          "type": "string",
+          "pattern": "^asset-[0-9a-f]{64}$"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "asset_id",
+        "version",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "crop_ref": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "asset_id": {
+              "type": "string",
+              "pattern": "^asset-[0-9a-f]{64}$"
+            },
+            "version": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "asset_id",
+            "version",
+            "sha256"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "crop_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "latex_candidate": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "semantic_status": {
+      "enum": [
+        "candidate",
+        "source_checked",
+        "verified",
+        "rejected",
+        "abstained"
+      ]
+    },
+    "transcription_status": {
+      "enum": [
+        "model_candidate",
+        "truncated",
+        "not_transcribed_inline_symbol",
+        "not_transcribed_display_formula",
+        "source_checked"
+      ]
+    },
+    "generation_truncated": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "geometric_mean_token_probability": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "semantics_verified": {
+      "const": false
+    },
+    "transcription_verified": {
+      "type": "boolean"
+    },
+    "model_revisions": {
+      "type": "object",
+      "properties": {
+        "mfd": {
+          "type": "string",
+          "minLength": 40,
+          "maxLength": 40
+        },
+        "mfr": {
+          "type": "string",
+          "minLength": 40,
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "mfd",
+        "mfr"
+      ],
+      "additionalProperties": false
+    },
+    "source_is_instruction": {
+      "const": false
+    },
+    "current_result_value_source": {
+      "const": false
+    },
+    "source_review_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "source_checked_latex": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "formula_region_id",
+    "source_sha256",
+    "page",
+    "bbox",
+    "coordinate_system",
+    "region_type",
+    "detector_score",
+    "source_page_ref",
+    "crop_ref",
+    "crop_path",
+    "latex_candidate",
+    "semantic_status",
+    "transcription_status",
+    "generation_truncated",
+    "geometric_mean_token_probability",
+    "semantics_verified",
+    "model_revisions",
+    "source_is_instruction",
+    "current_result_value_source"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

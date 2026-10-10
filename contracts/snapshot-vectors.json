@@ -1,0 +1,104 @@
+{
+  "contract": "contracts/snapshot.md",
+  "version": 1,
+  "generated_on": "2026-10-09",
+  "algorithm": "Ed25519",
+  "purpose": "跨端金样例：服务端签发与客户端验签共用同一组「载荷 → 规范化字节 → 签名」三元组。任何一侧改动字节序（键排序 / 紧凑分隔符 / ensure_ascii / 整数写法）即红，不再依赖各端自己抄一份示例。",
+  "canonicalization": {
+    "sort_keys": true,
+    "key_order": "按键的 Unicode 码点升序（Python sorted 与 JS Array.sort 默认序一致）",
+    "separators": [
+      ",",
+      ":"
+    ],
+    "ensure_ascii": true,
+    "non_ascii": "非 ASCII 一律转 \\uXXXX（小写十六进制）；增补平面字符转 UTF-16 代理对，如 😀 = \\ud83d\\ude00",
+    "numbers": "仅整数，不带小数点与指数；非整数两侧都拒绝",
+    "null": "JSON null，键保留不省略",
+    "encoding": "utf-8"
+  },
+  "key": {
+    "kid": "vec-ed25519-1",
+    "public_key_spki_der_hex": "302a300506032b6570032100bac46e5110816851fa89b77ebe5989efdf5c9af57f856888d7b0340b955789a4",
+    "note": "一次性测试密钥：私钥未落盘、未提交，仅公钥随向量发布；严禁用于生产签发"
+  },
+  "vectors": [
+    {
+      "id": "snapshot-doc-example",
+      "kind": "entitlement_snapshot",
+      "payload": {
+        "subscribed": true,
+        "purchased_balance": 100,
+        "monthly_balance": 400,
+        "sub_end_at": "2026-11-01T00:00:00+00:00",
+        "frozen": false,
+        "issued_at": "2026-10-03T05:00:00+00:00"
+      },
+      "canonical": "{\"frozen\":false,\"issued_at\":\"2026-10-03T05:00:00+00:00\",\"monthly_balance\":400,\"purchased_balance\":100,\"sub_end_at\":\"2026-11-01T00:00:00+00:00\",\"subscribed\":true}",
+      "signature": "449791414b6edaff63a315844c889eb4e558866d092e1aed80de92a35d4d7c8f9ae5fbb1ad5a1700737e02903b09344340c68c166f2a2211928ab887328ae501",
+      "source": "contracts/snapshot.md 第 2 节规范化示例"
+    },
+    {
+      "id": "snapshot-frozen-no-subscription",
+      "kind": "entitlement_snapshot",
+      "payload": {
+        "subscribed": false,
+        "purchased_balance": 0,
+        "monthly_balance": 0,
+        "sub_end_at": null,
+        "frozen": true,
+        "issued_at": "2026-10-31T16:00:00+00:00"
+      },
+      "canonical": "{\"frozen\":true,\"issued_at\":\"2026-10-31T16:00:00+00:00\",\"monthly_balance\":0,\"purchased_balance\":0,\"sub_end_at\":null,\"subscribed\":false}",
+      "signature": "a0138203dd0b641996031bb926edd304390a911bd16a584f0281a926654b2f431b3ef2a9876afeb6c41abfa70d45f62a11d427252869c9e858701f17a2feef0f"
+    },
+    {
+      "id": "stage-grant-typical",
+      "kind": "stage_grant",
+      "payload": {
+        "user_id": "u_000000000000000000000000",
+        "task_id": null,
+        "exec_id": "exec-2026-10-09-0001",
+        "stage": "modeling",
+        "points": 120,
+        "expires_at": 1794240000,
+        "issued_at": 1794236400
+      },
+      "canonical": "{\"exec_id\":\"exec-2026-10-09-0001\",\"expires_at\":1794240000,\"issued_at\":1794236400,\"points\":120,\"stage\":\"modeling\",\"task_id\":null,\"user_id\":\"u_000000000000000000000000\"}",
+      "signature": "e158a812d11361f1330fc2a639f0c8a64187d4b4ca673ad1725f00c919bdc9952c7eec3b8707acc9f0e296d8ea5db89019b995e6165c64a8f7bae47a8b59890a"
+    },
+    {
+      "id": "canonical-non-ascii-and-null",
+      "kind": "canonicalization-only",
+      "payload": {
+        "zeta": "竞赛建模题面",
+        "emoji": "😀",
+        "ascii": "plain",
+        "empty": "",
+        "nul": null,
+        "off": false,
+        "neg": -7,
+        "zero": 0
+      },
+      "canonical": "{\"ascii\":\"plain\",\"emoji\":\"\\ud83d\\ude00\",\"empty\":\"\",\"neg\":-7,\"nul\":null,\"off\":false,\"zero\":0,\"zeta\":\"\\u7ade\\u8d5b\\u5efa\\u6a21\\u9898\\u9762\"}",
+      "signature": "0d0f5142863c147829abb71df50f9c18107a8854b67120f25982bb249485ec44d91964f2564f03823a0fe0acb7d300e2ebeee5e9927d92689248d9c66ab8170b",
+      "note": "快照/许可现网字段暂无非 ASCII，此向量钉住 ensure_ascii 与代理对写法，供新增字段时对齐"
+    },
+    {
+      "id": "tamper-purchased-boost",
+      "kind": "negative-tamper",
+      "payload": {
+        "subscribed": true,
+        "purchased_balance": 999999,
+        "monthly_balance": 400,
+        "sub_end_at": "2026-11-01T00:00:00+00:00",
+        "frozen": false,
+        "issued_at": "2026-10-03T05:00:00+00:00"
+      },
+      "canonical": "{\"frozen\":false,\"issued_at\":\"2026-10-03T05:00:00+00:00\",\"monthly_balance\":400,\"purchased_balance\":999999,\"sub_end_at\":\"2026-11-01T00:00:00+00:00\",\"subscribed\":true}",
+      "signature": "449791414b6edaff63a315844c889eb4e558866d092e1aed80de92a35d4d7c8f9ae5fbb1ad5a1700737e02903b09344340c68c166f2a2211928ab887328ae501",
+      "expect_valid": false,
+      "why": "载荷被改写（purchased_balance 100→999999），签名仍是原载荷的：两侧必须判为无效"
+    }
+  ]
+}

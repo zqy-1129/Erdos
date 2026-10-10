@@ -55,8 +55,13 @@ async def test_cases_empty_for_non_member(client) -> None:
 
 
 async def test_manifest_endpoint(client) -> None:
-    """manifest 接口：初始为空列表。"""
-    resp = await client.get("/v1/content/manifest")
+    """manifest 需登录凭证（含 oss_key+sha256 的内容目录不得匿名枚举）；初始为空列表。"""
+    anon = await client.get("/v1/content/manifest")
+    assert anon.status_code == 401
+
+    resp = await client.get(
+        "/v1/content/manifest", headers={"Authorization": "Bearer u1"}
+    )
     assert resp.status_code == 200
     assert resp.json()["data"] == []
 

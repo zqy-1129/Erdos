@@ -6,6 +6,8 @@
 import io
 import json
 import sqlite3
+from hashlib import sha256
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +20,34 @@ from engine.ipc.state import EngineState
 from engine.orchestrator.graph import StageOrchestrator
 from engine.orchestrator.pipeline import FakeLLM, StagePipeline
 from engine.sandbox.subprocess_sandbox import SubprocessSandbox
+
+
+def _contract_output(stage: str, root: Path) -> dict:
+    """按各阶段产物契约构造桩产出（SP1-3 硬检查放行；字段形状同 StagePipeline）。"""
+    data: dict = {"stage": stage, "usage": {"prompt_tokens": 5}}
+    if stage == "analysis":
+        data["insights"] = ["决策变量与目标", "约束条件（资源/边界）"]
+    elif stage == "modeling":
+        data.update(
+            assumptions="变量独立、线性关系近似成立",
+            modeling_detail="min f(x)=Σwᵢ·xᵢ，xᵢ≥0 且资源总量受限。",
+            variables=["slope", "intercept"],
+        )
+    elif stage == "solving":
+        data.update(exit_code=0, stdout="slope=1.9850", timed_out=False, artifacts=[])
+    else:
+        paper = (
+            "# 桩论文\n\n## 摘要\n\n方法与结果。\n\n## 一、问题重述\n\n题面。\n\n"
+            "## 二、模型假设与建模\n\n假设。\n\n## 三、求解与结果\n\nslope=1.9850\n\n## 四、结论\n\n结论。\n"
+        )
+        paper_path = root / "paper.md"
+        paper_path.write_text(paper, encoding="utf-8")
+        data.update(
+            paper_md=paper,
+            paper_sha256=sha256(paper.encode("utf-8")).hexdigest(),
+            paper_path=str(paper_path),
+        )
+    return data
 
 
 async def _run_through(orch: StageOrchestrator, n_stages: int) -> None:
@@ -94,7 +124,7 @@ async def test_crash_in_gate_pending_window_rehangs_gate(tmp_path) -> None:
 
     async def runner(task_id: str, stage: str) -> dict:
         calls.append(stage)
-        return {"stage": stage, "usage": {"prompt_tokens": 5}}
+        return _contract_output(stage, tmp_path)
 
     orch = StageOrchestrator("t1", checkpoint=store, runner=runner)
     await orch.run_current_stage()  # analysis 执行完成，门禁未决（未 answer_gate）
@@ -124,7 +154,7 @@ async def test_restore_forwards_runner_to_remaining_stages(tmp_path) -> None:
 
     async def runner(task_id: str, stage: str) -> dict:
         calls.append(stage)
-        return {"stage": stage}
+        return _contract_output(stage, tmp_path)
 
     orch = StageOrchestrator("t1", checkpoint=store, runner=runner)
     await _run_through(orch, 2)  # analysis + modeling 完成

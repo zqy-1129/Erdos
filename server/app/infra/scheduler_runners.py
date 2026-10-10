@@ -1,17 +1,22 @@
-"""调度执行器（SP2-7）：月赠 / 订阅到期冻结。
+"""调度执行器（SP2-7）：月赠 / 订阅到期冻结 / 续费提醒候选集。
 
 直接操作订阅与积分表，供 SchedulerService 编排调用。
 """
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.points.ports import BalanceType
 from app.domain.points.service import PointsService
-from app.domain.scheduler.ports import ExpireSubscriptionRunner, MonthlyGrantRunner
-from app.repository.models import Subscription
+from app.domain.scheduler.ports import (
+    ExpireSubscriptionRunner,
+    MonthlyGrantRunner,
+    RenewalReminderRunner,
+    RenewalReminderTarget,
+)
+from app.repository.models import Account, Subscription
 from app.repository.points import (
     SQLAlchemyGrantRepository,
     SQLAlchemyLedgerRepository,
@@ -90,3 +95,37 @@ class SQLAlchemyExpireSubscriptionRunner(ExpireSubscriptionRunner):
             # 冻结积分账户（禁止新任务，历史可读）
             await account_repo.set_frozen(sub.user_id, True, now)
         return len(rows)
+
+
+class SQLAlchemyRenewalReminderRunner(RenewalReminderRunner):
+    """续费提醒候选集：到期窗口内的活跃订阅，左连用户表取邮箱。
+
+    左连而不是内连：没有账号行或没填邮箱的订阅必须"现身"并被调用方计数，
+    内连会把它们静默吞掉——那正是《服务端架构》承诺的提醒队列最容易漏的一类人。
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_due(self, now: datetime, within_days: int) -> list[RenewalReminderTarget]:
+        horizon = now + timedelta(days=within_days)
+        stmt = (
+            select(Subscription.user_id, Account.email, Subscription.end_at)
+            .outerjoin(Account, Account.id == Subscription.user_id)
+            .where(
+                Subscription.status == "active",
+                Subscription.end_at > now,
+                Subscription.end_at <= horizon,
+            )
+            .order_by(Subscription.end_at)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            RenewalReminderTarget(
+                user_id=row[0],
+                email=row[1],
+                # SQLite 落的是去掉偏移的 UTC 墙钟，读回来是 naive；补回 UTC 才能与 now 做算术
+                end_at=row[2] if row[2].tzinfo else row[2].replace(tzinfo=UTC),
+            )
+            for row in rows
+        ]

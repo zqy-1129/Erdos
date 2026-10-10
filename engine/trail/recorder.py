@@ -23,13 +23,21 @@ class TrailRecorder:
     # 四类事件采集
     # ------------------------------------------------------------------
     def record_model_call(
-        self, task_id: str, stage: str, model: str, usage: dict[str, Any], duration_ms: float
+        self,
+        task_id: str,
+        stage: str,
+        model: str,
+        usage: dict[str, Any],
+        duration_ms: float | None = None,
     ) -> int:
-        """模型调用留痕：模型名/token 用量/耗时。"""
-        return self._store.append_event(
-            task_id, stage, EventType.MODEL_CALL,
-            detail={"model": model, "usage": usage, "duration_ms": duration_ms},
-        )
+        """模型调用留痕：模型名/token 用量/耗时。
+
+        耗时不可得时不写该字段——写 0 与「真的很快」在留痕里不可区分（F-007 精度）。
+        """
+        detail: dict[str, Any] = {"model": model, "usage": usage}
+        if duration_ms is not None:
+            detail["duration_ms"] = duration_ms
+        return self._store.append_event(task_id, stage, EventType.MODEL_CALL, detail=detail)
 
     def record_tool_call(self, task_id: str, stage: str, tool: str, detail: dict[str, Any]) -> int:
         """工具调用留痕：工具名 + 明细。"""

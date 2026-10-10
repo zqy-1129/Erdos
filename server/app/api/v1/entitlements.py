@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.deps import get_session_factory, require_principal, require_roles
+from app.api.deps import get_session_factory, record_audit, require_principal, require_roles
 from app.core.clock import utc_now
 from app.core.envelope import Envelope, ok
 from app.core.logging import request_id_var
@@ -242,8 +242,10 @@ async def list_cases(
 
 @router.get("/content/manifest", response_model=Envelope[list[ManifestView]], summary="增量清单")
 async def list_manifests(
+    principal: Annotated[Principal, Depends(require_principal)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[list[ManifestView]]:
+    """内容增量清单（含 oss_key+sha256）：登录用户可读——匿名枚举等于把会员内容目录外漏。"""
     async with UnitOfWork(session_factory) as uow:
         items = await _content_service(uow.session).list_manifests()
         view = [ManifestView(scope=m.scope, version=m.version, items=m.items, updated_at=m.updated_at) for m in items]
@@ -256,40 +258,64 @@ async def list_manifests(
 admin_dep = Annotated[Principal, Depends(require_roles("admin"))]
 
 
+async def _audit_content(
+    request: Request, principal: Principal, kind: str, business_id: str, now: datetime
+) -> None:
+    """内容写入留痕：三库内容由运营维护，改动必须可追溯到人与条目。"""
+    await record_audit(
+        request,
+        action="admin.content_upsert",
+        actor_type="admin",
+        actor_id=principal.subject,
+        resource_type=kind,
+        resource_id=business_id,
+        now=now,
+    )
+
+
 @router.post("/content/problems", response_model=Envelope[ProblemView], summary="新建/更新真题（admin）")
 async def upsert_problem(
     payload: ProblemBody,
+    request: Request,
     principal: admin_dep,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[ProblemView]:
+    now = utc_now()
     record = ProblemRecord(**payload.model_dump())
     async with UnitOfWork(session_factory) as uow:
         saved = await _content_service(uow.session).upsert_problem(record)
         view = ProblemView(**asdict(saved))
+    await _audit_content(request, principal, "problem", saved.business_id, now)
     return ok(view, request_id_var.get())
 
 
 @router.post("/content/templates", response_model=Envelope[TemplateView], summary="新建/更新模板（admin）")
 async def upsert_template(
     payload: TemplateBody,
+    request: Request,
     principal: admin_dep,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[TemplateView]:
+    now = utc_now()
     record = TemplateRecord(**payload.model_dump())
     async with UnitOfWork(session_factory) as uow:
         saved = await _content_service(uow.session).upsert_template(record)
         view = TemplateView(**asdict(saved))
+    await _audit_content(request, principal, "template", saved.business_id, now)
     return ok(view, request_id_var.get())
 
 
 @router.post("/content/cases", response_model=Envelope[CaseView], summary="新建/更新案例（admin）")
 async def upsert_case(
     payload: CaseBody,
+    request: Request,
     principal: admin_dep,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[CaseView]:
+    now = utc_now()
     record = CaseRecord(**payload.model_dump())
     async with UnitOfWork(session_factory) as uow:
         saved = await _content_service(uow.session).upsert_case(record)
         view = CaseView(**asdict(saved))
+    await _audit_content(request, principal, "case", saved.business_id, now)
     return ok(view, request_id_var.get())

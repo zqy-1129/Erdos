@@ -1,8 +1,8 @@
-"""监测分钟快照仓储落库实现（upsert 含并发竞态兜底，同 presence 模式）。"""
+"""监测分钟快照仓储落库实现（upsert 用保存点兜并发竞态：撞键只撤本次插入）。"""
 
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,24 +28,24 @@ class SQLAlchemyMonitoringTrendRepository(MonitoringTrendRepository):
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         if row is None:
             try:
-                self._session.add(
-                    MonitoringMinuteSnapshot(
-                        minute_ts=minute_ts,
-                        qps=sample.qps,
-                        p50_ms=sample.p50_ms,
-                        p95_ms=sample.p95_ms,
-                        error_rate=sample.error_rate,
-                        cpu_percent=sample.cpu_percent,
-                        memory_percent=sample.memory_percent,
-                        db_query_p95_ms=sample.db_query_p95_ms,
-                        db_pool_usage=sample.db_pool_usage,
+                async with self._session.begin_nested():  # 撞键只撤本次插入，不动调用方已写数据
+                    self._session.add(
+                        MonitoringMinuteSnapshot(
+                            minute_ts=minute_ts,
+                            qps=sample.qps,
+                            p50_ms=sample.p50_ms,
+                            p95_ms=sample.p95_ms,
+                            error_rate=sample.error_rate,
+                            cpu_percent=sample.cpu_percent,
+                            memory_percent=sample.memory_percent,
+                            db_query_p95_ms=sample.db_query_p95_ms,
+                            db_pool_usage=sample.db_pool_usage,
+                        )
                     )
-                )
-                await self._session.flush()
+                    await self._session.flush()
                 return
             except IntegrityError:
-                # 并发窗口：同分钟行已被写入 -> 转更新
-                await self._session.rollback()
+                # 并发窗口：同分钟行已被对手事务提交 -> 重查后转更新
                 row = (await self._session.execute(stmt)).scalar_one()
         row.qps = sample.qps
         row.p50_ms = sample.p50_ms
@@ -56,6 +56,21 @@ class SQLAlchemyMonitoringTrendRepository(MonitoringTrendRepository):
         row.db_query_p95_ms = sample.db_query_p95_ms
         row.db_pool_usage = sample.db_pool_usage
         await self._session.flush()
+
+    async def window_error_minutes(self, start: datetime, end: datetime) -> tuple[int, float]:
+        """窗口内 (观测分钟数, error_rate 之和)——SLO 燃尽一次聚合查询算完，不拉全量分钟。
+
+        `[start, end)` 左闭右开：跨小时/跨天边界同一个分钟不会被两个窗口重复计入。
+        """
+        stmt = select(
+            func.count(MonitoringMinuteSnapshot.minute_ts),
+            func.coalesce(func.sum(MonitoringMinuteSnapshot.error_rate), 0.0),
+        ).where(
+            MonitoringMinuteSnapshot.minute_ts >= start,
+            MonitoringMinuteSnapshot.minute_ts < end,
+        )
+        row = (await self._session.execute(stmt)).one()
+        return int(row[0] or 0), float(row[1] or 0.0)
 
     async def list_between(
         self, metric_key: str, start: datetime, end: datetime

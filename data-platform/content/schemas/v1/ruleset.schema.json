@@ -1,0 +1,157 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/ruleset.schema.json",
+  "title": "Erdos ruleset v1 draft",
+  "type": "object",
+  "properties": {
+    "ruleset_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "competition_id": {
+      "$ref": "_common.json#/definitions/competitionId"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "schema_version": {
+      "$ref": "_common.json#/definitions/schemaVersionInt"
+    },
+    "edition": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": 1900
+        }
+      ]
+    },
+    "round": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "track": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        }
+      ]
+    },
+    "verification_status": {
+      "type": "string",
+      "enum": [
+        "pending_verification",
+        "verified",
+        "unknown"
+      ]
+    },
+    "verified_at": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "_common.json#/definitions/timestamp"
+        }
+      ]
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "asset_ref": {
+            "$ref": "_common.json#/definitions/assetRef"
+          },
+          "locator": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "asset_ref",
+          "locator"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "$ref": "_common.json#/definitions/entityId"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "official",
+              "historical_experience"
+            ]
+          },
+          "requirement": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_index": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "integer",
+                "minimum": 0
+              }
+            ]
+          }
+        },
+        "required": [
+          "code",
+          "origin",
+          "requirement",
+          "source_index"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "is_fixture": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional metadata only; cannot override defined fields."
+    }
+  },
+  "required": [
+    "ruleset_id",
+    "competition_id",
+    "version",
+    "schema_version",
+    "edition",
+    "round",
+    "track",
+    "verification_status",
+    "verified_at",
+    "sources",
+    "constraints"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,39 @@
+# 案例库数据生产配置 v0（工作包3）
+#
+# 源：papers_pending_auth（待授权/待核验合集），两套目录布局：
+# - mcm_year_code  : {YEAR}年[/{CODE}]/*.pdf（美赛 COMAP 公开论文；1995-2008 为 UMAP 期刊合订本，跳过）
+# - cumcm_year_flat: {YEAR}年.../*.{pdf,doc,docx,rar,zip}（国赛优秀论文集；非 pdf 进 backlog）
+#
+# 排除规则（mcm）：
+# - 评委点评（Judges' Commentary）：文件名含 Com / Judge
+# - 题目与数据文件：文件名含 Problem
+#
+# 标注口径见 scripts/annotate_cases.py 与 config/method_tags_v0.yaml。
+version: v0
+dataset_root: D:/Erdos_data
+
+sources:
+  - id: mcm
+    competition: mcm
+    root: papers_pending_auth/01_MCM_ICM美赛
+    layout: mcm_year_code
+    skip_top_dirs:
+      - "1995-2008"
+    exclude_stem_patterns:
+      # 评委点评：ComA/ComJ/Com2/Com-Author/Com-Judge/Commentary/Judges 等（lookahead 防误伤 Combined 类词）
+      - '(?i)(^|[-_ .])(com([-_ .]|$|[a-z0-9](?=[-_ .]|$))|judge|commentar)'
+      - '(?i)problem'
+      # 年份目录顶层的赛题原文件（2009MCM.pdf / 2010MCM&ICM.pdf 等）
+      - '(?i)^\d{4}[\s_-]*(mcm|icm)([\s&_-]*icm)?$'
+  - id: cumcm
+    competition: cumcm
+    root: papers_pending_auth/12_CUMCM国赛/高教社杯全国大学生数学建模竞赛优秀论文
+    layout: cumcm_year_flat
+    process_ext: [".pdf"]
+    backlog_ext: [".doc", ".docx", ".rar", ".zip"]
+
+min_text_chars: 3000    # 低于此字符数视为无文本层（扫描件），转 backlog
+accept_min_tags: 3      # method_tags 下限（对齐 content_qc.py）
+review_min_tags: 4      # 低于此值（即恰好 3 个）列入人工复核清单
+
+overrides: cases_v0_overrides.yaml

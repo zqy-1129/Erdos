@@ -1,0 +1,47 @@
+{
+  "case_id": "cumcm-2024-B-case-002",
+  "problem_id": "cumcm-2024-B",
+  "competition_id": "cumcm",
+  "source_sha256": null,
+  "extractor_version": null,
+  "schema_version": 1,
+  "profile_version": 1,
+  "review_status": "unknown",
+  "license": {
+    "internal_analysis": false,
+    "distribute_original": false,
+    "distribute_profile": false,
+    "send_to_third_party_model": false
+  },
+  "structure": [],
+  "writing": [],
+  "length": {
+    "zh_chars": null,
+    "en_words": null,
+    "statistical_basis": null,
+    "missing": [
+      "正文未抽取",
+      "未授权"
+    ],
+    "zh_parts": {
+      "body": null,
+      "abstract": null,
+      "toc": null,
+      "appendix": null
+    },
+    "en_parts": {
+      "body": null,
+      "abstract": null,
+      "toc": null,
+      "appendix": null
+    },
+    "section_ratios": []
+  },
+  "figures": [],
+  "last_updated": "2026-10-04T00:00:00Z",
+  "resolution_status": "resolved",
+  "publication_status": "staging",
+  "source_asset_ref": null,
+  "license_evidence": null,
+  "is_fixture": true
+}

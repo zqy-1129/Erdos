@@ -8,9 +8,9 @@
 - 协议面：仅使用既有 RPC 方法（initialize/task_create/start_stage/answer_gate/
   get_status），不改契约（无需 CT-V2 登记）；
 - 阶段定位：current_stage 经引擎检查点库（engine_home/checkpoints.db）解析，与
-  StageOrchestrator.restore 同口径；阶段数据（usage/产物哈希）经留痕库
-  （engine_home/audit.db）回读——两处均为驱动自建引擎 home 的本地只读访问，
-  避免为回归工具扩展产品契约；
+  StageOrchestrator.restore 同口径；阶段产物 data 同库回读（rubric 评委的评审对象），
+  usage 与产物哈希经留痕库（engine_home/audit.db）回读——两处均为驱动自建引擎 home
+  的本地只读访问，避免为回归工具扩展产品契约；
 - 失败归因：阶段 failed 时按引擎 last_error 的异常类型重映射（Connection→adapter、
   Timeout/Sandbox→sandbox），运行器据此分层归因；
 - 传输为阻塞式（独立进程，`asyncio.to_thread` 包装），回归工具串行驱动语义；
@@ -53,7 +53,7 @@ class _EngineTransport:
     ) -> None:
         self._proc = subprocess.Popen(  # noqa: S603 - 受控固定参数（回归工具）
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", cwd=str(cwd), env=env,
+            text=True, encoding="utf-8", errors="replace", cwd=str(cwd), env=env,
         )
         self._lines: list[str] = []
         self._cond = threading.Condition()
@@ -193,9 +193,18 @@ class RpcTaskFlow:
         self._home.mkdir(parents=True, exist_ok=True)
         self._executed: list[str] = []
         self._cursor: str | None = None
+        self._hard_reject: str | None = None  # 引擎 gate.failed 原因（本轮阶段内有效）
         self._on_event = on_event  # 事件回调（展示/证据用；异常不外抛，见 _pump_events）
 
-        env = {**os.environ, "ERDOS_ENGINE_HOME": str(self._home)}
+        # 覆盖率钩子会随环境传进引擎子进程，其导入期告警按宿主码页写入管道，早于引擎
+        # configure_stdio() 生效，导致 stderr 诊断解码失败（进程级验收丢日志），必须剥离。
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith("COV_CORE_")
+            and k not in ("COVERAGE_PROCESS_START", "COVERAGE_PROCESS_CONFIG", "PYTHONSTARTUP")
+        }
+        env["ERDOS_ENGINE_HOME"] = str(self._home)
         if extra_env:
             env.update(extra_env)
         if api_key:
@@ -229,6 +238,7 @@ class RpcTaskFlow:
     async def run_stage(self, stage: str) -> dict[str, Any]:
         if stage != self.current_stage():
             raise ValueError(f"阶段顺序约束：当前应执行 {self.current_stage()}，收到 {stage}")
+        self._hard_reject = None
         loop = asyncio.get_running_loop()
         # 重放检测：门禁未决恢复路径 start_stage 会重挂门禁而不重执行阶段，
         # 以留痕 model_call 计数是否增长为准判定「本流是否真实执行」（副作用观测）
@@ -240,7 +250,12 @@ class RpcTaskFlow:
             ),
         )
         await loop.run_in_executor(None, self._await_stage)
-        data: dict[str, Any] = {"usage": await loop.run_in_executor(None, self._stage_usage, stage)}
+        # 评审对象是阶段产物本身：从引擎检查点库回读脱敏后的落库 data，
+        # usage 以留痕库合计为准（含求解内循环的多调用，比阶段字段更完整）。
+        data: dict[str, Any] = {
+            **(await loop.run_in_executor(None, self._stage_data, stage)),
+            "usage": await loop.run_in_executor(None, self._stage_usage, stage),
+        }
         if stage == "writing":
             sha = await loop.run_in_executor(None, self._paper_sha256)
             if sha:
@@ -250,15 +265,20 @@ class RpcTaskFlow:
             self._executed.append(stage)
         return data
 
+    def hard_reject_reason(self) -> str | None:
+        """引擎侧 SP1-3 硬检查驳回原因（gate.failed 事件捕获）。"""
+        return self._hard_reject
+
     def _pump_events(self) -> None:
-        """把缓冲中的新事件交给回调（展示用途；回调异常不中断回归驱动）。"""
-        if self._on_event is None:
-            return
+        """取走新事件：捕获 gate.failed 驳回原因，并转交展示回调（回调异常不中断驱动）。"""
         for event in self._transport.take_events():
-            try:
-                self._on_event(event)
-            except Exception:  # noqa: BLE001 - 展示回调失败不kill驱动
-                pass
+            if event.get("event") == "gate.failed":
+                self._hard_reject = str(event.get("reason") or "门禁驳回（引擎未给原因）")
+            if self._on_event is not None:
+                try:
+                    self._on_event(event)
+                except Exception:  # noqa: BLE001 - 展示回调失败不 kill 驱动
+                    pass
 
     async def answer_gate(self, decision: str) -> dict[str, Any]:
         gate = f"gate_{self.current_stage()}"
@@ -308,7 +328,12 @@ class RpcTaskFlow:
         return STAGES[min(last_index + 1, len(STAGES) - 1)]
 
     def _await_stage(self) -> None:
-        """轮询 get_status 至阶段终态；failed 按异常类型重映射（归因）。"""
+        """轮询 get_status 至阶段终态；failed 按异常类型重映射（归因）。
+
+        paused 是 SP1-3 硬检查驳回的终态（引擎自动 reject 后置 paused 等人工处置）：
+        必须当轮返回并把原因交给运行器，否则一路空转到阶段超时（原实现会等满 timeout
+        再把超时错记成沙箱故障）。
+        """
         deadline = time.monotonic() + self._stage_timeout
         while time.monotonic() < deadline:
             self._pump_events()
@@ -318,10 +343,29 @@ class RpcTaskFlow:
             if status == "done":
                 self._pump_events()
                 return
+            if status == "paused":
+                self._pump_events()
+                if self._hard_reject is None:
+                    self._hard_reject = self._recover_gate_failed_reason()
+                return
             if status == "failed":
                 raise self._map_failure(str(snapshot.get("last_error") or "未知错误"))
             time.sleep(_STATUS_POLL_INTERVAL)
         raise TimeoutError(f"阶段执行超时（{self._stage_timeout}s）：{self._task_id}")
+
+    def _recover_gate_failed_reason(self) -> str | None:
+        """事件未及时到达时经 events_replay 兜底取回驳回原因（W14 缓冲事件）。"""
+        try:
+            found = self._transport.rpc(
+                "events_replay", {"after_seq": 0, "limit": 200, "task_id": self._task_id},
+                timeout=15.0,
+            )
+        except RpcFlowError:
+            return None
+        gate_failed = [
+            e for e in (found.get("events") or []) if e.get("event") == "gate.failed"
+        ]
+        return str(gate_failed[-1].get("reason")) if gate_failed else None
 
     @staticmethod
     def _map_failure(last_error: str) -> Exception:
@@ -344,8 +388,21 @@ class RpcTaskFlow:
         finally:
             store.close()
 
+    def _stage_data(self, stage: str) -> dict[str, Any]:
+        """检查点回读阶段产物 data（rubric 评委的评审对象；引擎落库时已脱敏）。"""
+        db = self._home / "checkpoints.db"
+        if not db.exists():
+            return {}
+        store = SQLiteCheckpointStore(str(db))
+        try:
+            records = [r for r in store.completed_stages(self._task_id) if r.stage == stage]
+        finally:
+            store.close()
+        return dict(records[-1].data) if records else {}
+
     def _stage_usage(self, stage: str) -> dict[str, int]:
         """留痕库回读该阶段全部 model_call 的 usage 合计（含求解内循环多调用）。"""
+
         store = TrailStore(str(self._home / "audit.db"))
         try:
             calls = [

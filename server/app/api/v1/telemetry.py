@@ -1,6 +1,12 @@
 """遥测摄入接口（SP4-1）：/v1/telemetry/events。
 
 隐私红线：事件经 schema 校验 + props 白名单过滤，违禁字段拦截丢弃并告警。
+
+匿名可达是**既有跨端契约**，不是漏洞：客户端 telemetry SDK 明确按"事件端点公开、登录时附带
+Bearer"实现（client/main/telemetry/sdk.ts），而注册漏斗、首题等事件恰恰发生在登录前，只能用
+设备级 distinct_id 归因。伪造风险的治理口径（批签名 / 共享上报密钥 / 采样校验）归数据平台裁决
+（DEC-028），不在服务端单方面收紧——本轮曾把它改成 require_principal，因会静默打断客户端
+outbox 补报而回退。
 """
 
 from typing import Annotated

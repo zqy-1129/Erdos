@@ -1,6 +1,7 @@
 """通知与调度接口（SP2-7）：验证码发送（限流）+ 调度任务触发。
 
 验证码限流 60s/次 + 日 10 次；调度任务（月赠/到期冻结/对账）需 admin 角色，幂等批次。
+三个任务本体在 app/infra/scheduler_tasks.py，与后台循环（infra/scheduler_loop.py）共用同一实现。
 """
 
 from typing import Annotated
@@ -9,19 +10,15 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.deps import get_session_factory, require_roles
+from app.api.deps import get_session_factory, record_audit, require_roles
 from app.core.clock import utc_now
 from app.core.config import Settings
 from app.core.envelope import Envelope, ok
 from app.core.logging import request_id_var
 from app.domain.notification.service import NotificationService
-from app.domain.scheduler.service import SchedulerService
+from app.infra import scheduler_tasks
 from app.infra.auth import Principal
-from app.repository.notification import SQLAlchemyNotificationLogRepository
-from app.repository.scheduler import (
-    SQLAlchemyAccountLedgerSource,
-    SQLAlchemySchedulerRunRepository,
-)
+from app.infra.notification_service import build_notification_service
 from app.repository.uow import UnitOfWork
 
 router = APIRouter(tags=["notifications"])
@@ -37,12 +34,12 @@ class VerificationCodeView(BaseModel):
 
 
 def _notification_service(request: Request, session: AsyncSession) -> NotificationService:
-    settings: Settings = request.app.state.settings
-    return NotificationService(
-        SQLAlchemyNotificationLogRepository(session),
+    """与调度任务共用同一装配（避免两处各拼一遍依赖，参数一改就漏改）。"""
+    return build_notification_service(
+        session,
         request.app.state.notification_sender,
         request.app.state.code_limiter,
-        settings,
+        request.app.state.settings,
     )
 
 
@@ -75,26 +72,6 @@ class SchedulerView(BaseModel):
     result: str
 
 
-def _scheduler_service(request: Request, session: AsyncSession) -> SchedulerService:
-    from app.domain.scheduler.service import SchedulerService as Svc
-    from app.infra.scheduler_runners import (
-        SQLAlchemyExpireSubscriptionRunner,
-        SQLAlchemyMonthlyGrantRunner,
-    )
-
-    settings: Settings = request.app.state.settings
-    monthly_grant = SQLAlchemyMonthlyGrantRunner(
-        session, settings.subscription_monthly_grant_points
-    )
-    expire_sub = SQLAlchemyExpireSubscriptionRunner(session)
-    return Svc(
-        SQLAlchemySchedulerRunRepository(session),
-        SQLAlchemyAccountLedgerSource(session),
-        monthly_grant,
-        expire_sub,
-    )
-
-
 @router.post(
     "/scheduler/monthly-grant",
     response_model=Envelope[SchedulerView],
@@ -105,8 +82,20 @@ async def trigger_monthly_grant(
     principal: admin_dep,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[SchedulerView]:
-    async with UnitOfWork(session_factory) as uow:
-        result = await _scheduler_service(request, uow.session).run_monthly_grant(utc_now())
+    """手动触发月赠（与后台循环同一实现，批次键幂等）。"""
+    settings: Settings = request.app.state.settings
+    now = utc_now()
+    result = await scheduler_tasks.run_monthly_grant_task(session_factory, settings, now)
+    await record_audit(
+        request,
+        action="admin.scheduler_trigger",
+        actor_type="admin",
+        actor_id=principal.subject,
+        resource_type="scheduler",
+        resource_id="monthly_grant",
+        detail={"result": result},
+        now=now,
+    )
     return ok(SchedulerView(result=result), request_id_var.get())
 
 
@@ -120,8 +109,22 @@ async def trigger_expire_subscriptions(
     principal: admin_dep,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[SchedulerView]:
-    async with UnitOfWork(session_factory) as uow:
-        result = await _scheduler_service(request, uow.session).run_expire_subscriptions(utc_now())
+    """手动触发到期冻结（与后台循环同一实现，批次键幂等）。"""
+    settings: Settings = request.app.state.settings
+    now = utc_now()
+    result = await scheduler_tasks.run_expire_subscriptions_task(
+        session_factory, settings, now
+    )
+    await record_audit(
+        request,
+        action="admin.scheduler_trigger",
+        actor_type="admin",
+        actor_id=principal.subject,
+        resource_type="scheduler",
+        resource_id="expire_subscriptions",
+        detail={"result": result},
+        now=now,
+    )
     return ok(SchedulerView(result=result), request_id_var.get())
 
 
@@ -135,13 +138,27 @@ async def trigger_reconcile(
     principal: admin_dep,
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> Envelope[dict]:
-    async with UnitOfWork(session_factory) as uow:
-        result = await _scheduler_service(request, uow.session).run_reconcile(utc_now())
-        view = {
-            "alerted": result.alerted,
-            "differences": [
-                {"user_id": d.user_id, "balance": d.balance, "ledger_net": d.ledger_net}
-                for d in result.differences
-            ],
-        }
+    """手动触发对账（与后台循环同一实现）：差异全量发现 + 事务提交后外发 P2 告警。"""
+    settings: Settings = request.app.state.settings
+    now = utc_now()
+    result = await scheduler_tasks.run_reconcile_task(
+        session_factory, settings, request.app.state.alert_outlet, now
+    )
+    view = {
+        "alerted": result.alerted,
+        "differences": [
+            {"user_id": d.user_id, "balance": d.balance, "ledger_net": d.ledger_net}
+            for d in result.differences
+        ],
+    }
+    await record_audit(
+        request,
+        action="admin.scheduler_trigger",
+        actor_type="admin",
+        actor_id=principal.subject,
+        resource_type="scheduler",
+        resource_id="reconcile",
+        detail={"differences": len(result.differences), "alerted": result.alerted},
+        now=now,
+    )
     return ok(view, request_id_var.get())

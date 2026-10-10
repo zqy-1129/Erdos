@@ -1,0 +1,23 @@
+# Private corpus, generated releases, credentials, models and dependencies
+.deps/
+.runtime/
+out/
+normalized/
+cache/
+tmp/
+reports/
+__pycache__/
+*.py[cod]
+*.dump
+*.sqlite*
+*.onnx
+*.safetensors
+*.bin
+*.pdf
+*.docx
+*.doc
+*.zip
+*.log
+.env
+.env.*
+!.env.example

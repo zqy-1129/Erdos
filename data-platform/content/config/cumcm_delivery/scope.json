@@ -1,0 +1,31 @@
+{
+  "document_kind": "cumcm_delivery_scope",
+  "competition_id": "cumcm",
+  "source_dir_name": "12_CUMCM国赛",
+  "historical_year_min": 2010,
+  "historical_year_max": 2025,
+  "target_format_edition_is_separate": true,
+  "other_competitions_read_only": true,
+  "sources": {
+    "problems": "problems/12_CUMCM国赛",
+    "papers": "papers_pending_auth/12_CUMCM国赛",
+    "templates": "templates/12_CUMCM国赛"
+  },
+  "run_id_prefix": "cumcm-2010-2025",
+  "release_id_prefix": "cumcm-2010-2025",
+  "max_archive_depth": 6,
+  "max_archive_members": 20000,
+  "max_expand_bytes_per_archive": 2147483648,
+  "database_schema": "content_de_codex",
+  "forbidden_success_substitutions": [
+    "source file count as logical problem or paper count",
+    "code written as command actually executed",
+    "SQLite as PostgreSQL integration",
+    "filesystem backend as actual object service integration",
+    "fixture/hash random vectors as real embeddings",
+    "parsed text as whole-PDF formula/figure reviewed",
+    "sample processing as whole corpus processed",
+    "byte integrity as official formatting compliance",
+    "all no_reference as successful positive retrieval evaluation"
+  ]
+}

@@ -1,0 +1,142 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/task_context.schema.json",
+  "title": "Erdos task_context v1 draft",
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "competition_id": {
+      "$ref": "_common.json#/definitions/competitionId"
+    },
+    "family_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "family_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "format": {
+      "type": "string",
+      "enum": [
+        "latex",
+        "docx"
+      ]
+    },
+    "ruleset_id": {
+      "$ref": "_common.json#/definitions/entityId"
+    },
+    "ruleset_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "ruleset_status": {
+      "type": "string",
+      "enum": [
+        "pending_verification",
+        "verified",
+        "unknown"
+      ]
+    },
+    "rules_compliance": {
+      "type": "string",
+      "enum": [
+        "unverified",
+        "verified"
+      ]
+    },
+    "local_resources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "asset_ref": {
+            "$ref": "_common.json#/definitions/assetRef"
+          },
+          "relative_path": {
+            "$ref": "_common.json#/definitions/relPath"
+          },
+          "verified": {
+            "const": true
+          }
+        },
+        "required": [
+          "asset_ref",
+          "relative_path",
+          "verified"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "uniqueItems": false
+    },
+    "candidate_profiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "case_id": {
+            "$ref": "_common.json#/definitions/entityId"
+          },
+          "profile_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source_sha256": {
+            "$ref": "_common.json#/definitions/sha256"
+          },
+          "profile_asset_ref": {
+            "$ref": "_common.json#/definitions/assetRef"
+          }
+        },
+        "required": [
+          "case_id",
+          "profile_version",
+          "source_sha256",
+          "profile_asset_ref"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "uniqueItems": false
+    },
+    "style_ref": {
+      "$ref": "_common.json#/definitions/assetRef"
+    },
+    "schema_version": {
+      "$ref": "_common.json#/definitions/schemaVersionInt"
+    },
+    "is_fixture": {
+      "type": "boolean"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Optional metadata only; cannot override defined fields."
+    },
+    "model_execution": {
+      "type": "string",
+      "enum": [
+        "local_only",
+        "third_party"
+      ]
+    }
+  },
+  "required": [
+    "task_id",
+    "competition_id",
+    "family_id",
+    "family_version",
+    "format",
+    "ruleset_id",
+    "ruleset_version",
+    "ruleset_status",
+    "rules_compliance",
+    "local_resources",
+    "candidate_profiles",
+    "style_ref",
+    "schema_version",
+    "model_execution"
+  ],
+  "additionalProperties": false
+}

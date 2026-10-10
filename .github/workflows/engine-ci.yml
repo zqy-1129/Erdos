@@ -19,10 +19,12 @@ jobs:
       - name: Install
         run: pip install -e "./engine[dev]"
       - name: Ruff
-        run: ruff check engine
+        run: ruff check engine scripts
       - name: Mypy
         run: mypy --config-file engine/pyproject.toml engine
-      - name: Pytest (coverage >= 80%)
+      - name: Dependency boundary guard
+        run: cd engine && pytest tests/test_dependency_boundary.py --no-cov -q
+      - name: Pytest (coverage >= 85%)
         run: |
           set -o pipefail
           cd engine && pytest --tb=short 2>&1 | tee pytest.log

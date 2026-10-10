@@ -1,0 +1,20 @@
+-- 非破坏回退：仅删除 content_de 命名空间（不影响既有业务表）。
+BEGIN;
+DROP TABLE IF EXISTS content_de.reviews;
+DROP TABLE IF EXISTS content_de.release_items;
+DROP TABLE IF EXISTS content_de.releases;
+DROP TABLE IF EXISTS content_de.embeddings;
+DROP TABLE IF EXISTS content_de.embedding_profiles;
+DROP TABLE IF EXISTS content_de.unit_members;
+DROP TABLE IF EXISTS content_de.retrieval_units;
+DROP TABLE IF EXISTS content_de.block_subproblem_links;
+DROP TABLE IF EXISTS content_de.blocks;
+DROP TABLE IF EXISTS content_de.parse_runs;
+DROP TABLE IF EXISTS content_de.assets;
+DROP TABLE IF EXISTS content_de.paper_problem_links;
+DROP TABLE IF EXISTS content_de.papers;
+DROP TABLE IF EXISTS content_de.subproblems;
+DROP TABLE IF EXISTS content_de.problems;
+DROP TABLE IF EXISTS content_de.editions;
+DROP SCHEMA IF EXISTS content_de;
+COMMIT;

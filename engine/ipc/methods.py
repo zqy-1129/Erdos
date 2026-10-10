@@ -1,6 +1,6 @@
-"""RPC 方法实现（SP1-1 通信骨架 + SP1-2 编排器接入 + EN-WIRE W2 事件回流）。
+"""10 个 RPC 方法实现（SP1-1 通信骨架 + SP1-2 编排接入 + EN-WIRE W2 事件回流 + CT-V2 增量）。
 
-与 contracts/engine-rpc.schema.json 的 methods 对齐（v2：10 方法）：
+与 contracts/engine-rpc.schema.json 的 methods 对齐（v1 六方法 + CT-V2 四方法）：
 initialize / task_create / start_stage / pause / resume / cancel / get_status /
 answer_gate / provider_test / events_replay
 
@@ -10,6 +10,8 @@ W2 集成：
   run_current_stage，请求立即返回受理（耗时结果走事件，开发文档 §6.2）；
 - task_create 题面同步落盘（task_store 注入时）：崩溃/重启后 start_stage 自动水合恢复（R1）；
 - 阶段启动/完成发 stage.progress，writing 产物发 artifact.ready；
+- SP1-3 硬检查驳回：发 gate.failed（reason=违规说明）并把 task 置 paused（需人工处置），
+  不上报 stage.progress=1.0/artifact.ready/done；
 - cancel 取消在跑的阶段任务（协作取消，沙箱子进程树由沙箱自身超时/强杀兜底）。
 """
 
@@ -53,7 +55,8 @@ def register_all(
     runner: StageRunner | None = None,
     events: EventEmitter | None = None,
     runtime_info: dict | None = None,  # W14：protocol_version/engine_version/tool_mode/isolation_mode
-    key_store=None,  # noqa: ANN001 - KeyStore（provider_test 用，Key 不经方法传递）
+    key_store=None,  # noqa: ANN001 - KeyStore | None（provider_test 用，Key 不经方法传递）
+    capability_cache=None,  # noqa: ANN001 - CapabilityCache | None（探测结果落盘供装配期复用）
     probe_transport=None,  # noqa: ANN001 - httpx.AsyncBaseTransport | None（测试注入）
 ) -> EngineRuntime:
     """注册全部 10 个 RPC 方法；可注入 checkpoint / task_store / runner / 事件 / 运行时信息 / 探测依赖。
@@ -89,6 +92,18 @@ def register_all(
         try:
             _emit_progress(task_id, stage, 0.05)
             data = await orch.run_current_stage()
+            if orch.last_hard_reject:
+                # SP1-3 硬检查驳回：阶段未成功，不得上报完成（无 progress=1.0 / artifact.ready）
+                if events is not None:
+                    events.emit(
+                        "gate.failed",
+                        task_id=task_id,
+                        gate=f"gate_{stage}",
+                        reason=orch.last_hard_reject,
+                    )
+                orch.last_hard_reject = None  # 已上报，避免下一轮重复发 gate.failed
+                state.task = TaskState(task_id=task_id, stage=stage, status="paused")
+                return
             _emit_progress(task_id, stage, 1.0)
             if events is not None and isinstance(data, dict) and data.get("paper_sha256"):
                 events.emit(
@@ -245,7 +260,8 @@ def register_all(
         caps = await probe_capabilities(
             str(base_url), str(model),
             provider=str(params.get("provider") or ""),
-            keys=key_store, transport=probe_transport, force=True,
+            keys=key_store, transport=probe_transport,
+            cache=capability_cache, force=True,
         )
         return {
             "ok": caps.models_endpoint,

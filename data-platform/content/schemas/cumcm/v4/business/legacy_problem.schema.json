@@ -1,0 +1,116 @@
+{
+  "type": "object",
+  "properties": {
+    "business_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "competition": {
+      "const": "cumcm"
+    },
+    "year": {
+      "type": "integer",
+      "minimum": 2010,
+      "maximum": 2025
+    },
+    "problem_code": {
+      "enum": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "prompt_zh": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "prompt_en": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 8192
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "oss_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "media_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "name",
+          "oss_key",
+          "sha256",
+          "media_type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "scoring": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 2048
+    },
+    "dataset_hint": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 2048
+    },
+    "visibility": {
+      "enum": [
+        "public",
+        "member"
+      ]
+    }
+  },
+  "required": [
+    "business_id",
+    "competition",
+    "year",
+    "problem_code",
+    "title",
+    "tags",
+    "prompt_zh",
+    "prompt_en",
+    "attachments",
+    "scoring",
+    "dataset_hint",
+    "visibility"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

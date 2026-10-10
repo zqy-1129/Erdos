@@ -36,7 +36,8 @@ async def test_overview_without_sample_returns_null_values(admin_client) -> None
     assert data["active_alerts"] == []
     assert data["hot_paths"] == []
     assert data["thresholds"]["p95_ms"] == 500.0
-    assert data["thresholds"]["error_rate"] == 5.0
+    # 展示为百分比：《服务端架构》§10 的 P1 口径是错误率 > 1%（原默认 5% 属实现与文档不符）
+    assert data["thresholds"]["error_rate"] == 1.0
     assert data["uptime_seconds"] >= 0
 
 

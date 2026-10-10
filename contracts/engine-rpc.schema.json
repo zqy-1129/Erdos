@@ -3,6 +3,42 @@
   "$id": "https://erdos.local/contracts/engine-rpc.schema.json",
   "title": "Erdos Agent 引擎 JSON-RPC 2.0 契约（SP1-1 引擎运行时与 IPC 骨架）",
   "description": "定义引擎 10 个 RPC 方法与 6 个 NDJSON 事件（v1：6 方法 + 3 事件；v2 增量 CT-V2：tool.call/tool.result/model.delta 事件与 initialize/provider_test/events_replay/task_create 方法）。通信走 stdio 管道，每行一个 JSON（NDJSON）。",
+  "transport": {
+    "summary": "stdio 管道基线：拉起与通信的编码/帧格式权威条款（client/main/engine-protocol.md §2 为可读版，本块为机器判据）",
+    "framing": "NDJSON：每行一个 JSON 对象，行结束符 LF（\\n）；禁止 CR/CRLF，禁止跨行 pretty-print",
+    "encoding": "utf-8",
+    "encoding_owner": "engine",
+    "enforcement": "engine/ipc/stdio.py configure_stdio() 于进程入口重配三条管道；主进程不得设置也不得依赖 PYTHONIOENCODING",
+    "why": "Windows 控制台默认码页常为 cp936/GBK：不强制 UTF-8 时中文题面/门禁意见/工具摘要会被编成非 UTF-8 字节，主进程按 utf8 解码得乱码并静默丢弃事件；该故障在 Linux CI 上永不暴露，而 Windows 是 P0 目标平台",
+    "channels": {
+      "stdin": {
+        "direction": "client_to_engine",
+        "carries": "JSON-RPC 2.0 请求（首行为 Key 注入或空行，见 engine-protocol.md §3）",
+        "errors": "strict",
+        "why_errors": "坏字节若按 replace 变成 U+FFFD，task_id/题面会被静默改写后照常执行，比直接失败更危险"
+      },
+      "stdout": {
+        "direction": "engine_to_client",
+        "carries": "JSON-RPC 2.0 响应 + NDJSON 事件（按 jsonrpc/event 字段分流）",
+        "errors": "strict",
+        "newline": "\n"
+      },
+      "stderr": {
+        "direction": "engine_to_client",
+        "carries": "引擎日志（不承载协议）",
+        "errors": "replace",
+        "client_handling": "先过 secret-masker 再落盘（零明文 Key）"
+      }
+    },
+    "limits": {
+      "max_line_bytes": 1048576,
+      "on_exceed": "protocol_error（EC-S6：不解析、按协议错误计数）"
+    },
+    "guards": {
+      "engine": "engine/tests/test_entry_wiring.py + engine/tests/test_contract_alignment.py transport 段",
+      "client": "client/tests/contract-transport.test.ts"
+    }
+  },
   "definitions": {
     "rpcId": { "type": ["string", "number", "null"] },
     "traceId": { "type": "string", "minLength": 1, "maxLength": 64 },

@@ -1,0 +1,168 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/v1/competition_registry.schema.json",
+  "title": "Erdos 十九赛事注册表 Schema v1",
+  "description": "校验 config/competition_registry.json：稳定 ID、来源路径、资料/模板状态。新增字段策略：顶层对象允许追加说明性字段；赛事与来源对象按本表严格键（additionalProperties 视需要放宽），关键枚举不放松。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "competitions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "kind": {
+      "const": "competition_registry"
+    },
+    "description": {
+      "type": "string"
+    },
+    "dataset_root": {
+      "type": "string"
+    },
+    "status_vocab": {
+      "type": "object",
+      "properties": {
+        "material_status": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "template_status": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "competitions": {
+      "type": "array",
+      "minItems": 19,
+      "maxItems": 19,
+      "items": {
+        "$ref": "#/definitions/competition"
+      }
+    },
+    "shared_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "source_root",
+          "relative_path",
+          "role_hint"
+        ],
+        "properties": {
+          "source_root": {
+            "type": "string",
+            "enum": [
+              "problems",
+              "papers_pending_auth",
+              "templates",
+              "CPMCM"
+            ]
+          },
+          "relative_path": {
+            "$ref": "_common.json#/definitions/relPath"
+          },
+          "role_hint": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": true,
+  "definitions": {
+    "competition": {
+      "type": "object",
+      "required": [
+        "competition_id",
+        "display_name",
+        "source_dir_name",
+        "sources",
+        "material_status",
+        "template_status"
+      ],
+      "properties": {
+        "competition_id": {
+          "$ref": "_common.json#/definitions/competitionId"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_dir_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language_hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "language_hint_note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "material_status": {
+          "type": "string",
+          "enum": [
+            "待下载",
+            "部分资料",
+            "待核验",
+            "已核验"
+          ]
+        },
+        "template_status": {
+          "type": "string",
+          "enum": [
+            "待下载",
+            "待核验",
+            "通用适配待核验",
+            "已核验"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "source_root",
+              "relative_path",
+              "role_hint"
+            ],
+            "properties": {
+              "source_root": {
+                "type": "string",
+                "enum": [
+                  "problems",
+                  "papers_pending_auth",
+                  "templates",
+                  "CPMCM"
+                ]
+              },
+              "relative_path": {
+                "$ref": "_common.json#/definitions/relPath"
+              },
+              "role_hint": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

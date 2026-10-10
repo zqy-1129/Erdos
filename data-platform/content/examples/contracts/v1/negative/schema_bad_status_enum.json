@@ -1,0 +1,13 @@
+{
+  "relative_path": "problems/01_fa/a.bin",
+  "extension": ".bin",
+  "competition_ids": [],
+  "scope": "competition",
+  "source_root": "problems",
+  "resource_type_hint": "题目或附件",
+  "recognition_basis": "来源根 problems / 目录 01_fa → fa",
+  "recognition_status": "待核验",
+  "hash_source": "none",
+  "status": "weird-status",
+  "is_fixture": true
+}

@@ -10,13 +10,19 @@
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 
 from app.core.config import Settings
-from app.domain.notification.ports import NotificationChannel
+from app.domain.alerts.severity import Severity
+from app.domain.notification.ports import (
+    NotificationChannel,
+    NotificationLogRecord,
+)
 from app.domain.notification.service import NotificationService
-from app.domain.scheduler.service import SchedulerService
+from app.domain.scheduler.service import SchedulerService, reconcile_alert
 from app.infra.notification_sender import LogNotificationSender
 from app.infra.verification_limiter import FixedWindowCodeLimiter
+from app.repository.models import NotificationSendLog
 from app.repository.notification import SQLAlchemyNotificationLogRepository
 from app.repository.scheduler import SQLAlchemySchedulerRunRepository
 from app.repository.uow import UnitOfWork
@@ -174,7 +180,7 @@ async def test_monthly_grant_idempotent_batch(session_factory, settings) -> None
 
 
 async def test_reconcile_detects_all_differences(session_factory, settings) -> None:
-    """对账：构造 5 条差异，全量发现并告警。"""
+    """对账：构造 5 条差异，全量发现并分级为 P2 告警。"""
     async with UnitOfWork(session_factory) as uow:
         # 5 个账户，余额与流水净额不一致
         accounts = [(f"u{i}", 100) for i in range(5)]
@@ -187,9 +193,16 @@ async def test_reconcile_detects_all_differences(session_factory, settings) -> N
         assert result.alerted is True
         assert len(result.differences) == 5  # 差异全量发现
 
+        alert = reconcile_alert(result)
+        assert alert is not None
+        assert alert.key == "reconcile_diff"
+        assert alert.severity == Severity.P2  # 架构 §10：对账差异非零为 P2
+        assert "5 个账户" in alert.message
+        assert "u0" not in alert.message, "告警短句不落用户明细"
+
 
 async def test_reconcile_no_differences(session_factory, settings) -> None:
-    """对账：无差异时不告警。"""
+    """对账：无差异时不生成告警。"""
     async with UnitOfWork(session_factory) as uow:
         accounts = [("u1", 100)]
         nets = {"u1": 100}
@@ -198,3 +211,38 @@ async def test_reconcile_no_differences(session_factory, settings) -> None:
         result = await svc.run_reconcile(datetime.now(UTC))
         assert result.alerted is False
         assert len(result.differences) == 0
+        assert reconcile_alert(result) is None
+
+
+def _queued(message_id: str, target: str) -> NotificationLogRecord:
+    return NotificationLogRecord(
+        id="", message_id=message_id, channel="email", template_id="t",
+        target=target, status="queued", error=None,
+        created_at=datetime.now(UTC), sent_at=None,
+    )
+
+
+async def test_append_conflict_keeps_caller_transaction_writes(session_factory) -> None:
+    """撞幂等键只撤本次插入，调用方同事务里的其它写入必须活下来。
+
+    这条竞态是真能发生的：两个实例同时跑续费提醒、或消息被重复投递。旧实现用
+    session.rollback() 兜底，会把调用方事务一起抹掉（与 scheduler.claim、
+    monitoring.upsert_minute 改前同一个坑，这是第三处）。
+    """
+    async with UnitOfWork(session_factory) as uow:
+        first = await SQLAlchemyNotificationLogRepository(uow.session).append(
+            _queued("dup-1", "a@e.com")
+        )
+    assert first is not None
+
+    async with UnitOfWork(session_factory) as uow:
+        repo = SQLAlchemyNotificationLogRepository(uow.session)
+        assert await repo.append(_queued("caller-write", "b@e.com")) is not None
+        assert await repo.append(_queued("dup-1", "a@e.com")) is None, "撞键交回 None 让上层复用"
+
+    async with session_factory() as session:
+        ids = {
+            row.message_id
+            for row in (await session.execute(select(NotificationSendLog))).scalars()
+        }
+    assert {"dup-1", "caller-write"} <= ids, f"同事务写入被回滚掉了：{sorted(ids)}"

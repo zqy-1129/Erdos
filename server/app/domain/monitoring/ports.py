@@ -128,9 +128,12 @@ class AlertTransition:
     value: float
     threshold: float
     occurred_at: datetime
+    detail_message: str = ""  # 业务告警自带短句；空则按采样指标生成
 
     @property
     def message(self) -> str:
+        if self.detail_message:
+            return self.detail_message
         labels = {m.key: m.label for m in METRICS}
         units = {m.key: m.unit for m in METRICS}
         label = labels.get(self.metric, self.metric)
@@ -154,6 +157,10 @@ class MonitoringTrendRepository(Protocol):
 
     async def prune_before(self, cutoff: datetime) -> int:
         """删除截止时间之前的快照，返回删除行数。"""
+        ...
+
+    async def window_error_minutes(self, start: datetime, end: datetime) -> tuple[int, float]:
+        """窗口内 (观测分钟数, error_rate 之和)，区间左闭右开；供 SLO 预算燃尽聚合。"""
         ...
 
 

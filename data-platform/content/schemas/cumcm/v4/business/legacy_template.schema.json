@@ -1,0 +1,56 @@
+{
+  "type": "object",
+  "properties": {
+    "business_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "competition": {
+      "const": "cumcm"
+    },
+    "format": {
+      "enum": [
+        "typst",
+        "latex",
+        "docx"
+      ]
+    },
+    "oss_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "changelog": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 512
+    },
+    "tier": {
+      "enum": [
+        "free",
+        "member_only"
+      ]
+    }
+  },
+  "required": [
+    "business_id",
+    "competition",
+    "format",
+    "oss_key",
+    "sha256",
+    "version",
+    "changelog",
+    "tier"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

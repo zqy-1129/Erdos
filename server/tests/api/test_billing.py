@@ -4,14 +4,18 @@ test 环境用 DevTokenIntrospector：Bearer <subject> 透传为请求主体。
 回调端点 HMAC 验签（conftest settings.payment_callback_secret="test-callback-secret"）。
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
+from sqlalchemy import select, update
 
+from app.core.clock import utc_now
 from app.core.config import Settings
 from app.domain.billing.service import callback_digest
+from app.infra.payment_channels import MockPaymentChannel
 from app.main import create_app
-from app.repository.models import Base, Product
+from app.repository.billing import SQLAlchemyOrderRepository
+from app.repository.models import AuditLog, Base, Order, Product
 from app.repository.uow import UnitOfWork
 
 CALLBACK_SECRET = "test-callback-secret"
@@ -160,7 +164,10 @@ async def test_refund_points_pack_rejected(client) -> None:
 
 
 async def test_billing_endpoints_require_auth(client) -> None:
-    assert (await client.get("/v1/billing/products")).status_code == 200  # 商品列表公开
+    # test 环境 auth_enforce 关闭，中间件不拦无凭证请求；本用例只证明"带业务响应"而非"公开放行"。
+    # 匿名/凭证口径由 tests/api/test_authz_matrix.py（策略表）与 scripts/contract_audit.py
+    # （契约 security ⇔ PUBLIC_PATHS）双向盯住：商品目录已改判需登录。
+    assert (await client.get("/v1/billing/products")).status_code == 200
     assert (
         await client.post(
             "/v1/billing/orders",
@@ -309,3 +316,152 @@ async def test_subscription_refund_trims_end_at(client) -> None:
     assert sub is not None
     end_at = datetime.fromisoformat(sub["end_at"])
     assert end_at <= datetime.now(UTC)
+
+
+# ----------------------------------------------------------------------
+# 查单兜底（PRD DF-003 异常处理 / EC-N7 / DEC-022）
+# ----------------------------------------------------------------------
+def _app(client):
+    return client._transport.app  # type: ignore[attr-defined]
+
+
+async def _create_order(client, *, user: str = "u1", key: str = "k-1") -> str:
+    r = await client.post(
+        "/v1/billing/orders",
+        json={"product_code": "pack_400", "channel": "mock", "idempotency_key": key},
+        headers={"Authorization": f"Bearer {user}"},
+    )
+    assert r.status_code == 200
+    return r.json()["data"]["order"]["id"]
+
+
+async def _age_order(client, order_id: str, minutes: int) -> None:
+    """把订单 created_at 往前推（模拟"支付完成但回调迟迟没来"）。"""
+    factory = _app(client).state.session_factory
+    async with UnitOfWork(factory) as uow:
+        await uow.session.execute(
+            update(Order)
+            .where(Order.id == order_id)
+            .values(created_at=utc_now() - timedelta(minutes=minutes))
+        )
+
+
+async def _status(client, order_id: str) -> str:
+    factory = _app(client).state.session_factory
+    async with UnitOfWork(factory) as uow:
+        order = await SQLAlchemyOrderRepository(uow.session).get(order_id)
+    assert order is not None
+    return order.status
+
+
+async def _mock_channel(client) -> MockPaymentChannel:
+    channel = _app(client).state.payment_channels["mock"]
+    assert isinstance(channel, MockPaymentChannel)
+    return channel
+
+
+async def test_poll_triggers_query_and_settles_missing_callback(client) -> None:
+    """回调丢失场景：客户端轮询订单即触发查单补账，钱与权益同时到账（PRD T+5 分钟兜底）。"""
+    await _seed_products(client)
+    order_id = await _create_order(client)
+    await _age_order(client, order_id, 10)
+    channel = await _mock_channel(client)
+    channel.mark_paid(order_id, "mock-pay-1", 1800)
+
+    g = await client.get(
+        f"/v1/billing/orders/{order_id}", headers={"Authorization": "Bearer u1"}
+    )
+    assert g.status_code == 200
+    assert g.json()["data"]["status"] == "paid"
+
+    b = await client.get("/v1/points/balance", headers={"Authorization": "Bearer u1"})
+    assert b.json()["data"]["purchased_balance"] == 400
+
+    # 再轮询一次：payment_no 幂等，不重复入账
+    await client.get(f"/v1/billing/orders/{order_id}", headers={"Authorization": "Bearer u1"})
+    b2 = await client.get("/v1/points/balance", headers={"Authorization": "Bearer u1"})
+    assert b2.json()["data"]["purchased_balance"] == 400
+
+
+async def test_foreign_poll_cannot_trigger_settlement(client) -> None:
+    """水平越权防护：非属主轮询返回 404，且不得替属主触发补账。"""
+    await _seed_products(client)
+    order_id = await _create_order(client, user="u1")
+    await _age_order(client, order_id, 10)
+    channel = await _mock_channel(client)
+    channel.mark_paid(order_id, "mock-pay-2", 1800)
+
+    g = await client.get(
+        f"/v1/billing/orders/{order_id}", headers={"Authorization": "Bearer u2"}
+    )
+    assert g.status_code == 404
+    assert await _status(client, order_id) == "created", "越权轮询不该产生资金副作用"
+
+
+async def test_admin_sweep_endpoint(client, admin_client) -> None:
+    """管理端批量扫描：普通用户 403；admin 返回七个动作计数，补账由扫描完成而非只靠轮询。"""
+    denied = await client.post(
+        "/v1/billing/orders/reconcile", headers={"Authorization": "Bearer u1"}
+    )
+    assert denied.status_code == 403
+
+    await _seed_products(admin_client)
+    order_id = await _create_order(admin_client, key="k-sweep")
+    await _age_order(admin_client, order_id, 12)
+    channel = await _mock_channel(admin_client)
+    channel.mark_paid(order_id, "mock-pay-3", 1800)
+
+    r = await admin_client.post(
+        "/v1/billing/orders/reconcile", headers={"Authorization": "Bearer admin"}
+    )
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert set(data) == {
+        "scanned",
+        "settled",
+        "closed",
+        "differences",
+        "pending",
+        "throttled",
+        "unavailable",
+    }
+    assert data["scanned"] == 1 and data["settled"] == 1
+    assert await _status(admin_client, order_id) == "paid"
+
+
+async def test_late_callback_on_closed_order_lands_ledger_and_alert(
+    admin_client, admin_app
+) -> None:
+    """已关单却收到有效回调：终态不迁移，但差异必须进审计台账并产出可回查的 P2 告警。"""
+    await _seed_products(admin_client)
+    order_id = await _create_order(admin_client, key="k-closed")
+    factory = admin_app.state.session_factory
+    async with UnitOfWork(factory) as uow:
+        await SQLAlchemyOrderRepository(uow.session).transition(
+            order_id, "created", "closed", utc_now()
+        )
+
+    c = await admin_client.post(
+        "/v1/billing/callbacks/payment",
+        json={
+            "payment_no": "pay-late",
+            "order_id": order_id,
+            "raw_digest": _digest("pay-late", order_id),
+        },
+    )
+    assert c.status_code == 200
+    assert c.json()["data"]["status"] == "closed", "closed 保持终态（人工退款处置）"
+
+    async with UnitOfWork(factory) as uow:
+        rows = (await uow.session.execute(select(AuditLog))).scalars().all()
+    diffs = [r for r in rows if r.action == "billing.payment_difference"]
+    assert len(diffs) == 1
+    assert diffs[0].detail["evidence"] == "signed_callback"
+
+    events = await admin_client.get(
+        "/v1/admin/dashboard/events?types=monitor.alert",
+        headers={"Authorization": "Bearer admin"},
+    )
+    body = events.json()["data"]
+    assert body["total"] == 1, body
+    assert body["items"][0]["payload"]["metric"] == "payment_difference"

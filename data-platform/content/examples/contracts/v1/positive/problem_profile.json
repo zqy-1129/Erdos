@@ -1,0 +1,72 @@
+{
+  "problem_id": "cumcm-2024-B",
+  "competition_id": "cumcm",
+  "year": 2024,
+  "problem_code": "B",
+  "problem_types": [
+    "optimization",
+    "prediction"
+  ],
+  "method_tags": [
+    "integer_programming"
+  ],
+  "data_tags": [
+    "tabular"
+  ],
+  "domain_tags": [
+    "manufacturing"
+  ],
+  "subproblems": [
+    {
+      "subproblem_id": "cumcm-2024-B:q1",
+      "problem_types": [
+        "optimization"
+      ],
+      "method_tags": [
+        "integer_programming"
+      ],
+      "confidence": 0.9,
+      "label_status": "pending_review",
+      "source": "题面第1问",
+      "provenance": {
+        "kind": "unknown",
+        "evidence": null,
+        "note": "开发夹具，尚未提取或人工确认"
+      }
+    },
+    {
+      "subproblem_id": "cumcm-2024-B:q2",
+      "problem_types": [
+        "prediction"
+      ],
+      "method_tags": [],
+      "confidence": null,
+      "label_status": "unknown",
+      "source": null,
+      "provenance": {
+        "kind": "unknown",
+        "evidence": null,
+        "note": "开发夹具，尚未提取或人工确认"
+      }
+    }
+  ],
+  "source_refs": [
+    "problems/12_CUMCM国赛/CUMCM2024Problems/B题/B题.pdf"
+  ],
+  "source_sha256": null,
+  "attachments": [],
+  "schema_version": 1,
+  "label_schema_version": 1,
+  "review_status": "pending_review",
+  "last_updated": "2026-10-04T00:00:00Z",
+  "profile_version": 1,
+  "confidence": null,
+  "label_status": "unknown",
+  "provenance": {
+    "kind": "unknown",
+    "evidence": null,
+    "note": "开发夹具，尚未提取或人工确认"
+  },
+  "source_asset_ref": null,
+  "is_fixture": true
+}

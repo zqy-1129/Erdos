@@ -3,7 +3,7 @@
 设计约束：
 - 配置驱动：ERDOS_ALERT_WEBHOOK_URL 为空时整条链路关闭（默认 dev 零行为变化）；
 - 旁路增强：外发失败只告警日志、绝不重抛 —— 监测主循环与看板告警不受渠道故障影响；
-- 通用 payload（source/type/severity/metric/state/value/threshold/message/occurred_at），
+- 通用 payload（source/type/severity/level/metric/state/value/threshold/message/occurred_at），
   接收端（飞书/钉钉/企微自定义机器人）按模板适配；发送函数可注入（测试桩）。
 """
 
@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.core.config import Settings
+from app.domain.alerts.severity import Severity
 from app.domain.monitoring.ports import AlertTransition
 
 logger = logging.getLogger("erdos.alertwebhook")
@@ -70,12 +71,19 @@ class AlertWebhookDispatcher:
     def enabled(self) -> bool:
         return bool(self._url)
 
-    def payload_for(self, transition: AlertTransition) -> dict[str, Any]:
-        """状态转换 → 外发载荷（与看板事件载荷口径一致）。"""
+    def payload_for(
+        self, transition: AlertTransition, level: Severity | None = None
+    ) -> dict[str, Any]:
+        """状态转换 → 外发载荷（与看板事件载荷口径一致）。
+
+        ``level`` 是 SLO 档位（P0/P1/P2）：不带它，接收端只看得见 warning/info，
+        值班机器人就无法按档分级（P0 呼叫、P1 邮件、P2 消息）——分级必须走到外发最后一公里。
+        """
         return {
             "source": "erdos-server",
             "type": "monitor.alert",
             "severity": "warning" if transition.state == "triggered" else "info",
+            "level": level.value if level is not None else None,
             "metric": transition.metric,
             "state": transition.state,
             "value": transition.value,
@@ -84,15 +92,17 @@ class AlertWebhookDispatcher:
             "occurred_at": transition.occurred_at.isoformat(),
         }
 
-    def dispatch(self, transition: AlertTransition) -> None:
+    def dispatch(
+        self, transition: AlertTransition, level: Severity | None = None
+    ) -> None:
         """fire-and-forget 外发；未配置或失败均不影响监测主循环。"""
         if not self.enabled:
             return
-        asyncio.create_task(self._send_guarded(transition))
+        asyncio.create_task(self._send_guarded(transition, level))
 
-    async def send(self, transition: AlertTransition) -> bool:
+    async def send(self, transition: AlertTransition, level: Severity | None = None) -> bool:
         """投递一次状态转换（指数退避重试）；耗尽重试仍失败返回 False。"""
-        payload = self.payload_for(transition)
+        payload = self.payload_for(transition, level)
         for attempt in range(self._retries + 1):
             if attempt > 0:
                 await asyncio.sleep(self._backoff * (2 ** (attempt - 1)))
@@ -116,9 +126,11 @@ class AlertWebhookDispatcher:
         )
         return False
 
-    async def _send_guarded(self, transition: AlertTransition) -> None:
+    async def _send_guarded(
+        self, transition: AlertTransition, level: Severity | None = None
+    ) -> None:
         """后台任务守卫：任何异常不外抛（外发为旁路增强）。"""
         try:
-            await self.send(transition)
+            await self.send(transition, level)
         except Exception:
             logger.exception("告警 Webhook 后台投递崩溃：metric=%s", transition.metric)

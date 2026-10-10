@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    env_file: ../../.runtime/local/postgres.env
+    ports: ["127.0.0.1:${CUMCM_PG_PORT:-55433}:5432"]
+    volumes: ["cumcm_codex_pg:/var/lib/postgresql/data"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cumcm -d cumcm_codex"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  objects:
+    image: chrislusf/seaweedfs:4.46
+    command: ["server", "-dir=/data", "-ip=127.0.0.1", "-ip.bind=0.0.0.0", "-filer", "-s3", "-s3.config=/config/s3.json", "-master.telemetry=false", "-volume.max=64", "-master.volumeSizeLimitMB=1024"]
+    ports: ["127.0.0.1:${CUMCM_S3_PORT:-18333}:8333"]
+    volumes: ["cumcm_codex_s3:/data", "../../.runtime/local/s3.json:/config/s3.json:ro"]
+    restart: unless-stopped
+volumes:
+  cumcm_codex_pg:
+  cumcm_codex_s3:

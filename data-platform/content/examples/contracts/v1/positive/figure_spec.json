@@ -1,0 +1,26 @@
+{
+  "spec_id": "task-001-fig-1",
+  "task_id": "task-001",
+  "kind": "line",
+  "data_ref": "artifacts/result1.csv",
+  "data_sha256": "35856d0b0bfafe5f5cd01c177039ae54cfa244930c4741edb53759d79d008965",
+  "data_origin": "current_task",
+  "columns": [
+    "t",
+    "y"
+  ],
+  "coords": [
+    "x=t",
+    "y=y"
+  ],
+  "unit": "s / 件",
+  "purpose": "新任务结果对比",
+  "style_ref": {
+    "asset_id": "cumcm-figure",
+    "version": 1,
+    "sha256": "7676476536c298b5946e6d855f01ea21acd58f17aaadd7deb64ea9d45e5054f8"
+  },
+  "caption_context": "开发演示，不包含历史结果",
+  "schema_version": 1,
+  "is_fixture": true
+}

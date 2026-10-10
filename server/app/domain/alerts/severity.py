@@ -9,6 +9,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
+from typing import Final
 
 
 class Severity(StrEnum):
@@ -62,6 +63,46 @@ def classify_reconcile_diff(diff_count: int) -> Severity | None:
     return None
 
 
+# 《服务端架构》§10 与 PRD 6.1 的承诺：云端可用性 99.5%。这是产品口径，不做成部署可调项。
+SLO_AVAILABILITY: Final[float] = 0.995
+
+# 燃尽与数据覆盖率两条预算类告警的指标键：看板与静默去重都以它为单位。
+SLO_BURN_METRIC: Final[str] = "slo_burn"
+SLO_COVERAGE_METRIC: Final[str] = "slo_data_coverage"
+
+# 采样指标 -> SLO 档位。可用性是唯一 P0；错误率与延迟类为 P1；容量水位为 P2。
+# 延迟档按 P95 口径评估（PRD 写的是 P99>500ms），P99 需要监测表增列，
+# 该替换口径已登记待契约/架构评审确认，不假装它就是 P99。
+METRIC_SEVERITY: Final[dict[str, Severity]] = {
+    "availability": Severity.P0,
+    "error_rate": Severity.P1,
+    "p95_ms": Severity.P1,
+    "db_query_p95_ms": Severity.P1,
+    "qps": Severity.P2,
+    "cpu_percent": Severity.P2,
+    "memory_percent": Severity.P2,
+    "db_pool_usage": Severity.P2,
+    # 预算燃尽类（调度小时任务产出，不在采样规则里）
+    SLO_BURN_METRIC: Severity.P0,
+    SLO_COVERAGE_METRIC: Severity.P1,
+}
+
+
+def severity_for_metric(metric: str) -> Severity:
+    """采样指标所属 SLO 档位；未知指标按 P2 兜底（宁可多报不可漏报）。"""
+    return METRIC_SEVERITY.get(metric, Severity.P2)
+
+
+def availability_of(error_rate: float, requests_in_window: float, min_requests: float) -> float:
+    """窗口可用性 = 1 - 5xx 占比；样本不足时返回 1.0（低流量下几个 5xx 不该触发 P0）。
+
+    error_rate 的口径就是 5xx 占比（infra/monitoring 只把 status>=500 计为错误）。
+    """
+    if requests_in_window < min_requests:
+        return 1.0
+    return 1.0 - error_rate
+
+
 class SilenceManager:
     """告警静默合并：同级别同指标在静默窗口内去重（只发一次）。"""
 
@@ -80,20 +121,30 @@ class SilenceManager:
 
 
 class AlertRouter:
-    """值班路由：按级别路由到飞书/邮件/消息通道，静默去重。"""
+    """值班路由：按级别定通道 + 静默去重。
+
+    只保留**有界**计数（每通道一个整数）：这是长驻进程里的对象，早期版本用
+    ``list[tuple[Alert, Channel]]`` 记录路由历史，7×24 跑下来必然无界增长。
+    审计与看板已有落库通道，路由历史不该由内存列表承担。
+    """
 
     def __init__(self, silence: SilenceManager | None = None) -> None:
         self._silence = silence or SilenceManager()
-        self._routed: list[tuple[Alert, Channel]] = []
+        self._counts: dict[Channel, int] = {channel: 0 for channel in Channel}
+
+    @staticmethod
+    def channel_for(severity: Severity) -> Channel:
+        """级别 → 通道（纯映射，不去重：恢复通知与自带状态机的调用方走这里）。"""
+        return SEVERITY_CHANNEL[severity]
 
     def route(self, alert: Alert, now: datetime) -> Channel | None:
         """路由一条告警；静默窗口内去重返回 None。"""
         if not self._silence.should_send(alert, now):
             return None
-        channel = SEVERITY_CHANNEL[alert.severity]
-        self._routed.append((alert, channel))
+        channel = self.channel_for(alert.severity)
+        self._counts[channel] += 1
         return channel
 
     @property
-    def routed(self) -> list[tuple[Alert, Channel]]:
-        return self._routed
+    def routed_counts(self) -> dict[Channel, int]:
+        return dict(self._counts)

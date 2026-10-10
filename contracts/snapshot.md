@@ -10,7 +10,17 @@
 1. **键排序**：对 JSON 对象的所有键按字典序（Unicode 码点）升序排列；
 2. **紧凑序列化**：`json.dumps(payload, sort_keys=True, separators=(",", ":"))`，
    即键值间用 `:`、条目间用 `,`，不含空格；
-3. **UTF-8 编码**：序列化字符串 `.encode("utf-8")` 得到待签名字节。
+3. **非 ASCII 转义**：沿用 `ensure_ascii=True`（`json.dumps` 默认值，**不得改为 False**）——
+   非 ASCII 字符一律转为 `\uXXXX`（小写十六进制），增补平面字符转为 UTF-16 代理对
+   （`😀` → `\ud83d\ude00`）。改 False 会让中文/emoji 字段产出不同字节，跨端验签整体失效；
+4. **数值**：签名载荷只允许**整数**（金额、积分、Unix 秒），不带小数点与指数；
+   非整数在两侧都被拒绝（金额一律整数分口径，禁浮点）；
+5. **UTF-8 编码**：序列化字符串 `.encode("utf-8")` 得到待签名字节。规范化结果本身是纯 ASCII。
+
+> 上述规则的可执行判据是 `contracts/snapshot-vectors.json`（载荷 → 规范化字节 → 签名 三元组金样例），
+> 服务端 `server/tests/unit/test_snapshot_vectors.py` 与客户端
+> `client/tests/contract-snapshot-vectors.test.ts` 各读同一份文件断言。**文档与金样例必须同步修订**：
+> 只改本文档而 regenerate 向量文件，两侧守护会红。
 
 ## 2. 权益快照（entitlement_snapshots）
 
@@ -56,4 +66,17 @@ payload 字段（对齐《数据模型设计》stage_grants）：
 
 - 任一字段变更（含类型、顺序无关但值变化）都会导致验签失败；
 - 快照与许可的 `signature` 均为 hex 字符串，`key_version`/`kid` 标识签发密钥；
-- 客户端缓存快照用于 DF-005 离线宽限（72h），联网后重新拉取。
+- 客户端缓存快照用于 DF-005 离线宽限（72h），联网后重新拉取；
+- 服务端两处独立实现（`app/domain/entitlement/service.py` 快照、`app/domain/points/service.py` 阶段许可）
+  的规范化输出必须逐字一致，由金样例守护测试断言。
+
+## 6. 跨端金样例（`contracts/snapshot-vectors.json`）
+
+| 项 | 口径 |
+|---|---|
+| 内容 | 5 条向量：文档示例快照 / 冻结无订阅快照（含 null）/ 阶段许可 / 非 ASCII+转义 / 篡改负向样本 |
+| 每条字段 | `payload`（乱序书写以真实测到键排序）、`canonical`（期望字节串，纯 ASCII）、`signature`、`expect_valid` |
+| 密钥 | `key.public_key_spki_der_hex` + `key.kid`；**一次性测试密钥，私钥未落盘、未提交**，仅公钥随向量发布 |
+| 消费方 | 服务端 `test_snapshot_vectors.py`、客户端 `contract-snapshot-vectors.test.ts`（各读同一份，不互相 import） |
+| 修订 | 载荷字段增删（本文档第 2/3 节变更）时必须重新生成向量，并与契约评审同批提交 |
+

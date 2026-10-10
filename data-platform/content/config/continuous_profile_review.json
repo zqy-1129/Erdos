@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "reviewer": "Codex",
+  "review_scope": "Visual facts on cited pages only; automatic full-text structure remains pending review",
+  "records": [
+    {"case_id":"cumcm-2018-B-03","page":5,"kind":"writing","section":"model","purpose":"定义调度模型","organization":"先说明决策变量，再列出目标函数和约束条件","terms":["决策变量","目标函数","约束条件"]},
+    {"case_id":"cumcm-2023-A-175","page":5,"kind":"writing","section":"model","purpose":"解释定日镜与光锥的几何关系","organization":"建立镜面坐标系并给出示意图，再建立光锥坐标系并说明主光线方向","terms":["定日镜面坐标系","光锥坐标系"]},
+    {"case_id":"cumcm-2023-A-175","page":5,"kind":"figure","figure_id":"fig-4","type":"coordinate_diagram","caption":"图4：定日镜的面坐标系","purpose":"说明镜面局部坐标轴","variables":"镜面局部坐标轴和中心位置","terms":["坐标系"]},
+    {"case_id":"cumcm-2023-B-477","page":5,"kind":"writing","section":"model","purpose":"检验并修正重叠率定义","organization":"先以两个几何场景比较旧定义，再提出修正定义并解释投影关系","terms":["修正","重叠率","投影"]},
+    {"case_id":"cumcm-2023-B-477","page":5,"kind":"figure","figure_id":"fig-2","type":"geometric_comparison","caption":"图2 不同坡度的情况","purpose":"比较坡度变化下条带重叠的几何关系","variables":"条带宽度、测线间距与坡度","terms":["不同坡度"]},
+    {"case_id":"cumcm-2023-B-477","page":5,"kind":"figure","figure_id":"fig-3","type":"projection_diagram","caption":"图3 投影测线间距","purpose":"解释投影后的测线间距","variables":"原测线及投影间距","terms":["投影测线间距"]}
+  ]
+}

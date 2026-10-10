@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://erdos.local/content/schemas/cumcm/v2/document_node.schema.json",
+  "title": "Erdos cumcm v2 结构文稿节点（document_node）",
+  "type": "object",
+  "required": ["node_id", "order", "node_type", "subproblem_ref", "content", "result_refs"],
+  "properties": {
+    "node_id": {"type": "string"},
+    "parent_node_id": {"type": ["string", "null"]},
+    "order": {"type": "integer", "minimum": 1},
+    "node_type": {"type": "string", "enum": ["heading", "paragraph", "equation", "figure", "table", "reference", "appendix"]},
+    "subproblem_ref": {"type": ["string", "null"]},
+    "content": {"type": "object"},
+    "result_refs": {"type": "array", "items": {"type": "string"}},
+    "display_ref": {"type": ["string", "null"]},
+    "version": {"type": "integer", "minimum": 1}
+  },
+  "additionalProperties": false
+}

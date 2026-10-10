@@ -76,6 +76,29 @@ def test_silence_different_metric_not_deduped() -> None:
     assert router.route(Alert(Severity.P1, "error_rate", "错误率高", now), now) == Channel.EMAIL
 
 
+def test_router_accounting_is_bounded() -> None:
+    """路由账本是有界计数，不是历史列表：AlertRouter 活在 7×24 的长驻进程里。"""
+    router = AlertRouter(SilenceManager(silence_window_seconds=0))
+    now = datetime.now(UTC)
+    for index in range(200):
+        router.route(Alert(Severity.P0, f"metric-{index}", "宕机", now), now)
+    assert router.routed_counts == {
+        Channel.FEISHU: 200,
+        Channel.EMAIL: 0,
+        Channel.MESSAGE: 0,
+    }
+
+
+def test_channel_for_does_not_consume_silence() -> None:
+    """纯映射不去重：恢复通知与自带状态机的调用方按级别直接取通道。"""
+    router = AlertRouter(SilenceManager(silence_window_seconds=300))
+    now = datetime.now(UTC)
+    alert = Alert(Severity.P0, "uptime", "宕机", now)
+    assert router.route(alert, now) == Channel.FEISHU
+    assert router.route(alert, now) is None, "窗口内已去重"
+    assert AlertRouter.channel_for(Severity.P0) == Channel.FEISHU
+
+
 # ----------------------------------------------------------------------
 # SLO 燃尽
 # ----------------------------------------------------------------------

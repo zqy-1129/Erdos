@@ -1,0 +1,10 @@
+{
+  "release_id": "cumcm-2010-2025-codex-v3",
+  "manifest_sha256": "7cb13aba466baeffda3cb67731a4b106b2e6122d45dac15fd690ec3e6f37ac08",
+  "scope": "cumcm 2010-2025 local team internal only",
+  "sealed_files": 115960,
+  "sealed_bytes": 9987124288,
+  "postgres_schema": "content_de_codex",
+  "original_paper_external_distribution": false,
+  "independent_semantic_gold_certified": false
+}
