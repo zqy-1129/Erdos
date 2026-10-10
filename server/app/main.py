@@ -6,10 +6,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
 
 from app import __version__
 from app.api.handlers import (
@@ -51,7 +52,7 @@ from app.infra.auth import (
 from app.infra.db import create_engine, create_session_factory
 from app.infra.events import EventBroker
 from app.infra.message_bus import MessageBus
-from app.infra.metrics import metrics_response
+from app.infra.metrics import export_runtime_counters, metrics_response
 from app.infra.monitoring import MonitoringCollector, set_collector
 from app.infra.notification_sender import LogNotificationSender
 from app.infra.payment_channels import build_payment_channels
@@ -75,6 +76,16 @@ def _default_introspector(
     if config.env == "test":
         return DevTokenIntrospector()
     return JwtTokenIntrospector(token_manager)
+
+
+async def _metrics_endpoint(request: Request) -> Response:
+    """Prometheus 抓取：先把进程内计数刷进指标，再输出文本。
+
+    刷在抓取时而不是采样循环里，是因为监测可关而这两条计数与监测无关（见
+    `infra/metrics.export_runtime_counters`）。
+    """
+    export_runtime_counters(request.app.state)
+    return metrics_response()
 
 
 def create_app(
@@ -224,7 +235,9 @@ def create_app(
     app.add_exception_handler(Exception, unhandled_error_handler)
 
     if config.metrics_enabled:
-        app.add_api_route("/metrics", metrics_response, methods=["GET"], include_in_schema=False)
+        app.add_api_route(
+            "/metrics", _metrics_endpoint, methods=["GET"], include_in_schema=False
+        )
 
     # 管理看板：静态单页（自包含，消费 /v1/admin/dashboard/* 与 SSE）
     static_dir = Path(__file__).resolve().parent / "static"

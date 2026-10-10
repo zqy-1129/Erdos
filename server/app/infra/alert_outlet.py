@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.topics import EVENTS_TOPIC
 from app.domain.alerts.ports import AlertOutlet, BusinessAlert
-from app.domain.alerts.severity import Alert, AlertRouter, Severity, SilenceManager
+from app.domain.alerts.severity import Alert, AlertRouter, Channel, Severity, SilenceManager
 from app.domain.monitoring.ports import AlertTransition
 from app.infra.alert_webhook import AlertWebhookDispatcher
 from app.infra.events import EventBroker
@@ -56,6 +56,11 @@ class BrokerAlertOutlet(AlertOutlet):
         # 同一秒内二次 should_send 必然被自己刚写的记录判为重复而整条丢弃。
         self._router = AlertRouter(self._silence)
 
+    @property
+    def routed_counts(self) -> dict[Channel, int]:
+        """各值班通道已路由告警数（供 /metrics 导出；有界，键空间=通道数）。"""
+        return self._router.routed_counts
+
     async def emit(self, alert: BusinessAlert, now: datetime, dedupe: bool = True) -> bool:
         """外发一条告警；dedupe=True 时同级别同指标在静默窗口内只发一次。
 
@@ -74,7 +79,8 @@ class BrokerAlertOutlet(AlertOutlet):
                 logger.info("告警静默去重：%s %s", alert.key, alert.severity)
                 return False
         else:
-            channel = AlertRouter.channel_for(alert.severity)
+            # 恢复通知与自带状态机的采样告警：不去重，但同样要计入通道路由数
+            channel = self._router.note(alert.severity)
 
         transition = AlertTransition(
             metric=alert.key,

@@ -138,16 +138,24 @@ class AlertRouter:
 
     @staticmethod
     def channel_for(severity: Severity) -> Channel:
-        """级别 → 通道（纯映射，不去重：恢复通知与自带状态机的调用方走这里）。"""
+        """级别 → 通道（纯映射，不去重也不计数）。"""
         return SEVERITY_CHANNEL[severity]
 
-    def route(self, alert: Alert, now: datetime) -> Channel | None:
-        """路由一条告警；静默窗口内去重返回 None。"""
-        if not self._silence.should_send(alert, now):
-            return None
-        channel = self.channel_for(alert.severity)
+    def note(self, severity: Severity) -> Channel:
+        """记一次路由（不经静默去重）：自带状态机的调用方（采样翻转）走这里。
+
+        计数必须覆盖这条路径，否则最繁忙的告警来源在指标里永远是 0——
+        "有计数没人看"之外还有一种更坏的："计数看着有，其实漏了主路径"。
+        """
+        channel = self.channel_for(severity)
         self._counts[channel] += 1
         return channel
+
+    def route(self, alert: Alert, now: datetime) -> Channel | None:
+        """路由一条告警；静默窗口内去重返回 None（去重命中不计数）。"""
+        if not self._silence.should_send(alert, now):
+            return None
+        return self.note(alert.severity)
 
     @property
     def routed_counts(self) -> dict[Channel, int]:

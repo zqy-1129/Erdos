@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from app.core.config import Settings
 from app.core.topics import EVENTS_TOPIC
 from app.domain.alerts.ports import BusinessAlert
-from app.domain.alerts.severity import Severity, SilenceManager
+from app.domain.alerts.severity import Channel, Severity, SilenceManager
 from app.domain.monitoring.ports import AlertTransition
 from app.infra.alert_outlet import BrokerAlertOutlet
 from app.infra.alert_webhook import AlertWebhookDispatcher
@@ -151,6 +151,21 @@ async def test_each_tier_carries_its_oncall_channel(session_factory) -> None:
         ("P2", "message"),
     ]
     assert webhook.levels == [Severity.P0, Severity.P1, Severity.P2]
+
+
+async def test_dedupe_false_path_is_still_counted(session_factory) -> None:
+    """采样告警（dedupe=False）也要计入通道路由数。
+
+    回归点：`emit` 的非去重分支曾走 `AlertRouter.channel_for`（纯映射、不计数），
+    于是最繁忙的告警来源在 `routed_counts` 里永远是 0——指标看着有，其实漏了主路径。
+    """
+    outlet = BrokerAlertOutlet(session_factory, EventBroker(), RecordingWebhook())
+    now = datetime.now(UTC)
+
+    await outlet.emit(_alert(severity=Severity.P0), now, dedupe=False)
+    await outlet.emit(_alert(severity=Severity.P0), now + timedelta(seconds=1), dedupe=False)
+
+    assert outlet.routed_counts[Channel.FEISHU] == 2
 
 
 async def test_missing_webhook_config_still_publishes_event(session_factory) -> None:
