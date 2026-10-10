@@ -7,7 +7,7 @@
  * fetchImpl 可注入（测试与后续替换传输层）。
  */
 
-import { CloudApiError, parseJson, unwrapEnvelope } from "./envelope.ts";
+import { CloudApiError, SessionChangedError, parseJson, unwrapEnvelope } from "./envelope.ts";
 
 export type FetchLike = (
   input: string,
@@ -20,6 +20,8 @@ export type TokenProvider = () => Promise<string | null>;
 export interface CloudHttpOptions {
   baseUrl: string;
   getToken?: TokenProvider;
+  /** 登录态版本：取消跨会话响应与重试，避免旧 401 清除新账号。 */
+  getSessionRevision?: (() => number) | undefined;
   timeoutMs?: number;
   maxRetries?: number;
   retryBackoffMs?: number;
@@ -31,6 +33,7 @@ export interface CloudHttpOptions {
 export class CloudHttpClient {
   private readonly baseUrl: string;
   private readonly getToken: TokenProvider;
+  private readonly getSessionRevision?: () => number;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly retryBackoffMs: number;
@@ -40,6 +43,7 @@ export class CloudHttpClient {
   constructor(options: CloudHttpOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.getToken = options.getToken ?? (async () => null);
+    this.getSessionRevision = options.getSessionRevision;
     this.timeoutMs = options.timeoutMs ?? 10_000;
     this.maxRetries = options.maxRetries ?? 2;
     this.retryBackoffMs = options.retryBackoffMs ?? 400;
@@ -88,23 +92,30 @@ export class CloudHttpClient {
     parse?: (text: string, status: number) => T,
   ): Promise<T> {
     const attempts = this.maxRetries + 1;
+    const revision = this.getSessionRevision?.();
+    const requireCurrentSession = () => {
+      if (revision !== this.getSessionRevision?.()) throw new SessionChangedError();
+    };
     let lastError: unknown = null;
     for (let attempt = 0; attempt < attempts; attempt++) {
       if (attempt > 0) {
         await new Promise((r) => setTimeout(r, this.retryBackoffMs * 2 ** (attempt - 1)));
       }
       try {
+        requireCurrentSession();
         const headers: Record<string, string> = {
           accept: "application/json",
           ...((init.headers as Record<string, string> | undefined) ?? {}),
         };
         const token = await this.getToken();
+        requireCurrentSession();
         if (token) headers["authorization"] = `Bearer ${token}`;
         const response = await this.fetchImpl(this.baseUrl + path, {
           ...init,
           headers,
           signal: AbortSignal.timeout(this.timeoutMs),
         });
+        requireCurrentSession();
         if (response.status === 401 || response.status === 403) {
           try {
             this.onUnauthorized?.(response.status);
@@ -114,12 +125,15 @@ export class CloudHttpClient {
           throw new CloudApiError(null, response.status, `未授权（HTTP ${response.status}）`);
         }
         const text = await response.text();
+        requireCurrentSession();
         if (!response.ok && response.status >= 500) {
           // 5xx：可重试（服务端幂等语义兜底）
           throw new CloudApiError(null, response.status, `云端暂时不可用（HTTP ${response.status}）`);
         }
         return parse ? parse(text, response.status) : unwrapEnvelope<T>(parseJson(text, response.status), response.status);
       } catch (error) {
+        // 自身 401 清会话后仍保留鉴权错误；网络/5xx 失败先排除账号已切换。
+        if (!(error instanceof CloudApiError) || error.httpStatus >= 500) requireCurrentSession();
         lastError = error;
         if (error instanceof CloudApiError && error.httpStatus < 500) {
           throw error; // 4xx 业务/鉴权错误不重试

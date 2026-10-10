@@ -34,7 +34,7 @@ for (const metric of ["lines", "branches", "functions", "statements"]) {
   console.log("覆盖率 " + metric + ": " + value + "% / 门禁 80%");
   if (value < 80) failed = true;
 }
-for (const path of coverage.files().filter(p => /(?:task-controller|stage-accounting|checkout-session|credential-registry|problem-import|artifact-browser|commerce|content|preferences-store|update[\\/]controller)\.(?:ts)$/.test(p))) {
+for (const path of coverage.files().filter(p => /(?:engine-launch|task-controller|stage-accounting|checkout-session|credential-registry|problem-import|artifact-browser|commerce|content|preferences-store|update[\\/]controller)\.(?:ts)$/.test(p))) {
   if (coverage.fileCoverageFor(path).toSummary().lines.pct < 80) {
     console.error("模块行覆盖率未达标: " + path); failed = true;
   }

@@ -3,11 +3,12 @@
  *
  * 安全基线（客户端开发详细方案 §4.1 / 客户端架构 §5）：
  * - contextIsolation: true / sandbox: true / nodeIntegration: false；
- * - 导航与 window.open 一律拦截为外部浏览器（渲染层不出站到任意页）。
+ * - 仅自身页面允许导航；外部 HTTP(S) 链接交给系统浏览器，其余协议拒绝。
  */
 import { BrowserWindow, shell } from "electron";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { isAllowedSenderUrl, isAllowedExternalUrl } from "./ipc/guard.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -49,14 +50,15 @@ export function createMainWindow(options: WindowOptions): BrowserWindow {
 
   // 导航拦截：渲染层内禁止任意跳转，外部链接一律交给系统浏览器
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isAllowedExternalUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
-    const allowed = options.dev ? url.startsWith(options.devServerUrl) : url.startsWith("file://");
+    const allowed = isAllowedSenderUrl(url, { dev: options.dev, devServerUrl: options.devServerUrl,
+      rendererUrl: pathToFileURL(path.join(options.rendererDist, "index.html")).href });
     if (!allowed) {
       event.preventDefault();
-      void shell.openExternal(url);
+      if (isAllowedExternalUrl(url)) void shell.openExternal(url);
     }
   });
 

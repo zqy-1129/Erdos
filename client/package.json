@@ -22,9 +22,10 @@
     "demo:preflight": "node scripts/demo-preflight.mjs",
     "compat:check": "node scripts/compat-check.mjs",
     "verify:engine-version": "node scripts/verify-engine-version.mjs",
-    "pack": "npm run build && npm run verify:engine-version && electron-builder --config electron-builder.yml",
+    "pack": "npm run build && npm run verify:engine-version -- --require-resources && electron-builder --config electron-builder.yml",
     "test:coverage": "node scripts/coverage.mjs",
-    "test:integration": "node scripts/integration.mjs"
+    "test:integration": "node scripts/integration.mjs",
+    "test:coverage:integration": "node scripts/integration.mjs --coverage"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

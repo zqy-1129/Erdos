@@ -48,7 +48,7 @@ export default defineConfig({
     include: ["renderer/tests/**/*.test.{ts,tsx}"],
     coverage: {
       provider: "v8",
-      include: ["renderer/src/**/*.{ts,tsx}", "main/ipc/bridge.ts", "main/safe-storage-encryptor.ts", "main/update/updater.ts", "main/preload.ts", "main/index.ts"],
+      include: ["renderer/src/**/*.{ts,tsx}", "main/ipc/bridge.ts", "main/safe-storage-encryptor.ts", "main/update/updater.ts", "main/preload.ts", "main/index.ts", "main/window.ts"],
       exclude: ["renderer/src/bridges/web-bridge.ts"], // 开发演示代码在生产产物中被树摇除去，scan-demo-leak 单独守护
       reporter: ["json", "text"],
       reportsDirectory: "coverage/renderer",

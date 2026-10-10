@@ -9,7 +9,9 @@ CT-V2 增量后现行 10 方法 + 6 事件，待 10-10 冻结评审追认）。
 
 ## 1. 拉起方式
 
-主进程通过 `child_process.spawn` 拉起引擎子进程：
+开发态通过 `child_process.spawn` 拉起 Python 模块，工作目录为仓库根。Windows 默认
+`engine/.venv/Scripts/python.exe`，其他平台默认 `engine/.venv/bin/python`；开发态可通过
+`ERDOS_ENGINE_CMD` 覆盖解释器：
 
 ```
 spawn("python", ["-m", "engine"], {
@@ -17,6 +19,24 @@ spawn("python", ["-m", "engine"], {
   env: { ...process.env, ERDOS_ENGINE_MODE: "subprocess" },
 })
 ```
+
+正式安装包通过 `main/engine-launch.ts` 解析 `process.resourcesPath/engine` 中的已校验入口，
+参数为 `[]`，工作目录为入口所在目录；不使用开发解释器或 `ERDOS_ENGINE_CMD`。
+普通启动和打包预检共享同一完整性、版本与入口规则，缺资源时拒绝正式启动/打包。
+
+### W17 资源交接要求（2026-10-10）
+
+`client/resources/engine/` 应包含 PyInstaller onedir 完整产物、`version.txt` 和 `manifest.json`。
+清单格式为 `{ version: 1, engineVersion: "<engine/pyproject.toml 版本>", entrypoint: "engine.exe", files: { "engine.exe": "<64位sha256>", "version.txt": "<64位sha256>", ... } }`。
+所有运行依赖应登记到非空 `files`；路径为使用 `/` 的相对路径，拒绝父目录、绝对路径、
+Windows ADS、反斜杠、空路径段、末尾点/空格以及符号链接。`version.txt` 必须有哈希，内容
+与清单版本和客户端构建绑定版本一致。Windows 入口为清单内 `.exe`；只有一个根目录 `.exe`
+的旧清单允许省略 `entrypoint`，多个入口或嵌套入口应显式指定。
+
+`npm run pack` 强制资源存在。单独运行 `npm run verify:engine-version` 在开发期缺资源会
+明确报告跳过；发布核验应运行 `npm run verify:engine-version -- --require-resources`。
+哈希检查只读取清单内资源，时间复杂度 O(所列资源总字节数)，允许打包器额外产物。
+清单用于完整性检查，不能替代发布签名、可信更新源和安装/升级实机验收。
 
 ## 2. 通信通道
 

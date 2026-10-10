@@ -7,7 +7,8 @@
  * 令牌落盘（本地安全存储）在 SP3-4 接入；本模块默认内存存储。
  */
 
-import { CloudApiError } from "./envelope.ts";
+import { CloudApiError, SessionChangedError } from "./envelope.ts";
+export { SessionChangedError } from "./envelope.ts";
 import { CloudHttpClient, type FetchLike } from "./http.ts";
 
 /** 服务端双令牌视图（TokenPairView）。 */
@@ -153,6 +154,7 @@ export class SessionTokenProvider {
   private session: StoredSession | null = null;
   /** 并发轮换去重：同时到达的 getToken 共享同一次刷新。 */
   private rotation: Promise<string | null> | null = null;
+  private revision = 0;
 
   constructor(options: SessionOptions) {
     this.auth = options.auth;
@@ -165,15 +167,28 @@ export class SessionTokenProvider {
 
   /** 登录并登记会话（返回令牌集；供显式登录流程调用）。 */
   async login(username: string, password: string, deviceId?: string): Promise<TokenPair> {
+    const revision = this.beginSessionChange();
     const pair = await this.auth.login(username, password, deviceId ?? this.deviceId);
+    if (revision !== this.revision) throw new SessionChangedError();
     this.apply(pair, username);
     return pair;
   }
 
   /** 载入外部签发的令牌集（注册即登录等场景：服务端已返回令牌，不再重复走登录接口）。 */
-  adopt(pair: TokenPair, username: string): void {
+  adopt(pair: TokenPair, username: string, revision?: number): void {
+    if (revision !== undefined && revision !== this.revision) throw new SessionChangedError();
+    if (revision === undefined) this.beginSessionChange();
     this.apply(pair, username);
   }
+
+  /** 标记一次登录/注册意图，先前会话的刷新和登录响应不能覆盖它。 */
+  beginSessionChange(): number {
+    this.rotation = null;
+    return ++this.revision;
+  }
+
+  /** 账号会话版本；令牌正常轮换不改变它，登录、注册和退出会改变。 */
+  sessionRevision(): number { return this.revision; }
 
   /** 当前会话（含登录标识与签发时刻；会话恢复/视图回填用，null=未登录）。 */
   currentSession(): StoredSession | null {
@@ -188,9 +203,12 @@ export class SessionTokenProvider {
   /** 注销并清空会话（吊销失败原样抛出，本地会话已清）。 */
   async logout(): Promise<number> {
     const session = this.session;
-    this.clear();
-    if (!session) return 0;
-    return this.auth.logout(session.pair.refresh_token);
+    let storageError: unknown;
+    try { this.clear(); } catch (error) { storageError = error; }
+    // 本地写失败也必须尝试云端撤销；内存与迟到请求已先失效。
+    const revoked = session ? await this.auth.logout(session.pair.refresh_token) : 0;
+    if (storageError) throw storageError;
+    return revoked;
   }
 
   /** TokenProvider 适配：CloudHttpClient.getToken 可直接引用。 */
@@ -204,12 +222,14 @@ export class SessionTokenProvider {
 
   private apply(pair: TokenPair, username: string): StoredSession {
     const session: StoredSession = { pair, issued_at_ms: this.clock(), username };
-    this.session = session;
     this.store.save(session);
+    this.session = session;
+    this.rotation = null;
     return session;
   }
 
   private clear(): void {
+    this.beginSessionChange();
     this.session = null;
     this.store.save(null);
   }
@@ -230,24 +250,28 @@ export class SessionTokenProvider {
 
   private rotate(): Promise<string | null> {
     if (!this.rotation) {
-      this.rotation = this.doRotate().finally(() => {
-        this.rotation = null;
+      const rotation = this.doRotate().finally(() => {
+        if (this.rotation === rotation) this.rotation = null;
       });
+      this.rotation = rotation;
     }
     return this.rotation;
   }
 
   private async doRotate(): Promise<string | null> {
     const session = this.session;
+    const revision = this.revision;
     if (!session) return null;
     if (!this.expiring(session)) {
       return session.pair.access_token; // 等锁期间已被其它请求刷新
     }
     try {
       const pair = await this.auth.refresh(session.pair.refresh_token, this.deviceId);
+      if (this.session !== session || this.revision !== revision) throw new SessionChangedError();
       this.apply(pair, session.username); // 轮换保留登录标识
       return pair.access_token;
     } catch (error) {
+      if (this.session !== session || this.revision !== revision) throw new SessionChangedError();
       if (error instanceof CloudApiError && (error.httpStatus === 401 || error.httpStatus === 403)) {
         this.clear(); // 刷新令牌失效 → 会话终止，回退匿名
         return null;
