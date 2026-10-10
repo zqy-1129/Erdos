@@ -34,6 +34,15 @@ function resolveEnginePython(): string | null {
 
 const enginePython = resolveEnginePython();
 
+it("凭据读取失败后懒启动与重载都可再次重试，不停留于 spawning", async () => {
+  const host = new EngineHost({ command: "unused", args: [], cwd: repoRoot, home: tmpdir(),
+    key: () => { throw new Error("fixture credentials unavailable"); },
+    onEvent: () => {}, onStateChange: () => {}, onLog: () => {}, onProtocolError: () => {} });
+  assert.throws(() => host.ensureStarted(), /credentials/); assert.equal(host.currentState, "failed");
+  await assert.rejects(host.reloadKey(), /credentials/); assert.equal(host.currentState, "failed");
+  host.stop(); await assert.rejects(host.reloadKey(), /credentials/); assert.equal(host.currentState, "failed");
+});
+
 async function waitFor(fn: () => boolean, timeoutMs: number, label: string): Promise<void> {
   const start = Date.now();
   while (!fn()) {

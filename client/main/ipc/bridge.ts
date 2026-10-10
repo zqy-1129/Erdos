@@ -7,7 +7,7 @@
  * billing:export 经注入的落盘回调（原生保存对话框 + 写盘，见 main/save-export.ts）落盘。
  * keys:usage（F-002 用量估算）与 compliance:export（SP3-6 声明）经引擎留痕库读取接线
  * （见 main/engine-trail.ts）；历史通道经本地留痕 × 检查点库读取接线（见 main/local-history.ts），
- * 续跑复用既有 RPC（start_stage）；内容库暂为演示数据（前置 BE-19B 接口，后续批次接入）。
+ * 续跑复用既有 RPC（start_stage）；cloud 内容库读取服务端成员索引，演示数据仅在 demo 模式使用。
  *
  * keys → KeyVault（safeStorage 加密），telemetry → TelemetrySdk（白名单 + 隐私过滤）。
  * 明文 Key / 令牌永不出主进程。
@@ -19,10 +19,16 @@ import { dirname, join } from "node:path";
 
 import { BRIDGE_CHANNELS } from "../../shared/bridge-channels.ts";
 import type { RpcMethod, StageName } from "../../shared/ipc.ts";
-import { KeyVault, InMemorySecretStore, type SecretStore } from "../key-vault.ts";
+import { KeyVault, InMemorySecretStore, type SecretStore, type KeyEncryptor } from "../key-vault.ts";
+import { CredentialRegistry } from "../credential-registry.ts";
+import { PreferencesStore } from "../preferences-store.ts";
+import { TaskController } from "../task-controller.ts";
+import { CheckoutSession } from "../checkout-session.ts";
+import type { UpdateController } from "../update/controller.ts";
+import { ArtifactBrowser } from "../artifact-browser.ts";
+import type { ProblemImporter } from "../problem-import.ts";
 import { createPlatformEncryptor } from "../safe-storage-encryptor.ts";
 import type { TokenStore } from "../cloud/auth-client.ts";
-import { maskSecret } from "../secret-masker.ts";
 import { TelemetrySdk, type TelemetryUploader, type UploadResult } from "../telemetry/sdk.ts";
 import { keysTestOutcome, type KeyTestOutcome, type ProbeFn } from "./key-probe.ts";
 import { CloudAuthBridge, type AuthRuntime, type SessionView } from "./cloud-auth.ts";
@@ -39,6 +45,7 @@ import type { OfflineLedger } from "../entitlement/offline-ledger.ts";
 import type { FetchLike } from "../cloud/http.ts";
 import {
   complianceExportViewFromEngineTrail,
+  createEngineTrailSource,
   complianceSaveFromEngineTrail,
   readRecentTasks,
   readUsageEvents,
@@ -48,7 +55,7 @@ import {
   type RecentTask,
 } from "../engine-trail.ts";
 import { estimateUsage } from "../../shared/usage.ts";
-import { readLocalHistory, resolveResumeStage, type LocalHistoryTask } from "../local-history.ts";
+import { checkpointStageStatus, readLocalHistory, resolveResumeStage, type LocalHistoryTask } from "../local-history.ts";
 
 /** 四阶段顺序（演示事件注入方向；恢复定位见 local-history.ts，两者同序）。 */
 const STAGES = ["analysis", "modeling", "solving", "writing"];
@@ -80,6 +87,12 @@ export interface BridgeAuthOptions {
 
 /** 桥后端构造选项（FE-KEYIN 落库：密钥密文存储注入）。 */
 export interface BridgeBackendOptions {
+  updater?: UpdateController;
+  reloadModel?: () => Promise<void>;
+  modelBusy?: () => boolean;
+  problemImporter?: ProblemImporter;
+  /** 加密端口注入用于测试；运行时使用平台安全存储，禁止明文回退。 */
+  encryptor?: KeyEncryptor;
   /**
    * 密钥密文存储（通常为 SqliteSecretStore，见 main/sqlite-secret-store.ts）。
    * 未提供或为 null（驱动不可用降级路径）→ 回退 InMemorySecretStore（重启后需重录 Key）。
@@ -119,8 +132,16 @@ export interface BridgeBackendOptions {
 export type EngineInvokeFn = (method: RpcMethod, params: Record<string, unknown>) => Promise<unknown>;
 
 export class BridgeBackend {
-  private readonly keyVault: KeyVault;
-  private readonly keyMetas = new Map<string, { alias: string; baseUrl: string; masked: string; status: string }>();
+  private readonly artifacts: ArtifactBrowser | null;
+  private readonly updater: UpdateController | null;
+  private readonly reloadModel: (() => Promise<void>) | null;
+  private readonly modelBusy: () => boolean;
+  private modelDirty = false;
+  private readonly problemImporter: ProblemImporter | null;
+  private readonly tasks: TaskController | null = null;
+  private readonly checkout: CheckoutSession | null = null;
+  private readonly credentials: CredentialRegistry;
+  private readonly preferences: PreferencesStore;
   private readonly telemetry: TelemetrySdk;
   /** 云端正版鉴权（cloud 模式非空；demo/unconfigured 为 null）。 */
   private readonly cloudAuth: CloudAuthBridge | null = null;
@@ -139,13 +160,19 @@ export class BridgeBackend {
   /** 引擎调用转发（未接线时历史续跑 fail-closed 报错）。 */
   private readonly engineInvoke: EngineInvokeFn | null;
   private sessionUsername: string | null = null;
-  private activeKeyId: string | null = null;
   /** 引擎探测函数（FE-KEYIN/W12 接线：EngineHost.reloadKey → provider_test）。 */
   private probe: ProbeFn | null = null;
 
   constructor(options: BridgeBackendOptions = {}) {
-    const encryptor = createPlatformEncryptor((message) => console.warn(`[client] ${message}`));
-    this.keyVault = new KeyVault(encryptor, options.secretStore ?? new InMemorySecretStore());
+    this.updater = options.updater ?? null;
+    this.reloadModel = options.reloadModel ?? null;
+    this.modelBusy = options.modelBusy ?? (() => false);
+    this.problemImporter = options.problemImporter ?? null;
+    const encryptor = options.encryptor ?? createPlatformEncryptor((message) => console.warn(`[client] ${message}`));
+    const store = options.secretStore ?? new InMemorySecretStore();
+    const vault = new KeyVault(encryptor, store);
+    this.credentials = new CredentialRegistry(vault);
+    this.preferences = new PreferencesStore(store);
     const noopUploader: TelemetryUploader = {
       async upload(): Promise<UploadResult> {
         return { accepted: 0, rejected: 0, reasons: [] };
@@ -156,9 +183,12 @@ export class BridgeBackend {
     this.onSessionInvalidated = options.onSessionInvalidated ?? null;
     this.saveExport = options.saveExport ?? null;
     this.engineTrailDbPath = options.engineTrailDbPath ?? null;
+    this.artifacts = this.engineTrailDbPath && options.saveDeclaration ? new ArtifactBrowser({
+      home: dirname(this.engineTrailDbPath), source: createEngineTrailSource(this.engineTrailDbPath), save: options.saveDeclaration }) : null;
     this.saveDeclaration = options.saveDeclaration ?? null;
     this.engineInvoke = options.engineInvoke ?? null;
     const auth = options.auth ?? { runtime: { mode: "demo" } as AuthRuntime };
+    if (auth.runtime.mode === "cloud" && options.secretStore === null) throw new Error("本地账本无法持久化，已禁止付费任务；请恢复数据库后重启");
     if (auth.runtime.mode === "cloud" && (auth.fingerprint ?? "").trim()) {
       const cloudAuth = new CloudAuthBridge({
         baseUrl: auth.runtime.baseUrl,
@@ -172,6 +202,7 @@ export class BridgeBackend {
       this.sessionUsername = cloudAuth.currentView()?.username ?? null;
       // 业务通道（权益/账单）：复用同一登录态令牌；401/403 清会话回退匿名
       this.cloudBusiness = new CloudBusinessBridge({
+        resolveTaskId: execId => this.tasks?.taskForExec(execId) ?? "",
         baseUrl: auth.runtime.baseUrl,
         getToken: () => cloudAuth.getToken(),
         onUnauthorized: () => this.invalidateSession(),
@@ -180,6 +211,14 @@ export class BridgeBackend {
         fetchImpl: auth.fetchImpl,
       });
       this.authMode = "cloud";
+      this.checkout = new CheckoutSession({ commerce: this.cloudBusiness.commerce, vault,
+        account: () => this.cloudAuth?.signedIn() ? this.sessionUsername : null });
+      if (this.engineInvoke) {
+        this.tasks = new TaskController({ engine: this.engineInvoke, accounting: this.cloudBusiness.stageAccounting,
+          vault, account: () => this.cloudAuth?.signedIn() ? this.sessionUsername : null,
+          hasKey: () => this.getActiveKey() !== null,
+          checkpoint: (taskId, stage) => this.engineTrailDbPath ? checkpointStageStatus(this.checkpointsDbPath(), taskId, stage) : null });
+      }
     } else {
       // 契约要求注册必带指纹：cloud 模式缺指纹视为未配置（不发起半可用请求）
       this.authMode = auth.runtime.mode === "cloud" ? "unconfigured" : auth.runtime.mode;
@@ -196,15 +235,81 @@ export class BridgeBackend {
 
   /** 引擎首行注入用：返回当前激活 Key 的明文（仅内存，写毕即弃）。 */
   getActiveKey(): string | null {
-    if (this.activeKeyId === null) return null;
-    return this.keyVault.load(this.activeKeyId);
+    return this.credentials.active()?.key ?? null;
+  }
+
+  /** 模型坐标仅传给引擎进程；不需要将凭据明文写到环境文件。 */
+  getModelEnvironment(): Record<string, string> {
+    const active = this.credentials.active();
+    if (!active) return {};
+    return {
+      ERDOS_MODEL_BASE_URL: active.baseUrl,
+      ERDOS_MODEL_NAME: this.preferences.load().defaultModel || active.model,
+      ERDOS_MODEL_PROVIDER: active.provider,
+    };
+  }
+
+  /** 所有渲染层任务调用和历史续跑共用此入口，不能绕过阶段许可。 */
+  async invokeEngine(method: RpcMethod, params: Record<string, unknown>): Promise<unknown> {
+    if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error("引擎请求参数必须为对象");
+    if (!this.engineInvoke) throw new Error("引擎调用未接线");
+    if (["task_create", "start_stage"].includes(method) && this.modelDirty && this.reloadModel) {
+      if (this.modelBusy()) throw new Error("任务执行中不能更换模型配置");
+      await this.reloadModel(); this.modelDirty = false;
+    }
+    if (method === "provider_test") {
+      const config = this.credentials.active();
+      if (!config || params.base_url !== config.baseUrl || params.model !== config.model) throw new Error("仅允许检测已保存的模型配置");
+    }
+    if (this.authMode === "demo") return this.engineInvoke(method, params);
+    if (!this.tasks) throw new Error("云端服务未配置，无法启动任务");
+    return this.tasks.invoke(method, params);
+  }
+
+  private requireCloudBusiness(): CloudBusinessBridge {
+    if (!this.cloudBusiness || !this.cloudAuth?.signedIn()) throw new Error("请先登录并连接云端服务");
+    return this.cloudBusiness;
   }
 
   async handle(channel: string, payload: unknown): Promise<unknown> {
+    if (payload !== undefined && payload !== null && (typeof payload !== "object" || Array.isArray(payload))) throw new Error("请求参数必须为对象");
     const body = (payload ?? {}) as Record<string, unknown>;
+    if ([BRIDGE_CHANNELS.keysSave, BRIDGE_CHANNELS.keysActivate, BRIDGE_CHANNELS.keysDelete,
+         BRIDGE_CHANNELS.preferencesSave, BRIDGE_CHANNELS.keysTest].includes(channel as any) && this.modelBusy()) throw new Error("任务执行中不能更换或检测模型配置");
     switch (channel) {
+      case BRIDGE_CHANNELS.taskPending:
+        return this.tasks?.pending() ?? null;
+      case BRIDGE_CHANNELS.taskStatus:
+        if (!this.tasks) throw new Error("任务服务不可用");
+        return this.tasks.view(String(body.taskId ?? ""));
+      case BRIDGE_CHANNELS.artifactsList:
+      case BRIDGE_CHANNELS.artifactsPreview:
+      case BRIDGE_CHANNELS.artifactsSave:
+        if (!this.artifacts) throw new Error("本地产物读取或导出未接线");
+        if (channel === BRIDGE_CHANNELS.artifactsList) return this.artifacts.list(body.taskId);
+        if (channel === BRIDGE_CHANNELS.artifactsPreview) return this.artifacts.preview(body.taskId, body.id);
+        return this.artifacts.save(body.taskId, body.id);
+      case BRIDGE_CHANNELS.updateStatus:
+        if (!this.updater) throw new Error("更新服务不可用");
+        return this.updater.view();
+      case BRIDGE_CHANNELS.updateCheck:
+      case BRIDGE_CHANNELS.updateDownload:
+      case BRIDGE_CHANNELS.updateInstall:
+        if (!this.updater) throw new Error("更新服务不可用");
+        return this.updater.run(channel === BRIDGE_CHANNELS.updateCheck ? "check" : channel === BRIDGE_CHANNELS.updateDownload ? "download" : "install");
+      case BRIDGE_CHANNELS.taskImport:
+        if (!this.problemImporter) throw new Error("题面文件导入不可用，请手动粘贴题面");
+        return this.problemImporter.import();
       case BRIDGE_CHANNELS.authLogin:
         return this.login(body);
+      case BRIDGE_CHANNELS.authResetRequest:
+        if (!this.cloudAuth) throw new Error("密码重置需要连接真实云端账号服务");
+        return this.cloudAuth.requestPasswordReset(body.identifier);
+      case BRIDGE_CHANNELS.authResetConfirm: {
+        if (!this.cloudAuth) throw new Error("密码重置需要连接真实云端账号服务");
+        const accepted = await this.cloudAuth.confirmPasswordReset(body.token, body.password);
+        this.invalidateSession(); return accepted;
+      }
       case BRIDGE_CHANNELS.authRegister:
         return this.register(body);
       case BRIDGE_CHANNELS.authLogout:
@@ -212,13 +317,24 @@ export class BridgeBackend {
       case BRIDGE_CHANNELS.authSession:
         return this.sessionView();
       case BRIDGE_CHANNELS.keysList:
-        return this.keysList();
+        return this.credentials.list();
       case BRIDGE_CHANNELS.keysSave:
-        return this.keysSave(body);
+        this.modelDirty = true;
+        return this.credentials.save(body);
+      case BRIDGE_CHANNELS.keysActivate:
+        this.modelDirty = true;
+        this.credentials.activate(String(body["id"] ?? ""));
+        return { ok: true };
+      case BRIDGE_CHANNELS.preferencesGet:
+        return this.preferences.load();
+      case BRIDGE_CHANNELS.preferencesSave:
+        this.modelDirty = true;
+        return this.preferences.save(body);
       case BRIDGE_CHANNELS.keysTest:
         return this.keysTest(body);
       case BRIDGE_CHANNELS.keysDelete:
-        return this.keysDelete(body);
+        this.modelDirty = true;
+        return this.credentials.remove(String(body["id"] ?? ""));
       case BRIDGE_CHANNELS.keysUsage:
         return this.keysUsage();
       case BRIDGE_CHANNELS.billingOverview:
@@ -227,8 +343,18 @@ export class BridgeBackend {
         return this.billingLedger();
       case BRIDGE_CHANNELS.billingExport:
         return this.billingExport();
+      case BRIDGE_CHANNELS.billingProducts:
+        return this.authMode === "demo" ? [] : this.requireCloudBusiness().commerce.products();
+      case BRIDGE_CHANNELS.billingCreateOrder:
+        this.requireCloudBusiness();
+        return this.checkout!.create(body);
+      case BRIDGE_CHANNELS.billingPendingOrder:
+        this.requireCloudBusiness();
+        return this.checkout!.recover();
+      case BRIDGE_CHANNELS.billingOrder:
+        return this.requireCloudBusiness().commerce.order(body["orderId"]);
       case BRIDGE_CHANNELS.contentList:
-        return DEMO_CONTENT;
+        return this.authMode === "demo" ? DEMO_CONTENT : this.requireCloudBusiness().content.list();
       case BRIDGE_CHANNELS.historyList:
         return this.historyList();
       case BRIDGE_CHANNELS.historyResume:
@@ -316,29 +442,6 @@ export class BridgeBackend {
     return { username: name, expiresInMs: 900_000 };
   }
 
-  private keysList(): Array<{ id: string; alias: string; baseUrl: string; masked: string; status: string }> {
-    return [...this.keyMetas.entries()].map(([id, meta]) => ({
-      id,
-      alias: meta.alias,
-      baseUrl: meta.baseUrl,
-      masked: meta.masked,
-      status: meta.status,
-    }));
-  }
-
-  private keysSave(body: Record<string, unknown>): { ok: boolean } {
-    const alias = String(body["alias"] ?? "");
-    const key = String(body["key"] ?? "");
-    const baseUrl = String(body["baseUrl"] ?? "");
-    if (!key) return { ok: false };
-    const id = `k-${this.keyMetas.size + 1}`;
-    this.keyVault.save(id, key);
-    this.keyMetas.set(id, { alias, baseUrl, masked: maskSecret(key), status: "unknown" });
-    // 最近保存者为激活 Key：向导「保存并测试连通」即测刚保存的 Key（FE-KEYIN 语义）
-    this.activeKeyId = id;
-    return { ok: true };
-  }
-
   /**
    * Key 连通测试（keysTest 真实化）：
    * - 有引擎探测 → 先 reloadKey（以最新激活 Key 重启注入）再 provider_test；
@@ -346,33 +449,17 @@ export class BridgeBackend {
    * - 结果回写列表状态（ok/fail/unknown），供 keys 页展示。
    */
   private async keysTest(body: Record<string, unknown>): Promise<KeyTestOutcome> {
+    const active = this.credentials.active();
     const outcome = await keysTestOutcome({
-      key: String(body["key"] ?? ""),
-      baseUrl: String(body["baseUrl"] ?? ""),
-      model: body["model"] === undefined ? undefined : String(body["model"]),
+      key: active?.key ?? String(body["key"] ?? ""),
+      baseUrl: active?.baseUrl ?? String(body["baseUrl"] ?? ""),
+      model: active?.model ?? String(body["model"] ?? ""),
       probe: this.probe ?? undefined,
     });
-    if (this.activeKeyId !== null) {
-      const meta = this.keyMetas.get(this.activeKeyId);
-      if (meta && outcome.reason !== "invalid") {
-        meta.status = outcome.reason === "none" ? "ok" : outcome.reason === "unverified" ? "unknown" : "fail";
-      }
+    if (active && outcome.reason !== "invalid") {
+      this.credentials.mark(outcome.reason === "none" ? "ok" : outcome.reason === "unverified" ? "unknown" : "fail");
     }
     return outcome;
-  }
-
-  /**
-   * 删除 Key（FE-KEYIN W5）：密文与元数据一并清除。
-   * 删除的是当前激活 Key 时置空激活态并标记 requeue，UI 据此引导「任务恢复需重新配置 Key」。
-   */
-  private keysDelete(body: Record<string, unknown>): { ok: boolean; requeue: boolean } {
-    const id = String(body["id"] ?? "");
-    if (!id || !this.keyMetas.has(id)) return { ok: false, requeue: false };
-    this.keyVault.remove(id);
-    this.keyMetas.delete(id);
-    const requeue = this.activeKeyId === id;
-    if (requeue) this.activeKeyId = null;
-    return { ok: true, requeue };
   }
 
   /**
@@ -570,7 +657,7 @@ export class BridgeBackend {
     if (stage === null) {
       throw new Error(`任务已完成或无可恢复检查点：${taskId}`);
     }
-    await this.engineInvoke("start_stage", { task_id: taskId, stage });
+    await this.invokeEngine("start_stage", { task_id: taskId, stage });
     return { taskId, stage, resumable: true };
   }
 

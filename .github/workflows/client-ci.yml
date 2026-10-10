@@ -32,10 +32,8 @@ jobs:
           fi
       - name: ESLint
         run: npx eslint .
-      - name: Unit tests (node --test)
-        run: npm run test:unit
-      - name: Component tests (vitest)
-        run: npx vitest run
+      - name: Unit + component tests and coverage >=80%
+        run: npm run test:coverage
       - name: Build (renderer + main/preload)
         run: npm run build
       - name: Build artifact scan (demo leak / relative paths / CSP)

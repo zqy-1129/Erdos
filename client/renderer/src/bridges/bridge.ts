@@ -41,6 +41,8 @@ export interface KeyItemView {
   masked: string;
   /** 主进程侧连通状态缓存：unknown | ok | fail */
   status: "unknown" | "ok" | "fail";
+  model?: string;
+  active?: boolean;
 }
 
 export interface KeyTestResult {
@@ -64,6 +66,7 @@ export interface UsageEstimateView {
 }
 
 export interface BillingLedgerRow {
+  refundedPoints?: number;
   ts: string;
   action: string;
   stage: string;
@@ -93,6 +96,7 @@ export interface ContentItem {
   tags: string[];
   /** 案例合规提示标记（仅作参照）。 */
   referenceOnly: boolean;
+  complianceNote?: string;
 }
 
 export interface HistoryTask {

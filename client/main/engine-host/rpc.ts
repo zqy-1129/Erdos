@@ -102,9 +102,9 @@ export class EngineRpcClient {
       }
       let parsed: unknown;
       try {
-        parsed = JSON.parse(raw);
+        parsed = JSON.parse(maskText(raw));
       } catch {
-        this.callbacks.onProtocolError(new Error(`引擎 stdout 坏行（非 JSON）：${raw.slice(0, 80)}`));
+        this.callbacks.onProtocolError(new Error(`引擎 stdout 坏行（非 JSON）：${maskText(raw).slice(0, 80)}`));
         return;
       }
       this.dispatch(parsed as Record<string, unknown>);

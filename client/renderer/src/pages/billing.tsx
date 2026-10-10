@@ -15,6 +15,7 @@ import { useRemoteData } from "../components/use-remote.ts";
 import { VirtualList } from "../components/virtual-list.tsx";
 import { useStore } from "../storage/store.ts";
 import type { AppStores } from "../state/app-stores.ts";
+import { CheckoutPanel } from "../components/checkout-panel.tsx";
 
 /** 流水动作标签（对齐服务端 LedgerKind；未知类型回退原文，不猜测语义）。 */
 function actionLabel(action: string): string {
@@ -88,6 +89,7 @@ export function BillingPage(props: { stores: AppStores }): ReactNode {
   return (
     <div className="page">
       <h2>账单</h2>
+      <CheckoutPanel bridge={props.stores.bridge} onPaid={() => { overview.reload(); ledger.reload(); }} />
       {notice ? <div className="renew-notice">{notice}</div> : null}
       <div className="kpis">
         <div className="kpi">
@@ -128,7 +130,7 @@ export function BillingPage(props: { stores: AppStores }): ReactNode {
               <span className="mono">{row.ts.replace("T", " ").replace("Z", "")}</span>
               <span>{row.stage}</span>
               <span>{actionLabel(row.action)}</span>
-              <span className={row.points >= 0 ? "pos" : "neg"}>{row.points >= 0 ? `+${row.points}` : row.points}</span>
+              <span className={row.points >= 0 ? "pos" : "neg"}>{row.refundedPoints !== undefined ? `退还 ${row.refundedPoints}（净消耗 0）` : row.points >= 0 ? `+${row.points}` : row.points}</span>
               <span className="mono">{row.taskId}</span>
             </div>
           )}

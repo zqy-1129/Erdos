@@ -15,7 +15,7 @@ import { spawn, exec } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EngineRpcClient } from "./rpc.ts";
 import { injectFirstLine, INJECT_READY_TIMEOUT_MS } from "./inject.ts";
-import type { EngineEvent, InitializeResult, RpcMethod } from "../../shared/ipc.ts";
+import type { EngineEvent, GetStatusResult, InitializeResult, RpcMethod } from "../../shared/ipc.ts";
 
 export type EngineHostState =
   | "idle"
@@ -42,6 +42,8 @@ export interface EngineHostOptions {
   home: string;
   /** 懒加载 Key（spawn 时调用一次，写毕即弃）。 */
   key: () => string | null;
+  /** 每次启动时获取当前模型坐标，配置不写入全局或持久环境变量。 */
+  environment?: () => Record<string, string>;
   onEvent: (event: EngineEvent) => void;
   onStateChange: (state: EngineHostState) => void;
   /** 已脱敏的引擎 stderr 单行。 */
@@ -74,9 +76,11 @@ export class EngineHost {
 
   /** 懒启动：首次任务或用户显式触发才 spawn（冷启动不含引擎拉起）。 */
   ensureStarted(): void {
-    if (this.state === "idle" || this.state === "failed") {
+    if (["idle", "failed", "stopped"].includes(this.state)) {
+      this.userStopping = false;
       this.transition("spawning");
-      this.spawn();
+      try { this.spawn(); }
+      catch (error) { this.transition("failed"); throw error; }
     }
   }
 
@@ -88,7 +92,17 @@ export class EngineHost {
       this.transition("running");
     }
     this.resetIdleTimer();
-    return rpc.invoke<T>(method, params);
+    try {
+      const result = await rpc.invoke<T>(method, params);
+      if (method === "get_status") {
+        const task = (result as GetStatusResult).task;
+        this.transition(task && ["running", "paused"].includes(task.status) ? "running" : "ready");
+      } else if (method === "cancel") this.transition("ready");
+      return result;
+    } catch (error) {
+      if (method === "start_stage") this.transition("ready");
+      throw error;
+    }
   }
 
   /**
@@ -110,7 +124,8 @@ export class EngineHost {
     if (this.state === "stopped" || this.state === "crashed" || this.state === "failed") {
       this.userStopping = false;
       this.transition("spawning");
-      this.spawn();
+      try { this.spawn(); }
+      catch (error) { this.transition("failed"); throw error; }
       await this.awaitReady();
       return;
     }
@@ -118,7 +133,8 @@ export class EngineHost {
     await this.waitExit(RELOAD_EXIT_TIMEOUT_MS);
     this.userStopping = false; // 复位：旧进程退出已按用户停止处理，新进程参与看门狗
     this.transition("spawning");
-    this.spawn();
+    try { this.spawn(); }
+    catch (error) { this.transition("failed"); throw error; }
     await this.awaitReady();
   }
 
@@ -167,10 +183,12 @@ export class EngineHost {
 
   private spawn(): void {
     const { command, args, cwd, home, key } = this.options;
+    const injected = key();
+    const modelEnvironment = this.options.environment?.() ?? {};
     const child = spawn(command, args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ERDOS_ENGINE_HOME: home },
+      env: { ...process.env, ...modelEnvironment, ERDOS_ENGINE_HOME: home },
     }) as ChildProcessWithoutNullStreams;
     this.child = child;
 
@@ -189,7 +207,6 @@ export class EngineHost {
     const isCurrent = (): boolean => this.rpc === rpc;
 
     // 首行注入（Key 或空行），写毕即弃引用
-    const injected = key();
     injectFirstLine(child, injected);
 
     // 就绪判定：initialize（CT-V2）成功 → ready；失败回退 get_status；超时 crashed
@@ -314,7 +331,8 @@ export class EngineHost {
     this.restartTimer = setTimeout(() => {
       if (this.userStopping || this.state === "stopped") return;
       this.transition("spawning");
-      this.spawn();
+      try { this.spawn(); }
+      catch { this.transition("failed"); this.options.onLog("[engine-host] 引擎配置不可用，请核对本地凭据"); }
     }, delay);
   }
 

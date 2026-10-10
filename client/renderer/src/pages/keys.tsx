@@ -52,14 +52,13 @@ export function KeysPage(props: { stores: AppStores }): ReactNode {
         alias: wizard.alias,
         baseUrl: wizard.baseUrl,
         key: wizard.key,
+        model: wizard.model,
       });
       dispatch({ type: "saved" });
       const result = await props.stores.bridge.invoke<KeyTestResult>(BRIDGE_CHANNELS.keysTest, {
-        baseUrl: wizard.baseUrl,
-        key: wizard.key,
-        model: wizard.model,
       });
       dispatch({ type: "test-result", result });
+      remote.reload();
     } catch (error) {
       dispatch({ type: "fail", message: error instanceof Error ? error.message : String(error) });
     }
@@ -136,11 +135,15 @@ export function KeysPage(props: { stores: AppStores }): ReactNode {
           <tbody>
             {remote.data.map((item) => (
               <tr key={item.id}>
-                <td>{item.alias}</td>
+                <td>{item.alias}{item.active ? "（使用中）" : ""}<div className="muted">{item.model}</div></td>
                 <td>{item.baseUrl}</td>
                 <td className="mono">{item.masked}</td>
                 <td>{item.status === "ok" ? "✓ 正常" : item.status === "fail" ? "✗ 失败" : "未测试"}</td>
                 <td>
+                  {!item.active ? <button type="button" className="btn" onClick={async () => {
+                    try { await props.stores.bridge.invoke(BRIDGE_CHANNELS.keysActivate, { id: item.id }); remote.reload(); }
+                    catch (error) { window.alert(error instanceof Error ? error.message : String(error)); }
+                  }}>使用此配置</button> : null}
                   <button
                     type="button"
                     className="btn btn-danger"
@@ -186,7 +189,7 @@ export function KeysPage(props: { stores: AppStores }): ReactNode {
               />
             </label>
             <label>
-              模型名（探测用，可选）
+              模型名
               <input
                 value={wizard.model}
                 placeholder="如 deepseek-chat"
@@ -197,7 +200,7 @@ export function KeysPage(props: { stores: AppStores }): ReactNode {
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={!wizard.alias || !wizard.baseUrl || !wizard.key}
+                disabled={!wizard.alias || !wizard.baseUrl || !wizard.key || !wizard.model}
                 onClick={() => void runSaveAndTest()}
               >
                 保存并测试连通

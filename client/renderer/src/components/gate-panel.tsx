@@ -9,6 +9,7 @@ import { useState, type ReactNode } from "react";
 
 export interface GatePanelProps {
   gate: string;
+  ready?: boolean;
   reason: string;
   /** 该门禁已失败次数（DEC-008 计数口径）。 */
   retries: number;
@@ -42,7 +43,7 @@ export function GatePanel(props: GatePanelProps): ReactNode {
   return (
     <div className="gate-panel">
       <div className="gate-panel-head">
-        <b>门禁未通过：{props.gate}</b>
+        <b>{props.ready ? "阶段待审批" : "门禁未通过"}：{props.gate}</b>
         <span className="gate-retry">重试 {props.retries}/{maxRetries}</span>
       </div>
       <div className="gate-reason">{props.reason}</div>

@@ -26,6 +26,7 @@ import { resolveAuthRuntime } from "./ipc/cloud-auth.ts";
 import { verifyEngineDir } from "./tamper-check.ts";
 import { resolveChannel } from "./update/policy.ts";
 import { setupAutoUpdate } from "./update/updater.ts";
+import { ProblemImporter } from "./problem-import.ts";
 import { BRIDGE_CHANNELS } from "../shared/bridge-channels.ts";
 import {
   ENGINE_IPC_CHANNELS,
@@ -125,6 +126,23 @@ function registerBridgeIpc(): void {
   }
   console.log(`[client] 离线账本落盘：${offlineLedger ? "已启用（加密）" : "未启用（内存）"}`);
   bridgeBackend = new BridgeBackend({
+    updater: setupAutoUpdate({ channel: resolveChannel(process.env, isDev), version: app.getVersion(),
+      packaged: app.isPackaged, feedUrl: process.env.ERDOS_UPDATE_URL, onLog: line => console.log(line),
+      canInstall: async () => {
+        if (!engineHost || engineHost.currentState === "idle") return true;
+        const status = await engineHost.invoke<import("../shared/ipc.ts").GetStatusResult>("get_status", {});
+        return !status.task || !["running", "paused"].includes(status.task.status);
+      } }),
+    reloadModel: async () => { await engineHost?.reloadKey(); },
+    modelBusy: () => engineHost?.currentState === "running" || engineHost?.currentState === "spawning",
+    problemImporter: new ProblemImporter({
+      ocrCachePath: path.join(app.getPath("userData"), "ocr"),
+      select: async () => {
+        const result = await dialog.showOpenDialog({ title: "导入题面", properties: ["openFile"],
+          filters: [{ name: "题面文件", extensions: ["txt", "md", "pdf", "docx", "png", "jpg", "jpeg"] }] });
+        return result.canceled ? null : result.filePaths[0] ?? null;
+      },
+    }),
     secretStore,
     auth: { runtime, fingerprint, platform: process.platform, sessionStore, entitlementStore, entitlementLedger: offlineLedger },
     // billing:export 落盘：原生保存对话框 + 写盘（取消不视为失败；写盘异常由桥归一为可读错误）
@@ -168,6 +186,7 @@ function registerEngineIpc(): void {
     home,
     // W5：spawn 时从 key-vault 取激活 Key 明文注入（无则空行 → 无 Key 模式，FakeLLM）
     key: () => bridgeBackend?.getActiveKey() ?? null,
+    environment: () => bridgeBackend?.getModelEnvironment() ?? {},
     onEvent: (event) => {
       mainWindow?.webContents.send("engine:event", event);
     },
@@ -190,7 +209,8 @@ function registerEngineIpc(): void {
         return Promise.reject(new Error("非法调用来源：已拒绝"));
       }
       if (!engineHost) return Promise.reject(new Error("引擎宿主未初始化"));
-      return engineHost.invoke(method, (params ?? {}) as Record<string, unknown>);
+      if (!bridgeBackend) return Promise.reject(new Error("桥后端未初始化"));
+      return bridgeBackend.invokeEngine(method, (params ?? {}) as Record<string, unknown>);
     });
   }
 }
@@ -231,11 +251,6 @@ function boot(): void {
     return engineHost.invoke<ProviderTestResult>("provider_test", { ...params });
   });
 
-  // F-102 自动更新：渠道门禁（preview/dev 禁用）+ electron-updater（latest.yml）
-  setupAutoUpdate({
-    channel: resolveChannel(process.env, isDev),
-    onLog: (line) => console.log(line),
-  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -283,7 +298,10 @@ if (process.env.ERDOS_SMOKE === "1") {
         mainWindow.focus();
       }
     });
-    void app.whenReady().then(boot);
+    void app.whenReady().then(boot).catch(() => {
+      dialog.showErrorBox("客户端初始化失败", "本地安全存储或运行服务不可用，请核对系统加密服务与本地数据后重试。");
+      app.exit(1);
+    });
     app.on("before-quit", () => {
       engineHost?.stop();
     });

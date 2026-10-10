@@ -7,12 +7,15 @@
  * - 渲染层经 window.erdos 访问，通道名全部引用 shared/ipc.ts 常量（禁字面量）。
  */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { assertBridgeChannel } from "../shared/preload-policy.ts";
 
 const erdosBridge = {
   invoke<T = unknown>(channel: string, payload?: unknown): Promise<T> {
+    assertBridgeChannel(channel, "invoke");
     return ipcRenderer.invoke(channel, payload) as Promise<T>;
   },
   subscribe(channel: string, handler: (payload: unknown) => void): () => void {
+    assertBridgeChannel(channel, "subscribe");
     const listener = (_event: IpcRendererEvent, payload: unknown): void => {
       handler(payload);
     };

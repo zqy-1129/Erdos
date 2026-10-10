@@ -112,6 +112,21 @@ export class AuthClient {
     });
     return Number(value["revoked"] ?? 0);
   }
+
+  /** 渠道发送令牌，客户端只显示受理状态，不泄露账号是否存在。 */
+  async requestPasswordReset(identifier: unknown): Promise<{ accepted: true }> {
+    if (typeof identifier !== "string" || identifier.trim().length < 3 || identifier.length > 255) throw new Error("请输入有效邮箱或手机号");
+    return this.resetAccepted("/v1/auth/password/reset/request", { identifier: identifier.trim() });
+  }
+  async confirmPasswordReset(token: unknown, password: unknown): Promise<{ accepted: true }> {
+    if (typeof token !== "string" || token.length < 16 || token.length > 128 || typeof password !== "string" || password.length < 8 || password.length > 128) throw new Error("重置令牌须为16~128位，新密码须为8~128位");
+    return this.resetAccepted("/v1/auth/password/reset/confirm", { reset_token: token, new_password: password });
+  }
+  private async resetAccepted(path: string, body: unknown): Promise<{ accepted: true }> {
+    const raw = await this.http.post<{ accepted: boolean }>(path, body);
+    if (raw?.accepted !== true) throw new Error("密码重置响应无效，请重试");
+    return { accepted: true };
+  }
 }
 
 export interface SessionOptions {

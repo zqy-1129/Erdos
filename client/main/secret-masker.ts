@@ -9,7 +9,7 @@
 
 /** 常见 Key/Token 模式（正则）。 */
 const KEY_PATTERNS: RegExp[] = [
-  /sk-[A-Za-z0-9_-]{8,}/g, // OpenAI 风格
+  /sk-(?![A-Za-z0-9_-]*\.\.\.)[A-Za-z0-9._-]{8,}/g, // 含点分段的兼容端点 Key；排除已脱敏形式
   /Bearer\s+[A-Za-z0-9._-]{8,}/g, // Bearer token
   /AKIA[0-9A-Z]{16}/g, // AWS Access Key
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}/g, // 裸 JWT（三段点分）

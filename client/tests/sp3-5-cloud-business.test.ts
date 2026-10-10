@@ -211,6 +211,13 @@ describe("视图映射与形状校验", () => {
       { ts: "2026-10-08T12:00:00Z", action: "reserve", stage: "", points: -5, taskId: "" },
     );
   });
+  it("服务端同一预扣行迁移为确认或退款，净消耗不重复记账", () => {
+    const row = { exec_id: "e1", delta: -30, kind: "reserve", stage: "modeling", created_at: "2026-10-08T12:00:00Z" };
+    assert.equal(ledgerRowOf({ ...row, status: "confirmed" }).action, "confirm");
+    assert.equal(ledgerRowOf({ ...row, status: "confirmed" }).points, -30);
+    const refunded = ledgerRowOf({ ...row, status: "refunded" });
+    assert.equal(refunded.action, "refund"); assert.equal(refunded.points, 0); assert.equal(refunded.refundedPoints, 30);
+  });
 
   it("权益视图：无快照=empty 零态；已验证快照=ready + 双余额 + 宽限到期", async () => {
     let now = BASE;
