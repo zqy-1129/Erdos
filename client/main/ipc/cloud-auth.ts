@@ -180,6 +180,15 @@ export interface CloudAuthOptions {
 
 /** 云端正版鉴权桥：登录/注册/注销 + 会话查询（BridgeBackend 云模式使用）。 */
 export class CloudAuthBridge {
+  async requestPasswordReset(identifier: unknown): Promise<{ accepted: true }> {
+    try { return await this.auth.requestPasswordReset(identifier); } catch (error) { throw classifyAuthError(error); }
+  }
+  async confirmPasswordReset(token: unknown, password: unknown): Promise<{ accepted: true }> {
+    try {
+      const accepted = await this.auth.confirmPasswordReset(token, password);
+      this.clearSession(); return accepted;
+    } catch (error) { throw classifyAuthError(error); }
+  }
   private readonly auth: AuthClient;
   private readonly tokens: SessionTokenProvider;
   private readonly fingerprint: string;

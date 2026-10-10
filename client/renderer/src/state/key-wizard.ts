@@ -45,7 +45,7 @@ export function keyWizardReducer(state: KeyWizardState, action: KeyWizardAction)
     case "save":
       return { ...state, stage: "saving", error: null };
     case "saved":
-      return { ...state, stage: "testing" };
+      return { ...state, stage: "testing", key: "" };
     case "testing":
       return { ...state, stage: "testing" };
     case "test-result":

@@ -75,6 +75,7 @@ export function ContentPage(props: { stores: AppStores }): ReactNode {
                 {item.title}
                 {item.referenceOnly ? <span className="ref-only">仅作参照</span> : null}
               </div>
+              {item.complianceNote ? <p className="compliance-tip">{item.complianceNote}</p> : null}
               <div className="content-tags">
                 {item.tags.map((tag) => (
                   <span key={tag} className="tag-ghost">{tag}</span>

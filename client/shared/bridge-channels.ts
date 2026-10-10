@@ -11,6 +11,8 @@ export const BRIDGE_CHANNELS = {
   authLogout: "auth:logout",
   /** 会话恢复查询（启动时读持久化会话；返回 SessionView | null）。 */
   authSession: "auth:session",
+  authResetRequest: "auth:reset_request",
+  authResetConfirm: "auth:reset_confirm",
   /** 会话失效下发（主进程业务 401/403 清会话后推送；渲染层回登录页，非 handle 通道）。 */
   authSessionInvalidated: "auth:session-invalidated",
   // Key 管家
@@ -19,10 +21,27 @@ export const BRIDGE_CHANNELS = {
   keysTest: "keys:test",
   keysUsage: "keys:usage",
   keysDelete: "keys:delete",
+  keysActivate: "keys:activate",
+  preferencesGet: "preferences:get",
+  preferencesSave: "preferences:save",
+  taskImport: "task:import",
+  taskPending: "task:pending",
+  taskStatus: "task:status",
+  artifactsList: "artifacts:list",
+  artifactsPreview: "artifacts:preview",
+  artifactsSave: "artifacts:save",
   // 账单
   billingOverview: "billing:overview",
   billingLedger: "billing:ledger",
   billingExport: "billing:export",
+  billingProducts: "billing:products",
+  billingCreateOrder: "billing:create_order",
+  billingOrder: "billing:order",
+  billingPendingOrder: "billing:pending_order",
+  updateStatus: "update:status",
+  updateCheck: "update:check",
+  updateDownload: "update:download",
+  updateInstall: "update:install",
   // 内容库
   contentList: "content:list",
   // 历史任务

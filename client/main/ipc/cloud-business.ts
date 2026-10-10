@@ -18,6 +18,9 @@ import { createCloudEntitlementService } from "../cloud/entitlement-cloud.ts";
 import type { EntitlementService, EntitlementStateStore } from "../entitlement/service.ts";
 import type { OfflineLedger } from "../entitlement/offline-ledger.ts";
 import type { EntitlementStatus } from "../entitlement/types.ts";
+import { CloudStageAccounting } from "../cloud/stage-accounting.ts";
+import { CloudCommerceClient } from "../cloud/commerce.ts";
+import { CloudContentClient } from "../cloud/content.ts";
 
 // ---------------------------------------------------------------------------
 // 桥视图（渲染层同形；主进程归一，渲染层不感知云端信封）
@@ -42,6 +45,7 @@ export interface BillingOverviewView {
 
 /** 积分流水行（渲染层 BillingLedgerRow）。 */
 export interface BillingLedgerRowView {
+  refundedPoints?: number;
   ts: string;
   action: string;
   stage: string;
@@ -86,6 +90,7 @@ export interface LedgerItem {
   exec_id: string;
   delta: number;
   kind: string;
+  status?: string;
   stage: string | null;
   created_at: string;
 }
@@ -154,6 +159,7 @@ export function parseLedgerPage(value: unknown): LedgerPage {
       exec_id: raw["exec_id"],
       delta: raw["delta"],
       kind: raw["kind"],
+      ...(typeof raw["status"] === "string" ? { status: raw["status"] } : {}),
       stage: (raw["stage"] as string | null | undefined) ?? null,
       created_at: raw["created_at"],
     };
@@ -209,11 +215,13 @@ export function billingOverviewOf(
  * 不可冒充任务号）；契约补 task_id 后回填（见交付报告遗留项）。
  */
 export function ledgerRowOf(item: LedgerItem): BillingLedgerRowView {
+  const refunded = item.kind === "reserve" && item.status === "refunded";
   return {
     ts: normalizeIso(item.created_at),
-    action: item.kind,
+    action: refunded ? "refund" : item.kind === "reserve" && item.status === "confirmed" ? "confirm" : item.kind,
     stage: item.stage ?? "",
-    points: item.delta,
+    points: refunded ? 0 : item.delta,
+    ...(refunded ? { refundedPoints: Math.abs(item.delta) } : {}),
     taskId: "",
   };
 }
@@ -223,6 +231,7 @@ export function ledgerRowOf(item: LedgerItem): BillingLedgerRowView {
 // ---------------------------------------------------------------------------
 
 export interface CloudBusinessOptions {
+  resolveTaskId?: (execId: string) => string;
   baseUrl: string;
   /** 令牌提供者（登录态；缺省匿名）。 */
   getToken?: (() => Promise<string | null>) | undefined;
@@ -242,11 +251,16 @@ export interface CloudBusinessOptions {
 
 /** 云端业务桥：权益 / 账单真实数据（BridgeBackend 云模式 + 已登录时使用）。 */
 export class CloudBusinessBridge {
+  private readonly resolveTaskId: (execId: string) => string;
+  readonly stageAccounting: CloudStageAccounting;
+  readonly commerce: CloudCommerceClient;
+  readonly content: CloudContentClient;
   private readonly http: CloudHttpClient;
   private readonly entitlementService: EntitlementService;
   private readonly clock: () => number;
 
   constructor(options: CloudBusinessOptions) {
+    this.resolveTaskId = options.resolveTaskId ?? (() => "");
     this.clock = options.clock ?? (() => Date.now());
     this.http = new CloudHttpClient({
       baseUrl: options.baseUrl,
@@ -269,6 +283,9 @@ export class CloudBusinessBridge {
       timeoutMs: options.timeoutMs,
       maxRetries: options.maxRetries,
     });
+    this.stageAccounting = new CloudStageAccounting(this.http, this.entitlementService, undefined, this.clock);
+    this.commerce = new CloudCommerceClient(this.http);
+    this.content = new CloudContentClient(this.http);
   }
 
   /**
@@ -321,7 +338,7 @@ export class CloudBusinessBridge {
   async billingLedger(): Promise<BillingLedgerRowView[]> {
     return this.guard(async () => {
       const page = parseLedgerPage(await this.http.get("/v1/points/ledger?limit=50"));
-      return page.items.map(ledgerRowOf);
+      return page.items.map(item => ({ ...ledgerRowOf(item), taskId: this.resolveTaskId(item.exec_id) }));
     });
   }
 

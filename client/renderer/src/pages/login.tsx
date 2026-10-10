@@ -7,6 +7,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { loginAction, registerAction, type AppStores } from "../state/app-stores.ts";
 import { useStore } from "../storage/store.ts";
+import { PasswordResetPanel } from "../components/password-reset-panel.tsx";
 
 export function LoginPage(props: { stores: AppStores }): ReactNode {
   const session = useStore(props.stores.session);
@@ -70,6 +71,7 @@ export function LoginPage(props: { stores: AppStores }): ReactNode {
             注册并登录
           </button>
         </div>
+        <PasswordResetPanel bridge={props.stores.bridge} />
         {/* 禁用态原因可见（试用反馈：注册按钮灰置无提示，用户不知因密码不足 8 位） */}
         {username !== "" && password !== "" && password.length < 8 ? (
           <p className="login-hint">注册要求：密码至少 8 位，且同时包含字母与数字（例如 Test1234）。</p>

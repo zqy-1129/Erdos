@@ -139,3 +139,8 @@ export function resolveResumeStage(checkpointsDbPath: string, taskId: string): S
   if (stageStates === undefined || stageStates.size === 0) return null;
   return deriveResumeStage(stageStates);
 }
+
+/** 只读门禁提交状态，用于崩溃后的扣费确认；查询失败必须阻止结算。 */
+export function checkpointStageStatus(dbPath: string, taskId: string, stage: StageName): string | null {
+  return readCheckpointData(dbPath).stages.get(taskId)?.get(stage) ?? null;
+}

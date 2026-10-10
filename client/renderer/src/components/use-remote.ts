@@ -21,7 +21,7 @@ function classify(error: unknown): { message: string; kind: RemoteErrorKind } {
   return { message, kind };
 }
 
-export function useRemoteData<T>(loader: () => Promise<T>): RemoteData<T> {
+export function useRemoteData<T>(loader: () => Promise<T>, dependencies: readonly unknown[] = []): RemoteData<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<{ message: string; kind: RemoteErrorKind } | null>(null);
@@ -47,7 +47,7 @@ export function useRemoteData<T>(loader: () => Promise<T>): RemoteData<T> {
     return () => {
       cancelled = true;
     };
-  }, [tick]);
+  }, [tick, ...dependencies]);
 
   return { data, loading, error: error?.message ?? null, errorKind: error?.kind ?? null, reload };
 }

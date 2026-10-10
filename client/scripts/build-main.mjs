@@ -16,7 +16,7 @@ const shared = {
   bundle: true,
   platform: "node",
   target: "node22",
-  external: ["electron"], // 由 Electron 运行时提供
+  external: ["electron", "pdfjs-dist", "tesseract.js"], // 解析器保留运行时 worker/资源路径
   logLevel: "info",
 };
 

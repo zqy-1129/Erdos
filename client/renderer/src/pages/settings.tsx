@@ -3,47 +3,59 @@
  * 登出即回登录页；错误以可读形式展示。
  */
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { BRIDGE_CHANNELS } from "../bridges/bridge.ts";
+import { useRemoteData } from "../components/use-remote.ts";
+import type { ClientPreferences } from "../../../shared/preferences.ts";
 import { navigate } from "../router.tsx";
 import { logoutAction, type AppStores } from "../state/app-stores.ts";
 import { useStore } from "../storage/store.ts";
+import { UpdatePanel } from "../components/update-panel.tsx";
 
 export function SettingsPage(props: { stores: AppStores }): ReactNode {
   const session = useStore(props.stores.session);
-  const [model, setModel] = useState("deepseek-chat");
-  const [lang, setLang] = useState("zh-CN");
+  const remote = useRemoteData<ClientPreferences>(() => props.stores.bridge.invoke(BRIDGE_CHANNELS.preferencesGet));
+  const [model, setModel] = useState("");
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { if (remote.data) setModel(remote.data.defaultModel); }, [remote.data]);
+  const save = async () => {
+    setSaving(true); setSaved(false); setError(null);
+    try {
+      await props.stores.bridge.invoke(BRIDGE_CHANNELS.preferencesSave, { defaultModel: model, language: "zh-CN" });
+      setSaved(true);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setSaving(false); }
+  };
 
   return (
     <div className="page">
       <h2>设置</h2>
+      <UpdatePanel bridge={props.stores.bridge} />
       <div className="form-block">
         <label>
           默认模型
-          <select value={model} onChange={(e) => { setModel(e.target.value); setSaved(false); }}>
-            <option value="deepseek-chat">DeepSeek-V3（对话/推理均衡）</option>
-            <option value="deepseek-reasoner">DeepSeek-R1（深度推理）</option>
-          </select>
+          <input value={model} maxLength={128} placeholder="留空使用 Key 管理中的模型" onChange={(e) => { setModel(e.target.value); setSaved(false); }} />
         </label>
         <label>
           界面语言
-          <select value={lang} onChange={(e) => { setLang(e.target.value); setSaved(false); }}>
+          <select value="zh-CN" disabled>
             <option value="zh-CN">简体中文</option>
-            <option value="en">English</option>
           </select>
         </label>
         <div>
-          <button type="button" className="btn btn-primary" onClick={() => setSaved(true)}>
+          <button type="button" className="btn btn-primary" disabled={saving} onClick={() => void save()}>
             保存偏好
           </button>
           {saved ? <span className="ok-text">已保存</span> : null}
+          {error || remote.error ? <p className="form-error" role="alert">{error ?? remote.error}</p> : null}
         </div>
       </div>
 
       <div className="form-block">
         <h3>关于</h3>
-        <p className="muted">版本：0.1.0（开发模式）</p>
-        <p className="muted">数据目录：%APPDATA%/erdos（本地留痕与密钥密文存储于此）</p>
+        <p className="muted">本地留痕与加密凭据保存在系统应用数据目录。</p>
         <p className="muted" data-testid="boot-metrics">
           冷启动耗时：{(globalThis as { __erdosBoot?: { appReadyMs(): number | null } }).__erdosBoot?.appReadyMs() ?? "—"} ms（目标 &lt; 3000ms）
         </p>

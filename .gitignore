@@ -31,6 +31,7 @@ draft_*/
 # Node/客户端依赖产物
 node_modules/
 client/dist/
+client/coverage/
 *.tsbuildinfo
 # 便携版 PostgreSQL（SP2-8 PG 压测环境，用完即删）
 .pg/

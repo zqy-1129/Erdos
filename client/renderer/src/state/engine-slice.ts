@@ -186,7 +186,7 @@ export function applyStatusSnapshot(state: EngineViewState, status: GetStatusRes
     ...state,
     taskId: task?.task_id ?? orch?.task_id ?? state.taskId,
     stage: task?.stage ?? orch?.current_stage ?? state.stage,
-    running: status.engine === "running",
+    running: task ? task.status === "running" : status.engine === "running",
   };
 }
 
