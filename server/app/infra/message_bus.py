@@ -10,6 +10,7 @@
 """
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -17,6 +18,8 @@ from datetime import datetime
 from typing import Any
 
 from app.core.clock import utc_now
+
+logger = logging.getLogger("erdos.bus")
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +41,13 @@ class MessageBus:
     def __init__(self) -> None:
         self._subscribers: dict[str, list[MessageHandler]] = {}
         self._lock = asyncio.Lock()
+        # 按 topic 累计的消费者异常数（键空间 = 已注册 topic 数，天然有界）
+        self._delivery_failures: dict[str, int] = {}
+
+    @property
+    def delivery_failures(self) -> dict[str, int]:
+        """各 topic 的消费者异常计数：长驻进程里必须可观测，不能只有日志。"""
+        return dict(self._delivery_failures)
 
     async def publish(
         self, topic: str, payload: Mapping[str, Any], message_id: str | None = None
@@ -59,8 +69,16 @@ class MessageBus:
             try:
                 await handler(message)
             except Exception:
-                # 至少一次投递：单个消费者失败不阻断其它消费者；
-                # 失败重试/死信由生产 MQ 负责（当前进程内实现记录日志即可）。
+                # 至少一次投递：单个消费者失败不阻断其它消费者；失败重试/死信由生产 MQ
+                # 负责。但"不阻断"不等于"不说"——静默丢弃会让看板停更而无迹可查，
+                # 所以记日志并计数（计数有界，按 topic 累计）。
+                self._delivery_failures[topic] = self._delivery_failures.get(topic, 0) + 1
+                logger.exception(
+                    "消息消费者异常：topic=%s handler=%s message_id=%s",
+                    topic,
+                    getattr(handler, "__qualname__", repr(handler)),
+                    message.message_id,
+                )
                 continue
         return message
 

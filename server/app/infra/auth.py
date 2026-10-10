@@ -16,6 +16,7 @@ from typing import Any, Protocol
 
 import bcrypt
 import jwt
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -136,7 +137,11 @@ class Ed25519TokenManager:
                 issuer=self._issuer,
                 options={"require": ["exp", "sub", "iat"]},
             )
-        except jwt.PyJWTError:
+        except jwt.PyJWTError as exc:
+            # 令牌无效/过期/kid 不存在都映射为"未鉴权"，这是接口契约；热路径不记 INFO
+            # （一个坏令牌会刷爆日志），但 DEBUG 级要能查到原因，否则"密钥配错了"和
+            # "用户令牌过期了"在运维眼里一模一样。
+            logger.debug("令牌校验未通过：%s", exc)
             return None
         roles = tuple(claims.get("roles") or ())
         return AuthIdentity(
@@ -333,6 +338,8 @@ class Ed25519LicenseSigner:
             try:
                 key.public_key().verify(signature, payload)
                 return True
-            except Exception:
+            except (InvalidSignature, ValueError):
+                # 只吞"签名对不上"与"签名长度非法"；其它异常（TypeError/AttributeError）是
+                # 调用方或密钥装配的 bug，必须往上冒——宽 except 会让它伪装成"验签失败"。
                 continue
         return False
