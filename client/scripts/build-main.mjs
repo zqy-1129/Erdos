@@ -11,6 +11,10 @@
  * 用法（client/ 目录）：node scripts/build-main.mjs（= npm run build:main）
  */
 import { build } from "esbuild";
+import { readFileSync } from "node:fs";
+const engineVersion = readFileSync(new URL("../../engine/pyproject.toml", import.meta.url), "utf8")
+  .match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+if (!engineVersion) throw new Error("engine/pyproject.toml 缺少 version 字段");
 
 const shared = {
   bundle: true,
@@ -24,6 +28,7 @@ const shared = {
 await build({
   ...shared,
   entryPoints: ["main/index.ts"],
+  define: { __ERDOS_ENGINE_VERSION__: JSON.stringify(engineVersion) },
   format: "esm",
   banner: {
     js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);',

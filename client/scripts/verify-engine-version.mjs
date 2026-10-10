@@ -8,11 +8,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveEngineLaunch } from "../main/engine-launch.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..", ".."); // client/scripts → client → Edros
 const pyprojectPath = join(repoRoot, "engine", "pyproject.toml");
-const engineResourcesDir = join(__dirname, "..", "resources", "engine");
+const resourcesArg = process.argv.indexOf("--resources-dir");
+const resourcesRoot = resourcesArg >= 0 ? process.argv[resourcesArg + 1] : join(__dirname, "..", "resources");
+if (!resourcesRoot) throw new Error("--resources-dir 缺少路径");
+const engineResourcesDir = join(resourcesRoot, "engine");
+const required = process.argv.includes("--require-resources");
 
 function readEngineVersion() {
   const text = readFileSync(pyprojectPath, "utf-8");
@@ -25,6 +30,10 @@ const pyprojectVersion = readEngineVersion();
 
 // W17 引擎打包产物未就位：跳过校验（打包阶段由 CI 强制产物存在后再执行）
 if (!existsSync(engineResourcesDir)) {
+  if (required) {
+    console.error("[verify-engine-version] 打包拒绝：W17 引擎资源未就位");
+    process.exit(2);
+  }
   console.log(
     `[verify-engine-version] resources/engine 未就位（W17 产物待打包），跳过校验。目标版本 ${pyprojectVersion}`,
   );
@@ -43,6 +52,15 @@ if (engineVersion !== pyprojectVersion) {
     `[verify-engine-version] 版本不一致：pyproject=${pyprojectVersion} engine=${engineVersion}（禁运行时升级）`,
   );
   process.exit(1);
+}
+
+try {
+  // 当前 electron-builder 目标为 Windows NSIS，校验与正式运行使用同一解析器。
+  resolveEngineLaunch({ packaged: true, clientRoot: join(__dirname, ".."), resourcesPath: resourcesRoot,
+    platform: "win32", expectedVersion: pyprojectVersion });
+} catch (error) {
+  console.error("[verify-engine-version] " + error.message);
+  process.exit(2);
 }
 
 console.log(`[verify-engine-version] 通过：引擎版本 ${engineVersion} 与 pyproject 一致`);

@@ -9,7 +9,7 @@
 import { app, ipcMain, BrowserWindow, dialog } from "electron";
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createMainWindow } from "./window.ts";
 import { EngineHost } from "./engine-host/host.ts";
 import { runSmoke } from "./smoke.ts";
@@ -23,7 +23,7 @@ import { createEncryptedOfflineLedger } from "./entitlement/ledger-store.ts";
 import { createExportSaver, createFileSaver } from "./save-export.ts";
 import { ensureDeviceFingerprint } from "./device-identity.ts";
 import { resolveAuthRuntime } from "./ipc/cloud-auth.ts";
-import { verifyEngineDir } from "./tamper-check.ts";
+import { EngineLaunchError, resolveEngineLaunch, type EngineLaunch } from "./engine-launch.ts";
 import { resolveChannel } from "./update/policy.ts";
 import { setupAutoUpdate } from "./update/updater.ts";
 import { ProblemImporter } from "./problem-import.ts";
@@ -35,10 +35,14 @@ import {
 } from "../shared/ipc.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const clientRoot = path.resolve(__dirname, "../.."); // dist/main → client/
+const clientRoot = existsSync(path.join(__dirname, "../package.json"))
+  ? path.resolve(__dirname, "..") : path.resolve(__dirname, "../.."); // source/main 或 dist/main → client/
 
-const isDev = process.argv.includes("--dev") || process.env.ERDOS_DEV === "1";
+const isDev = !app.isPackaged && (process.argv.includes("--dev") || process.env.ERDOS_DEV === "1");
 const DEV_SERVER_URL = process.env.ERDOS_DEV_SERVER_URL ?? "http://localhost:5173";
+declare const __ERDOS_ENGINE_VERSION__: string;
+const expectedEngineVersion = typeof __ERDOS_ENGINE_VERSION__ === "string" ? __ERDOS_ENGINE_VERSION__ : undefined;
+let engineLaunch: EngineLaunch | null = null;
 
 /**
  * 联调/CI 隔离（W6 预演）：显式指定 userData 根目录——单实例锁、SQLite 密钥库、
@@ -51,18 +55,15 @@ if (process.env.ERDOS_USER_DATA_DIR) {
 
 /** IPC 来源策略（生产仅 file://；开发追加 dev server）。 */
 function isTrustedSender(frameUrl: string | undefined): boolean {
-  return isAllowedSenderUrl(frameUrl, { dev: isDev, devServerUrl: DEV_SERVER_URL });
+  return isAllowedSenderUrl(frameUrl, { dev: isDev, devServerUrl: DEV_SERVER_URL,
+    rendererUrl: pathToFileURL(path.join(clientRoot, "dist", "index.html")).href });
 }
 
-/** 引擎可执行：开发期用 engine/.venv 的 python；可用 ERDOS_ENGINE_CMD 覆盖（打包期指向 PyInstaller 产物）。 */
-function engineCommand(): { command: string; args: string[]; cwd: string } {
-  // `python -m engine` 需能定位 engine 包 → cwd 指向其父目录（Edros 仓库根）
-  const engineRoot = path.join(clientRoot, "..");
-  if (process.env.ERDOS_ENGINE_CMD) {
-    return { command: process.env.ERDOS_ENGINE_CMD, args: ["-m", "engine"], cwd: engineRoot };
-  }
-  const python = path.join(clientRoot, "..", "engine", ".venv", "Scripts", "python.exe");
-  return { command: python, args: ["-m", "engine"], cwd: engineRoot };
+/** 开发期可覆盖 Python 命令；正式包使用构建绑定且已校验的捆绑入口。 */
+function engineCommand(): EngineLaunch {
+  engineLaunch ??= resolveEngineLaunch({ packaged: app.isPackaged, clientRoot, resourcesPath: process.resourcesPath,
+    platform: process.platform, expectedVersion: expectedEngineVersion, developmentCommand: process.env.ERDOS_ENGINE_CMD });
+  return engineLaunch;
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -221,21 +222,8 @@ function registerEngineIpc(): void {
  * 任一文件缺失/哈希不一致/清单不可读 → 提示并拒绝启动。
  * 开发期（无捆绑产物）跳过——与 scripts/verify-engine-version.mjs 同口径。
  */
-function verifyBundledEngine(): void {
-  const bundled = path.join(process.resourcesPath, "engine");
-  if (!existsSync(bundled)) return;
-  const result = verifyEngineDir(bundled);
-  if (!result.ok) {
-    dialog.showErrorBox(
-      "引擎完整性校验失败",
-      `检测到引擎文件被篡改或缺失，已拒绝启动：\n${result.mismatches.join("\n")}`,
-    );
-    app.exit(1);
-  }
-}
-
 function boot(): void {
-  verifyBundledEngine();
+  engineCommand();
   mainWindow = createMainWindow({
     dev: isDev,
     devServerUrl: DEV_SERVER_URL,
@@ -268,7 +256,7 @@ function boot(): void {
  * 不建窗口、不走单实例锁，直接跑「引擎启动→握手→四阶段→论文」链路，
  * 退出码 0=通过 / 1=失败，证据 JSON 由 runSmoke 写入 ERDOS_SMOKE_OUT。
  */
-if (process.env.ERDOS_SMOKE === "1") {
+if (!app.isPackaged && process.env.ERDOS_SMOKE === "1") {
   const outPath = process.env.ERDOS_SMOKE_OUT ?? path.join(clientRoot, "dist", "smoke-evidence.json");
   const home = process.env.ERDOS_SMOKE_HOME ?? path.join(app.getPath("temp"), `erdos-smoke-${Date.now()}`);
   void app.whenReady().then(async () => {
@@ -298,8 +286,9 @@ if (process.env.ERDOS_SMOKE === "1") {
         mainWindow.focus();
       }
     });
-    void app.whenReady().then(boot).catch(() => {
-      dialog.showErrorBox("客户端初始化失败", "本地安全存储或运行服务不可用，请核对系统加密服务与本地数据后重试。");
+    void app.whenReady().then(boot).catch(error => {
+      dialog.showErrorBox(error instanceof EngineLaunchError ? "引擎启动校验失败" : "客户端初始化失败",
+        error instanceof EngineLaunchError ? error.message : "本地安全存储或运行服务不可用，请核对系统加密服务与本地数据后重试。");
       app.exit(1);
     });
     app.on("before-quit", () => {

@@ -33,6 +33,11 @@ export class CloudApiError extends Error {
   }
 }
 
+/** 本地会话已替换：不可重试，也不能作为网络故障触发离线记账。409 不代表服务端响应。 */
+export class SessionChangedError extends CloudApiError {
+  constructor() { super(null, 409, "会话已变更，已取消旧请求，请重试"); this.name = "SessionChangedError"; }
+}
+
 function isEnvelope(value: unknown): value is CloudEnvelope {
   return (
     typeof value === "object" &&
