@@ -235,6 +235,9 @@ def create_app(
     app.add_exception_handler(Exception, unhandled_error_handler)
 
     if config.metrics_enabled:
+        # /metrics 在 PUBLIC_PATHS 里（Prometheus 抓取要能匿名读），内容为计数/分位数等运维
+        # 指标、不含业务数据；生产应在网络层限制抓取来源，别把抓取得到的路径与流量结构
+        # 当成公开信息对外暴露。
         app.add_api_route(
             "/metrics", _metrics_endpoint, methods=["GET"], include_in_schema=False
         )

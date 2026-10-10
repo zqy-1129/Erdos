@@ -1,0 +1,116 @@
+# Erdos 服务端 Prometheus 告警规则（值班侧，跨实例）
+#
+# 为什么进仓库而不是留在某个环境的部署目录里：
+# 《服务端架构》§10 把阈值当成产品承诺（可用性 99.5% / 错误率 >1% / P95 >500ms），服务端代码
+# 里也有同名配置项（alert_error_rate、alert_p95_ms、SLO_AVAILABILITY）。规则一旦只活在环境里，
+# 就会和代码里的阈值各自漂移，出事时值班看到的档位与文档不一致。这份文件由
+# `server/tests/unit/test_alert_rules.py` 守护：指标名必须真实导出、阈值必须与代码默认值一致。
+#
+# 与进程内告警的分工（两者都保留，不是重复）：
+# - 进程内 AlertOutlet：单实例视角，事件落库 + 看板 SSE + Webhook，秒级发现，档位 P0/P1/P2；
+# - 本文件：跨实例聚合的比率与燃烧率，负责"每台都稍微坏一点"这种单实例看不出来的形态。
+#
+# 阈值换算：99.5% 的月度预算 = 30 天 12960s（单日份额 432s）。燃烧率 k 表示"以 k 倍于允许的
+# 速率消耗预算"；14.4 倍（5m 快窗）等于"两小时内烧光当天份额"，6 倍（1h 慢窗）等于月底必然违约。
+groups:
+  - name: erdos-slo-burn
+    interval: 30s
+    rules:
+      - alert: ErdosAvailabilityBurnFast
+        # 5 分钟窗口的 5xx 占比达到预算速率 14.4 倍（>7.2%）持续 5 分钟 → P0 呼叫
+        expr: |
+          (
+            sum(rate(erdos_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(erdos_http_requests_total[5m]))
+          ) > (14.4 * 0.005)
+        for: 5m
+        labels:
+          severity: P0
+          tier: slo-burn
+        annotations:
+          summary: "可用性快速燃烧：5m 错误率达预算速率 14.4 倍"
+          description: "请求加权 5xx 占比 {{ $value | humanizePercentage }}，按此速率两小时内烧光当日预算份额（432s）。"
+          runbook: "看板 /admin 监测总览 → 先看 erdos_alert_routed_total 是否已有对应 P0 事件，再查错误日志与依赖健康"
+
+      - alert: ErdosAvailabilityBurnSlow
+        # 1 小时窗口达到预算速率 6 倍（>3%）持续 30 分钟 → P1（月底必然违约）
+        expr: |
+          (
+            sum(rate(erdos_http_requests_total{status=~"5.."}[1h]))
+            /
+            sum(rate(erdos_http_requests_total[1h]))
+          ) > (6 * 0.005)
+        for: 30m
+        labels:
+          severity: P1
+          tier: slo-burn
+        annotations:
+          summary: "可用性慢速燃烧：1h 错误率达预算速率 6 倍"
+          description: "持续 30 分钟以上，按此速率本月将违反 99.5% 承诺。与进程内小时级燃尽检查（slo_burn）同口径互证。"
+          runbook: "对照 erdos_alert_routed_total 与看板「近 1 日窗口可用性」，定位是全站还是单路径"
+
+  - name: erdos-slo-thresholds
+    interval: 30s
+    rules:
+      - alert: ErdosHttpErrorRateHigh
+        # 与配置项 alert_error_rate（1%）同阈值：《服务端架构》§10 的 P1 档
+        expr: |
+          (
+            sum(rate(erdos_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(erdos_http_requests_total[5m]))
+          ) > 0.01
+        for: 10m
+        labels:
+          severity: P1
+          tier: slo-threshold
+        annotations:
+          summary: "5xx 错误率连续 10 分钟高于 1%"
+          description: "5m 窗口错误率 {{ $value | humanizePercentage }}。"
+          runbook: "看板事件泳道按 monitor.alert 过滤，取 metric 与阈值对照"
+
+      - alert: ErdosLatencyP95High
+        # 与配置项 alert_p95_ms（500ms）同阈值。注意：PRD 文字写的是 P99>500ms，现行按 P95
+        # 评估（监测表无 p99 列），该替换口径已登记待契约/架构评审确认，规则不假装它是 P99。
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(erdos_http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: P1
+          tier: slo-threshold
+        annotations:
+          summary: "P95 请求延迟连续 10 分钟高于 500ms"
+          description: "P95 = {{ $value }}s（口径为 P95，非 PRD 文字里的 P99）。"
+          runbook: "看板监测总览的 p95_ms 曲线 + erdos_http_request_duration_seconds 按 path 分解"
+
+  - name: erdos-self-monitoring
+    interval: 60s
+    rules:
+      - alert: ErdosAlertExportAbsent
+        # absent() 只在"该序列完全不存在"时为真——测的是导出/抓取链路，不是"没有告警发生"。
+        # 计数永远为 0 和指标缺失是两种故障，这里抓后者；前者由阈值类规则覆盖。
+        expr: absent(erdos_alert_routed_total)
+        for: 30m
+        labels:
+          severity: P2
+          tier: self-monitoring
+        annotations:
+          summary: "告警路由指标缺失（导出或抓取断了）"
+          description: "30 分钟内抓不到 erdos_alert_routed_total：可能是 /metrics 抓取失效、实例全挂，或计数从未被写入。"
+          runbook: "先 curl /metrics 确认导出面，再查 Prometheus targets 状态"
+
+      - alert: ErdosBusConsumerFailures
+        # 消息消费者异常：一次就值得看，因为它意味着某个订阅方不再更新且只留了日志
+        expr: increase(erdos_bus_delivery_failures_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: P2
+          tier: self-monitoring
+        annotations:
+          summary: "消息总线消费者 15 分钟内出现异常"
+          description: "按 topic 计数：{{ $labels.topic }}，增量 {{ $value }}。"
+          runbook: "服务端日志搜「消息消费者异常」（ERROR 级，含堆栈与 message_id）"
