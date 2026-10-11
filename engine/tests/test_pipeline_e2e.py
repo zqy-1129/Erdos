@@ -96,9 +96,15 @@ async def test_pipeline_trail_records_four_stages_and_artifact(tmp_path) -> None
     store = TrailStore(trail_db)
     recorder = TrailRecorder(store)
 
+    recorded_digest = ""
+    recorded_paper = ""
+
     async def trail_sink(task_id: str, stage: str, data: dict) -> None:
+        nonlocal recorded_digest, recorded_paper
         recorder.record_model_call(task_id, stage, "fake-llm", data.get("usage", {}), 0.0)
         if stage == "writing":
+            recorded_digest = str(data["paper_sha256"])
+            recorded_paper = str(data["paper_md"])
             recorder.record_artifact(task_id, stage, "paper", data["paper_path"])
 
     pipeline = StagePipeline(sandbox=sandbox, sink=trail_sink, work_root=tmp_path / "work")
@@ -113,6 +119,13 @@ async def test_pipeline_trail_records_four_stages_and_artifact(tmp_path) -> None
     assert len(artifacts) == 1
     assert artifacts[0]["kind"] == "paper"
     assert len(artifacts[0]["sha256"]) == 64
+    # 同一份产物只能有一个哈希：阶段记录（门禁与检查点读它）与 artifact_index（合规声明导出
+    # 读它）必须同值。评审时实测到 Windows 上两者不同——`write_text` 默认把 \n 译成 \r\n，
+    # 于是一个按字符串字节算、一个按文件字节算，审计一比对就像产物被改过。
+    paper_file = Path(artifacts[0]["file_path"])
+    paper_bytes = paper_file.read_bytes()
+    assert paper_bytes == recorded_paper.encode("utf-8"), "落盘做了换行翻译，跨平台哈希必不稳"
+    assert recorded_digest == artifacts[0]["sha256"], "阶段记录与 artifact_index 出现两个哈希"
     store.close()
 
 

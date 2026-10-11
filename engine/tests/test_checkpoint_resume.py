@@ -41,10 +41,10 @@ def _contract_output(stage: str, root: Path) -> dict:
             "## 二、模型假设与建模\n\n假设。\n\n## 三、求解与结果\n\nslope=1.9850\n\n## 四、结论\n\n结论。\n"
         )
         paper_path = root / "paper.md"
-        paper_path.write_text(paper, encoding="utf-8")
+        paper_path.write_text(paper, encoding="utf-8", newline="\n")
         data.update(
             paper_md=paper,
-            paper_sha256=sha256(paper.encode("utf-8")).hexdigest(),
+            paper_sha256=sha256(paper_path.read_bytes()).hexdigest(),
             paper_path=str(paper_path),
         )
     return data

@@ -6,6 +6,7 @@
 
 import math
 import re
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,15 @@ def _check_modeling(data: dict) -> list[str]:
 
 
 def _check_solving(data: dict) -> list[str]:
+    """mode 缺失或非 tool_loop 时按阶段级规则判——**这不是反推路径，而是 fail-closed 选择**。
+
+    评审时一度改成"mode 不认识就报违规"，实测后撤回：
+    - 阶段级规则要求 `exit_code == 0` 且有输出/产物，工具循环的 data 缺这些字段时照样判违规，
+      所以默认分支已经是"不放行"，改成报错只是换了条更精确的文案；
+    - 而 W23② 之前落盘的 stage_level 检查点本来就没有 `mode`，恢复重挂门禁时会被新文案误判，
+      换来的是开发机上的一次无谓重跑。缺字段反推路径那个形状在这里不成立（另有正向用例把
+      "默认分支不放过空数据"钉住，见 test_hard_checks 的 stage_level 用例）。
+    """
     if data.get("mode") == "tool_loop":
         return _check_solving_tool_loop(data)
     return _check_solving_stage_level(data)
@@ -101,13 +111,24 @@ def _check_writing(data: dict) -> list[str]:
         if missing:
             violations.append(_msg(f"报告阶段论文缺章节：{'、'.join(missing)}"))
     digest = data.get("paper_sha256")
-    if not isinstance(digest, str) or not _SHA256_RE.match(digest):
+    declared: str | None = digest if isinstance(digest, str) and _SHA256_RE.match(digest) else None
+    if declared is None:
         violations.append(_msg(f"报告阶段 paper_sha256 非 64 位十六进制小写（value={_short(digest)}）"))
     path = data.get("paper_path")
     if not isinstance(path, str) or not path.strip():
         violations.append(_msg("报告阶段 paper_path 缺失，产物文件无从校验"))
-    elif not Path(path).exists():
+        return violations
+    if not Path(path).exists():
         violations.append(_msg(f"报告阶段产物文件不存在（paper_path={_short(path)}）"))
+        return violations
+    # 声明与实际产物必须是同一个东西：只验格式 + 存在，留着"阶段记录一个哈希、
+    # artifact_index/合规声明另一个哈希"的窗口——审计一比对就像产物被改过。
+    if declared is not None:
+        actual = sha256(Path(path).read_bytes()).hexdigest()
+        if actual != declared:
+            violations.append(
+                _msg(f"报告阶段 paper_sha256 与产物文件不一致（声明 {declared[:12]}…，实际 {actual[:12]}…）")
+            )
     return violations
 
 

@@ -111,11 +111,12 @@ def _contract_output(stage: str, work_dir: Path) -> dict:
     )
     paper_path = work_dir / "paper.md"
     paper_path.parent.mkdir(parents=True, exist_ok=True)
-    paper_path.write_text(paper, encoding="utf-8")
+    paper_path.write_text(paper, encoding="utf-8", newline="\n")
     return {
         "stage": stage,
         "paper_md": paper,
-        "paper_sha256": hashlib.sha256(paper.encode("utf-8")).hexdigest(),
+        # 对落盘字节取哈希（与 pipeline._writing / record_artifact 同源，LF 写入故跨平台一致）
+        "paper_sha256": hashlib.sha256(paper_path.read_bytes()).hexdigest(),
         "paper_path": str(paper_path),
         "usage": {"prompt_tokens": 5},
     }

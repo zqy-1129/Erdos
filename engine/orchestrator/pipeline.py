@@ -408,8 +408,12 @@ class StagePipeline:
         out_dir = self._work_root / task_id
         out_dir.mkdir(parents=True, exist_ok=True)
         paper_path = out_dir / "paper.md"
-        paper_path.write_text(paper, encoding="utf-8")
-        digest = sha256(paper.encode("utf-8")).hexdigest()
+        # newline="\n"：默认文本模式在 Windows 上把 \n 译成 \r\n，那样"同一份论文"会因平台
+        # 得到不同哈希。产物哈希必须可跨平台复核（合规声明导出的是文件字节的 sha256）。
+        paper_path.write_text(paper, encoding="utf-8", newline="\n")
+        # 对**落盘后的字节**取哈希，而不是对我想写的内容取哈希：留痕侧 record_artifact 读的是
+        # 文件字节，两边同源，审计里才不会一份产物两个哈希。
+        digest = sha256(paper_path.read_bytes()).hexdigest()
         return {
             "stage": "writing",
             "paper_md": paper,

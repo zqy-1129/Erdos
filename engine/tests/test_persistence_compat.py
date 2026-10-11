@@ -55,11 +55,11 @@ def _contract_output(stage: str, work_dir: Path) -> dict[str, Any]:
         }
     paper_path = work_dir / "paper.md"
     paper_path.parent.mkdir(parents=True, exist_ok=True)
-    paper_path.write_text(_PAPER, encoding="utf-8")
+    paper_path.write_text(_PAPER, encoding="utf-8", newline="\n")
     return {
         "stage": stage,
         "paper_md": _PAPER,
-        "paper_sha256": hashlib.sha256(_PAPER.encode("utf-8")).hexdigest(),
+        "paper_sha256": hashlib.sha256(paper_path.read_bytes()).hexdigest(),
         "paper_path": str(paper_path),
         "usage": {"prompt_tokens": 5},
     }

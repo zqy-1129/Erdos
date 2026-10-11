@@ -6,6 +6,7 @@
 - 超时、工具循环未成功、结果含 NaN、报告缺章节/哈希非法/产物缺失、未知阶段。
 """
 
+from hashlib import sha256
 from pathlib import Path
 
 from engine.gates.hard_checks import check_stage
@@ -46,6 +47,7 @@ def _modeling(**over) -> dict:
 def _solving_stage_level(**over) -> dict:
     data = {
         "stage": "solving",
+        "mode": "stage_level",
         "exit_code": 0,
         "stdout": "slope=1.9850\nintercept=2.1150",
         "timed_out": False,
@@ -74,17 +76,23 @@ def _solving_tool_loop(**over) -> dict:
     return data
 
 
+def _file_sha(path: Path) -> str:
+    """产物落盘后的真实哈希——审计里声明的必须就是它。"""
+    return sha256(path.read_bytes()).hexdigest()
+
+
 def _writing(paper_path: Path, **over) -> dict:
     paper = (
         "# 生产计划优化\n\n## 摘要\n\n方法与结果。\n\n## 一、问题重述\n\n题面。\n\n"
         "## 二、模型假设与建模\n\n假设。\n\n## 三、求解与结果\n\n```\nslope=1.9850\n```\n\n"
         "## 四、结论\n\n结论。\n\n## 五、结果局限\n\n- 无\n"
     )
-    paper_path.write_text(paper, encoding="utf-8")
+    # 与生产同款写法：LF 落盘 + 对文件字节取哈希（见 pipeline._writing 的说明）
+    paper_path.write_text(paper, encoding="utf-8", newline="\n")
     data = {
         "stage": "writing",
         "paper_md": paper,
-        "paper_sha256": "0" * 64,
+        "paper_sha256": _file_sha(paper_path),
         "paper_path": str(paper_path),
         "model": "fake-llm/deterministic",
         "usage": {"prompt_tokens": 50, "completion_tokens": 25},
@@ -216,12 +224,41 @@ def test_solving_tool_loop_ignores_counters() -> None:
 # writing
 # ----------------------------------------------------------------------
 def test_writing_positive(tmp_path: Path) -> None:
-    from hashlib import sha256
-
     paper_path = tmp_path / "paper.md"
     data = _writing(paper_path)
-    data["paper_sha256"] = sha256(data["paper_md"].encode("utf-8")).hexdigest()
     assert check_stage("writing", data) == []
+
+
+def test_solving_without_mode_is_judied_by_stage_rules_and_fails_closed() -> None:
+    """撤回"mode 不认识就报错"后要钉住的事实：默认分支本身是 fail-closed。
+
+    没有 mode（W23② 之前落盘的老检查点就是这样）时按阶段级规则判，而阶段级规则要求
+    exit_code==0 且有输出/产物——所以一份空数据不会被静默放行。这条用例存在的意义是：
+    以后谁把默认分支改成"宽松放过"，这里会红，而不必重新做一次评审推演。
+    """
+    bare = check_stage("solving", {"stage": "solving"})
+    assert bare, "空求解产出被默认放行了"
+    assert "exit_code" in _joined(bare)
+
+    tool_loop_like = check_stage("solving", {
+        "stage": "solving", "status": "succeeded",
+        "results": [{"name": "slope", "value": 1.98}],
+    })
+    assert tool_loop_like, "工具循环产出漏 mode 时被静默判通过了"
+
+
+def test_writing_rejects_digest_not_matching_the_file(tmp_path: Path) -> None:
+    """本次评审补的那一环：声明哈希与盘上产物必须是同一个东西。
+
+    生产侧曾在 Windows 上因 `write_text` 的换行翻译得到"一份论文两个哈希"（阶段记录按字符串
+    字节算、artifact_index/合规声明按文件字节算），审计一比对就像产物被改过。
+    """
+    paper_path = tmp_path / "paper.md"
+    data = _writing(paper_path)
+    data["paper_sha256"] = "0" * 64  # 格式合法，但不是这个文件的哈希
+
+    joined = _joined(check_stage("writing", data))
+    assert "paper_sha256 与产物文件不一致" in joined, joined
 
 
 def test_writing_rejects_missing_sections(tmp_path: Path) -> None:
