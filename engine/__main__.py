@@ -357,11 +357,16 @@ def main() -> None:
 
     def _graceful(_signum, _frame):  # noqa: ANN001 - signal 处理签名
         # 协作停机：**信号 = 取消在跑的阶段**，不是等它跑完。检查点已在阶段完成时同步落盘，
-        # 300ms 硬上限兜底强制退出。此前这里只 stop + 定时 os._exit，把在跑任务直接打死，
-        # 既不点名 task_id（退出链的点名记录只在 drain(cancel=True) 里写）、也不给
-        # CancelledError 分支任何机会——SIGTERM/SIGBREAK 才是用户"停引擎"的真实路径。
+        # 300ms 硬上限兜底强制退出。
+        #
+        # 取消必须在 handler 里就排进事件循环——**不能等 `serve()` 返回后再 drain**：生产形态
+        # 下宿主保持 stdin 管道打开，`serve()` 正阻塞在读行，300ms 窗口内它不会返回，于是
+        # `os._exit(0)` 先发生，退出链的点名记录与 CancelledError 分支一条都不会执行。
+        # （进程级演练实测到的：信号送达、退出码 0、stderr 全空。）
+        # handler 在主线程执行而循环可能正卡在 selector 上，所以经 call_soon_threadsafe 唤醒。
         stop_requested["cancel"] = True
         server.stop()
+        loop.call_soon_threadsafe(lambda: loop.create_task(runtime.drain(cancel=True)))
         loop.call_later(GRACE_EXIT_SECONDS, lambda: os._exit(0))
 
     signal.signal(signal.SIGTERM, _graceful)

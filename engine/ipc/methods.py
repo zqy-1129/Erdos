@@ -39,7 +39,7 @@ class EngineRuntime:
         """等待（或取消）全部在跑阶段任务。
 
         cancel=False：stdin EOF 路径——等当前阶段跑完，事件/检查点完整落盘后退出；
-        cancel=True：KeyboardInterrupt 路径——协作取消后退出。
+        cancel=True：KeyboardInterrupt / 信号路径——协作取消后退出。
         """
         live = [(task_id, t) for task_id, t in self.running.items() if not t.done()]
         if not live:
@@ -48,10 +48,12 @@ class EngineRuntime:
         if cancel:
             for t in tasks:
                 t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        if cancel:
+            # **先记录再等收尾**：停机只有 GRACE_EXIT_SECONDS（300ms）预算，而取消一个正在
+            # 跑真实沙箱的阶段可能要几百毫秒——若把点名放在 gather 之后，os._exit(0) 会先发生，
+            # 这条记录等于没写。取消的决定在发出时就已经成立，不必等任务亲口确认。
             for task_id, _ in live:
                 self._note_cancelled(task_id)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def _note_cancelled(self, task_id: str) -> None:
         """取消档退出链的落点：点名记录 + 引擎级状态归位。
