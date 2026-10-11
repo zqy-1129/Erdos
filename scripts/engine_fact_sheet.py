@@ -221,10 +221,23 @@ def sandbox_facts() -> dict:
         ),
         "subprocess_default_timeout": re.findall(r"timeout: float = (\d+)", src),
         "memory_limit_field_present": "memory_limit_mb" in src,
-        "memory_enforced_in_subprocess": bool(re.search(r"memory_limit_mb.*(?:JobObject|setrlimit|rlimit)", src, re.S)),
+        # 能力必须**运行时探测**再上报：文本正则会把"注释里写了 JobObject"当成已实现，
+        # 而 W22 之前的真实状态恰恰是"字段已存、从不生效"（文本判据正是那次的帮凶）
+        "memory_enforced_in_subprocess": _subprocess_memory_enforced(),
+        "memory_env_override": "ERDOS_SANDBOX_MEMORY_MB" in src,
         "docker_memory_flag": "--memory" in docker_src,
         "unimplemented_comments": re.findall(r"# *(.*?(?:需额外实现|未实现|TODO|待实现).*)", src),
     }
+
+
+def _subprocess_memory_enforced() -> bool:
+    """真去建一次作业对象问它成不成功（不猜平台、不读注释）。"""
+    from engine.sandbox.win_job import new_memory_job
+
+    job = new_memory_job(64)
+    enforced = job.created
+    job.close()
+    return enforced
 
 
 def tool_facts() -> dict:
