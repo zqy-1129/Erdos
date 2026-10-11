@@ -26,6 +26,7 @@ import os
 import signal
 import sqlite3
 import sys
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -48,12 +49,14 @@ from engine.ipc.state import EngineState
 from engine.ipc.stdio import configure_stdio
 from engine.orchestrator.operations import OperationLog
 from engine.orchestrator.pipeline import FakeLLM, StagePipeline
+from engine.sandbox.base import SandboxUnavailableError
 from engine.sandbox.subprocess_sandbox import make_sandbox
 from engine.tools import build_default_registry
 from engine.trail.recorder import TrailRecorder
 from engine.trail.store import TrailStore
 
 GRACE_EXIT_SECONDS = 0.3  # SIGTERM 后硬上限（engine-protocol.md §4）
+FIRST_LINE_TIMEOUT_SECONDS = 10.0  # EC-T6 首行握手超时：超时=拒启退出码 2，不是静默当无 Key
 
 
 def _engine_version() -> str:
@@ -95,9 +98,30 @@ def _verify_stores(home: Path) -> None:
             _fail(f"本地库损坏：{path.name}（quick_check={row[0] if row else '空'}）；已保留现场，请从备份恢复后重试")
 
 
-def _read_first_line() -> str:
-    """读取 stdin 首行（密钥注入通道）；EOF 视为无 Key。"""
-    line = sys.stdin.readline()
+def _read_first_line(timeout: float = FIRST_LINE_TIMEOUT_SECONDS) -> str:
+    """读取 stdin 首行（密钥注入通道）；EOF 视为无 Key，**超时按 EC-T6 以诊断码 2 退出**。
+
+    线程 + join 而不是 select：Windows 的 select 不支持管道。之所以必须在引擎侧自己超时——
+    裸 readline() 挂在握手上的表现是"进程活着、永远不响应"，宿主只能靠看门狗强杀，
+    两边都拿不到任何诊断（登记为 G38）。
+    """
+    box: list[str] = []
+
+    def _reader() -> None:
+        try:
+            box.append(sys.stdin.readline())
+        except Exception:  # noqa: BLE001 - 读管道失败按 EOF 处理，由主线程判定超时口径
+            box.append("")
+
+    thread = threading.Thread(target=_reader, daemon=True, name="engine-first-line")
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        _fail(
+            f"首行握手超过 {timeout:g}s 无输入（EC-T6）：宿主既未写入 Key、也未写入 "
+            f"ERDOS_NO_KEY 或请求行；引擎拒绝无限等待，退出码 2"
+        )
+    line = box[0] if box else ""
     return "" if line == "" else line.rstrip("\r\n")
 
 
@@ -214,6 +238,19 @@ def _build_sink(trail: TrailRecorder):
     return sink
 
 
+def _make_sandbox() -> Any:
+    """沙箱选择：显式要求 Docker 而探针未过时，必须是可读诊断 + 退出码 2（DEC-006 如实上报）。
+
+    `make_sandbox` 抛的是 `SandboxUnavailableError`（`ERDOS_SANDBOX_REQUIRE_DOCKER=1` 路径），
+    此前入口无捕获 → 宿主看到的是 traceback 与退出码 1，而退出码分诊表里 1 表示"未知崩溃"，
+    2 才是"配置/环境拒启"。登记为 G39。
+    """
+    try:
+        return asyncio.run(make_sandbox())
+    except SandboxUnavailableError as exc:
+        _fail(f"沙箱不可用（DEC-006）：{exc}")
+
+
 def main() -> None:
     configure_stdio()  # 协议字节序红线：先于任何 stdio 读写，与宿主码页无关
 
@@ -240,7 +277,7 @@ def main() -> None:
     trail_store = TrailStore(str(home / "audit.db"))
     trail = TrailRecorder(trail_store)
     checkpoint = SQLiteCheckpointStore(str(home / "checkpoints.db"))
-    sandbox = asyncio.run(make_sandbox())
+    sandbox = _make_sandbox()
     state = EngineState()
     events = EventEmitter()
     registry = build_default_registry(sandbox, events=events, trail=trail)

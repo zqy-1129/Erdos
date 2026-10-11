@@ -10,6 +10,8 @@
 FakeLLM 为确定性假模型（测试/演示专用）；本文件不产生真实模型调用。
 """
 
+import ast
+import inspect
 import json
 import os
 import queue
@@ -349,3 +351,82 @@ def test_startup_corrupt_store_fails_closed(tmp_path: Path) -> None:
     _close_pipes(proc)
     assert proc.returncode == 2
     assert "损坏" in stderr
+
+
+# ----------------------------------------------------------------------
+# W40 · EN-BOOT-DIAG（G38/G39）：启动期异常必须是可读诊断 + 诊断码 2，不是挂死或 traceback
+# ----------------------------------------------------------------------
+class _BlockingStdin:
+    """readline() 永不返回的假 stdin（模拟宿主忘了写首行）。"""
+
+    def __init__(self) -> None:
+        self._gate = threading.Event()
+
+    def readline(self) -> str:  # noqa: ANN001 - 与 sys.stdin 同签名
+        self._gate.wait(30)
+        return ""
+
+
+def test_first_line_timeout_refuses_startup(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """G38：首行握手超时 → 退出码 2 + EC-T6 诊断；不得静默当作"无 Key"继续跑。"""
+    from engine.__main__ import _read_first_line
+
+    monkeypatch.setattr(sys, "stdin", _BlockingStdin())
+    with pytest.raises(SystemExit) as caught:
+        _read_first_line(timeout=0.2)
+    assert caught.value.code == 2
+    err = capsys.readouterr().err
+    assert "首行握手" in err and "EC-T6" in err, err
+
+
+def test_first_line_timeout_matches_ec_t6_clause() -> None:
+    """EC-T6 写的是 10s；常量漂移就等于条款失效，所以直接钉字面值。"""
+    from engine.__main__ import FIRST_LINE_TIMEOUT_SECONDS
+
+    assert FIRST_LINE_TIMEOUT_SECONDS == 10.0
+
+
+def test_first_line_eof_is_no_key_not_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """EOF（宿主关管道）与超时是两条路径：前者返回空串走无 Key，后者必须拒启。"""
+    from engine.__main__ import _read_first_line
+
+    class _EofStdin:
+        def readline(self) -> str:
+            return ""
+
+    monkeypatch.setattr(sys, "stdin", _EofStdin())
+    assert _read_first_line(timeout=0.5) == ""
+
+
+def test_sandbox_unavailable_maps_to_diagnostic_exit(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """G39：Docker 强制模式下沙箱不可用 → 退出码 2 + 原因，而不是 traceback + 退出码 1。"""
+    import engine.__main__ as entry
+    from engine.sandbox.base import SandboxUnavailableError
+
+    async def _unavailable() -> None:
+        raise SandboxUnavailableError("镜像缺失：erdos-sandbox:latest")
+
+    monkeypatch.setattr(entry, "make_sandbox", _unavailable)
+    with pytest.raises(SystemExit) as caught:
+        entry._make_sandbox()
+    assert caught.value.code == 2
+    err = capsys.readouterr().err
+    assert "沙箱不可用" in err and "镜像缺失" in err, err
+
+
+def test_main_uses_the_startup_guards() -> None:
+    """守护装配本身：main() 必须经 `_make_sandbox()` 与带超时的 `_read_first_line()`。
+
+    两个守卫函数单测全绿、`main()` 里却仍写裸调用，是本项目反复出现的"修了没人接"形状。
+    """
+    import engine.__main__ as entry
+
+    tree = ast.parse(inspect.getsource(entry.main))
+    calls = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_make_sandbox" in calls, "main() 仍直接 asyncio.run(make_sandbox())"
+    assert "_read_first_line" in calls
+    assert "make_sandbox" not in calls
