@@ -6,11 +6,14 @@
 - **P2 重写后行号整体漂移**（`answer_gate` 242→296、`_persist_*` 403/414→427/438…），
   对齐报告 §4.3 把"08 §14.2 / 10 W11"的锚点全部标记为失效，只能靠人肉逐条对。
 
-本守护管**仓库内 tracked reports** 这一侧：文件存在 + 行号不越界。它测不到"行号存在但指的
-不是那件事"（语义漂移仍需人读），也管不到飞书正文（那边由带日期增量维护）。
+本守护管**仓库内 tracked reports** 这一侧，两类引用都查：
+- `path:line` → 文件存在 + 行号不越界；
+- "提交 `hash`" → 该对象在仓库里真的存在（数字三件套的第三件也得不指空）。
+它测不到"行号存在但指的不是那件事"（语义漂移仍需人读），也管不到飞书正文（那边由带日期增量维护）。
 """
 
 import re
+import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -78,3 +81,42 @@ def test_ellipsis_paths_are_not_mistaken_for_references() -> None:
     """
     text = "同一条告警自报 `data-platform/content/scripts/cumcm_delivery/complex_formats.py:35`"
     assert _resolve(text, REPO) == []
+
+
+# ----------------------------------------------------------------------
+# 数字三件套的第三件：commit 也必须指得到（本仓报告惯例是"值 + 复算命令 + 提交"）
+# ----------------------------------------------------------------------
+COMMIT_REF = re.compile(r"提交\s*`([0-9a-f]{7,40})`")
+
+
+def _commit_ok(sha: str) -> bool:
+    proc = subprocess.run(
+        ["git", "cat-file", "-t", sha], cwd=str(REPO), capture_output=True, text=True, check=False
+    )
+    return proc.stdout.strip() == "commit"
+
+
+def _resolve_commits(text: str) -> list[str]:
+    return [sha for sha in COMMIT_REF.findall(text) if not _commit_ok(sha)]
+
+
+def test_every_cited_commit_hash_resolves() -> None:
+    """报告里"提交 `xxxxx`"必须真存在——本会话内我自己就凭印象写错过两次。
+
+    只认紧邻"提交"二字的形式，避免把 `deadbeef` 这类词或别处的十六进制串误判成哈希。
+    """
+    problems: list[str] = []
+    total = 0
+    for report in sorted(REPORTS.glob("*.md")):
+        text = report.read_text(encoding="utf-8")
+        found = COMMIT_REF.findall(text)
+        total += len(found)
+        for sha in _resolve_commits(text):
+            problems.append(f"{report.name}: 提交 `{sha}` 在仓库里不存在")
+    assert total >= 10, f"只解析到 {total} 条提交引用——正则或报告根走错了"
+    assert not problems, "交付报告里有指不到的提交：\n" + "\n".join(problems)
+
+
+def test_commit_guard_detects_a_hash_that_does_not_exist() -> None:
+    """正向对照：守护必须能被测坏。"""
+    assert _resolve_commits("本轮提交 `0123456`，前置 `a479ff5`") == ["0123456"]

@@ -76,7 +76,7 @@ Windows ADS、反斜杠、空路径段、末尾点/空格以及符号链接。`v
 | 启动 | 懒启动（冷启动不拉起引擎，首次任务才 spawn） |
 | 崩溃（exit code 非 0） | 看门狗重启引擎（最多 3 次），重启后 `get_status` 恢复正常 |
 | **拒启（exit code = 2）** | **应当不重启**，直接把 stderr 诊断给用户：`ERDOS_ENGINE_HOME` 缺失、本地库损坏、Key 模式缺模型坐标、`ERDOS_TOOL_MODE` 非法值、Docker 强制模式无镜像、首行握手超时。现状是 `host.ts:313-320` 对所有非零码一律 `crashed`→重试，**3 次全烧在不可能自愈的配置错误上**（登记为 G42，属 FE） |
-| 优雅退出 | 发 SIGTERM（Windows 另接 SIGBREAK）＝**协作取消在跑阶段**：任务状态落 `cancelled`（由 `_run_stage` 的 CancelledError 分支写，唯一写者）、stderr 点名 `task_id` 与未完成阶段、引擎状态归 `idle`；300ms 硬上限后 `os._exit(0)` 强制退出，**退出码恒 0，宿主不得据此判崩溃**。（2026-10-11 实况更正：此前只写"落盘检查点标记后退出"，未说明在跑任务怎么处理；旧实现确实只 `t.cancel()` 并丢掉 task_id，SIGTERM 路径连那一下都没走到） |
+| 优雅退出 | 发 SIGTERM（Windows 另接 SIGBREAK）＝**协作取消在跑阶段**：取消由信号 handler 直接排进事件循环（**不等 `serve()` 返回**——宿主保持 stdin 打开时它不会在 300ms 内返回），任务状态落 `cancelled`（由 `_run_stage` 的 CancelledError 分支写，唯一写者）、stderr 点名 `task_id` 与未完成阶段、引擎状态归 `idle`；300ms 硬上限后 `os._exit(0)` 强制退出，**退出码恒 0，宿主不得据此判崩溃**。（2026-10-11 两次实况更正：①此前只写"落盘检查点标记后退出"，未说明在跑任务怎么处理；②取消一度接在 `serve()` 之后，真实形态下永远跑不到，现由 handler 排程——进程级演练实测证明） |
 | 单实例锁 | 主进程持有单实例锁，重复启动聚焦已有窗口 |
 
 ## 5. 握手协商（CT-V2-2 / W14）
@@ -184,3 +184,7 @@ v2 客户端在拉起后、首个任务前必须调用 `initialize`：
 任务状态由 `_run_stage` 的 CancelledError 分支单点写 `cancelled`，stderr 点名 task_id 与未完成
 阶段，退出码仍恒 0。守护见 `engine/tests/test_exit_chain.py`（含"退回 `drain()` 必须变红"的
 接线反证）。*
+
+*修订记录追加：2026-10-11 退出链评审批次——上一条口径又被进程级演练证伪一次：取消一度接在
+`serve()` 返回之后，而宿主保持 stdin 打开时它不会在 300ms 内返回，于是点名从未落地。现由
+`_graceful` 经 `call_soon_threadsafe` 直接排 `drain(cancel=True)`，§4"优雅退出"行同步。*
