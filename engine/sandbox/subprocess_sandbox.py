@@ -21,6 +21,7 @@ from engine.sandbox.base import (
     scan_artifacts,
     validate_artifact_path,
 )
+from engine.sandbox.constants import SANDBOX_MEMORY_LIMIT_MB, SANDBOX_TIMEOUT_SECONDS
 
 # 允许透传给沙箱子进程的环境变量白名单（禁止 Key/敏感变量）
 _ENV_WHITELIST = ("PATH", "SYSTEMROOT", "TEMP", "TMP", "LANG", "PYTHONPATH")
@@ -85,7 +86,10 @@ class SubprocessSandbox:
     isolation_mode = "subprocess"  # 显式上报（DEC-006：降级不得宣称为安全隔离）
 
     def __init__(
-        self, timeout: float = 120.0, memory_limit_mb: int = 2048, python: str | None = None
+        self,
+        timeout: float = SANDBOX_TIMEOUT_SECONDS,
+        memory_limit_mb: int = SANDBOX_MEMORY_LIMIT_MB,
+        python: str | None = None,
     ) -> None:
         if timeout <= 0:
             raise ValueError("timeout 必须 >0")
@@ -174,7 +178,9 @@ async def detect_docker_available() -> bool:
         return False
 
 
-async def make_sandbox(timeout: float = 120.0, python: str | None = None) -> Sandbox:
+async def make_sandbox(
+    timeout: float = SANDBOX_TIMEOUT_SECONDS, python: str | None = None
+) -> Sandbox:
     """沙箱工厂（EN-BOX W10）：Docker 优先，不可用降级 subprocess（EC-S3）。
 
     降级红线（DEC-006）：`ERDOS_SANDBOX_REQUIRE_DOCKER=1` 时环境无 Docker 直接抛

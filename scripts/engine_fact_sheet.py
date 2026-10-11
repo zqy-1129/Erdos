@@ -196,10 +196,29 @@ def constants() -> dict:
 
 def sandbox_facts() -> dict:
     from engine.sandbox import base as b
+    from engine.sandbox import constants as c
+
     src = read(ENGINE / "sandbox" / "subprocess_sandbox.py")
     docker_src = read(ENGINE / "sandbox" / "docker_sandbox.py")
     return {
         "base_module_exports": [n for n in dir(b) if not n.startswith("_")],
+        # 阈值单源（G32/W37）：数值取自 constants.py，"源码里是否还残留裸字面量"由文本扫描判定
+        "thresholds": {
+            "owner": "engine/sandbox/constants.py",
+            "timeout_seconds": c.SANDBOX_TIMEOUT_SECONDS,
+            "memory_limit_mb": c.SANDBOX_MEMORY_LIMIT_MB,
+            "docker_memory_flag": c.DOCKER_MEMORY_FLAG,
+        },
+        "defaults_reference_constants": {
+            "subprocess_timeout": "timeout: float = SANDBOX_TIMEOUT_SECONDS" in src,
+            "subprocess_memory": "memory_limit_mb: int = SANDBOX_MEMORY_LIMIT_MB" in src,
+            "docker_timeout": "timeout: float = SANDBOX_TIMEOUT_SECONDS" in docker_src,
+            "docker_memory": "memory: str = DOCKER_MEMORY_FLAG" in docker_src,
+        },
+        "stray_numeric_defaults": re.findall(
+            r"(?:timeout: float|memory_limit_mb: int|memory: str) = (?!SANDBOX_|DOCKER_)[\d\"']+",
+            src + docker_src,
+        ),
         "subprocess_default_timeout": re.findall(r"timeout: float = (\d+)", src),
         "memory_limit_field_present": "memory_limit_mb" in src,
         "memory_enforced_in_subprocess": bool(re.search(r"memory_limit_mb.*(?:JobObject|setrlimit|rlimit)", src, re.S)),

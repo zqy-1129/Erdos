@@ -21,6 +21,10 @@ from engine.sandbox.base import (
     ExecutionResult,
     scan_artifacts,
 )
+from engine.sandbox.constants import (
+    DOCKER_MEMORY_FLAG,
+    SANDBOX_TIMEOUT_SECONDS,
+)
 
 OUTPUT_LIMIT = 1_000_000  # 输出截断 1MB（防 print 打爆上下文）
 DEFAULT_IMAGE = "python:3.12-slim"
@@ -35,8 +39,8 @@ class DockerSandbox:
 
     def __init__(
         self,
-        timeout: float = 120.0,
-        memory: str = "2g",
+        timeout: float = SANDBOX_TIMEOUT_SECONDS,
+        memory: str = DOCKER_MEMORY_FLAG,
         cpus: str = "1",
         pids_limit: int = 128,
         image: str | None = None,
