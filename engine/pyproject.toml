@@ -40,7 +40,7 @@ target-version = "py312"
 src = ["engine", "tests"]
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "W605"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["engine"]

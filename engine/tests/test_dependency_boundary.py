@@ -34,7 +34,9 @@ def _python_files(root: Path) -> list[Path]:
 
 def _imported_modules(path: Path) -> list[tuple[str, int]]:
     """文件内绝对 import 的点分模块名与行号；相对 import（level>0）不跨顶层包，跳过。"""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    # filename 必须传：否则解析告警/错误显示成 "<unknown>:行号"，跨子仓扫出来的问题无从定位
+    # （本仓第一次踩到时，data-platform 的一条 SyntaxWarning 只能给出 "<unknown>:35"）。
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     found: list[tuple[str, int]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
