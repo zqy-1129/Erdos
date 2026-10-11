@@ -274,14 +274,24 @@ class AcceptanceRunner:
         executed_pre: tuple[str, ...] = ()  # kill 前旧任务流的执行记录（恢复后拼接去重）
 
         def _note_path(stage: str, data: dict[str, Any]) -> None:
-            """从 solving 产出里取路径归因三件（缺失就留 None，不猜成 tool_loop）。"""
+            """从 solving 产出里取路径归因三件（缺失就留 None，不猜成 tool_loop）。
+
+            非空才覆盖：kill/恢复演练里第二阶段拿到的是**检查点重放数据**，老检查点没有这些字段，
+            无条件赋值会把 kill 前已经实测到的归因抹成"未知"——而那 4 题恰好是演练要看的样本。
+            规则与读侧一致：缺字段=没这项证据（保留已有值），不是"这项变成了未知"。
+            """
             nonlocal solve_path, isolation_mode, dispatch_count
             if stage != "solving":
                 return
-            solve_path = data.get("mode")
-            isolation_mode = data.get("isolation_mode")
+            mode = data.get("mode")
+            isolation = data.get("isolation_mode")
             dispatch = data.get("dispatch_count")
-            dispatch_count = None if dispatch is None else int(dispatch)
+            if mode is not None:
+                solve_path = str(mode)
+            if isolation is not None:
+                isolation_mode = str(isolation)
+            if dispatch is not None:  # 派发 0 次是事实，只有"字段不存在"才保留原值
+                dispatch_count = int(dispatch)
 
         async def _verdict(stage: str, data: dict[str, Any]) -> tuple[str, str]:
             """本阶段门禁裁决 → (decision, 失败原因)；rubric 分数记入 scores。

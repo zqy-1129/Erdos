@@ -165,6 +165,76 @@ async def test_real_inproc_flow_reports_the_degraded_path_honestly(tmp_path) -> 
 
 
 # ----------------------------------------------------------------------
+# kill/恢复演练：重放数据不得把已实测到的归因抹成"未知"
+# ----------------------------------------------------------------------
+class _ResumedStub(_FlowStub):
+    """kill 后重建的流：定位在 solving（门禁未决窗口），重放返回**老检查点形状**数据。
+
+    老检查点（W23② 之前落库的 solving 产物）没有 mode/isolation_mode/dispatch_count，
+    运行器如果无条件覆盖，就会把 kill 前已经实测到的归因写成 None——而演练的 4 题正是
+    报告里最该看得清的那几题。
+    """
+
+    def __init__(self, replay_data: dict[str, Any]) -> None:
+        super().__init__(replay_data)
+        self._done = ["analysis", "modeling"]  # 前序阶段已在检查点里
+
+
+def _kill_runner(flows: list[Any]) -> AcceptanceRunner:
+    """按调用顺序发放替身流：第 1 个是 kill 前的流，第 2 个是恢复后的流。"""
+    queue = list(flows)
+
+    def factory(problem) -> Any:  # noqa: ANN001 - FlowFactory 形参
+        return queue.pop(0) if queue else flows[-1]
+
+    return AcceptanceRunner(factory, channel="fakellm")
+
+
+async def test_resume_replay_without_fields_keeps_the_measured_attribution() -> None:
+    """kill 前拿到 tool_loop/派发 3，恢复后重放没有字段 → 归因必须保留而不是变未知。"""
+    before = _FlowStub(
+        {"mode": "tool_loop", "isolation_mode": "docker", "dispatch_count": 3}
+    )
+    after = _ResumedStub({"usage": {}})
+    runner = _kill_runner([before, after])
+
+    result = await runner.run_one(PROBLEM, kill_after_stage="solving")
+
+    assert result.resumed and result.passed, result.failure_detail
+    assert result.solve_path == "tool_loop", "重放数据把实测归因抹成了 None"
+    assert result.isolation_mode == "docker"
+    assert result.dispatch_count == 3
+
+
+async def test_resume_replay_with_newer_fields_still_wins() -> None:
+    """正向对照：重放数据**带**字段时以它为准（最后一次证据说话），不是永久锁死首值。"""
+    before = _FlowStub({"mode": "stage_level", "isolation_mode": "subprocess"})
+    after = _ResumedStub(
+        {"mode": "tool_loop", "isolation_mode": "docker", "dispatch_count": 2}
+    )
+    runner = _kill_runner([before, after])
+
+    result = await runner.run_one(PROBLEM, kill_after_stage="solving")
+
+    assert (result.solve_path, result.isolation_mode, result.dispatch_count) == (
+        "tool_loop",
+        "docker",
+        2,
+    )
+
+
+async def test_resume_replay_zero_dispatch_is_a_fact_not_a_missing_field() -> None:
+    """重放给出 `dispatch_count=0` 是事实，必须覆盖 kill 前的非零值（None 才表示没证据）。"""
+    before = _FlowStub({"mode": "tool_loop", "dispatch_count": 5})
+    after = _ResumedStub({"mode": "tool_loop", "dispatch_count": 0})
+    runner = _kill_runner([before, after])
+
+    result = await runner.run_one(PROBLEM, kill_after_stage="solving")
+
+    assert result.dispatch_count == 0
+
+
+# ----------------------------------------------------------------------
 # 证据面：JSON 与 report.md 都要看得见
 # ----------------------------------------------------------------------
 async def test_evidence_json_and_report_carry_the_attribution(tmp_path) -> None:
