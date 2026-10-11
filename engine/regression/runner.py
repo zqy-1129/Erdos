@@ -178,6 +178,18 @@ class AcceptanceReport:
             return 0.0
         return round(sum(1 for r in results if r.passed) / len(results), 4)
 
+    def sample_count(self, channel: str | None = None) -> int:
+        """该通道的样本数（=成功率的分母）。
+
+        零样本时 `success_rate()` 返回 0.0 是"没有测量"而不是"全挂"——渲染层必须带上这个分母，
+        否则报告里会出现"真实 Key 通道成功率 0.00%"这种能被读成判定失败的数字。
+        """
+        return len(self.scoped(channel))
+
+    def passed_count(self, channel: str | None = None) -> int:
+        """该通道通过数（与 `sample_count` 成对，供报告写"N/M"而不是只写比率）。"""
+        return sum(1 for r in self.scoped(channel) if r.passed)
+
     def by_category(self, channel: str | None = None) -> dict[str, dict[str, int]]:
         stats: dict[str, dict[str, int]] = {}
         for r in self.scoped(channel):

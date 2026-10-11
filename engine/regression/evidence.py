@@ -14,7 +14,12 @@ from typing import Any
 
 from engine.orchestrator.graph import STAGES
 from engine.regression.problems import RegressionProblem
-from engine.regression.runner import AcceptanceReport, ProblemResult
+from engine.regression.runner import (
+    CHANNEL_BASELINE,
+    CHANNEL_REAL,
+    AcceptanceReport,
+    ProblemResult,
+)
 
 
 class EvidenceWriter:
@@ -55,11 +60,18 @@ class EvidenceWriter:
             "generated_at": _now_iso(),
             "total": len(report.results),
             "passed": sum(1 for r in report.results if r.passed),
+            # 分母与比率同框：没有 samples 这一栏，"success_rate_real_key: 0.0" 就分不清
+            # "真实通道全挂"与"本批根本没跑真实通道"（DEC-024 的判定门恰好靠这个区别）。
+            "samples": {
+                "all": report.sample_count(),
+                "fakellm": report.sample_count(CHANNEL_BASELINE),
+                "real_key": report.sample_count(CHANNEL_REAL),
+            },
             "success_rate_all": report.success_rate(),
-            "success_rate_baseline": report.success_rate("fakellm"),
-            "success_rate_real_key": report.success_rate("real_key"),
-            "by_category_baseline": report.by_category("fakellm"),
-            "failure_by_module_baseline": report.failure_by_module("fakellm"),
+            "success_rate_baseline": report.success_rate(CHANNEL_BASELINE),
+            "success_rate_real_key": report.success_rate(CHANNEL_REAL),
+            "by_category_baseline": report.by_category(CHANNEL_BASELINE),
+            "failure_by_module_baseline": report.failure_by_module(CHANNEL_BASELINE),
             "decision": str(report.decision()),
             **(extra or {}),
         }
@@ -92,8 +104,38 @@ def _path_cell(r: ProblemResult) -> str:
     return "·".join(parts)
 
 
+def _channel_split(report: AcceptanceReport) -> str:
+    """通道分桶计数（通过/总数；零样本明写"无样本"）。"""
+    parts = []
+    for channel in (CHANNEL_BASELINE, CHANNEL_REAL):
+        total = report.sample_count(channel)
+        parts.append(
+            f"{channel} {report.passed_count(channel)}/{total}"
+            if total
+            else f"{channel} 无样本"
+        )
+    return " · ".join(parts)
+
+
+def _rate_line(
+    label: str, report: AcceptanceReport, channel: str | None, note: str = ""
+) -> str:
+    """成功率一律带分母；零样本通道写"无样本"，不写 0.00%。
+
+    `success_rate()` 在零样本时返回 0.0（含义是"没测过"），照原样渲染就得到
+    "真实 Key 通道成功率：0.00%"——在判定报告里这会被读成"真实通道全挂"，而实际是本批
+    只跑了 FakeLLM 护栏。缺证据一律记"未测量"，不补一个看起来合理的数（DEC-024 的判定门
+    恰恰依赖这两者的区别）。
+    """
+    total = report.sample_count(channel)
+    if not total:
+        return f"- {label}：—（无样本，未测量）{note}"
+    return f"- {label}：{report.success_rate(channel):.2%}（{report.passed_count(channel)}/{total}）{note}"
+
+
 def render_markdown(report: AcceptanceReport, *, title: str = "SP1-7 回归基线报告") -> str:
     """渲染 Markdown 报告：总体/题型分布/失败归因/逐题明细。"""
+    baseline_total = report.sample_count(CHANNEL_BASELINE)
     lines = [
         f"# {title}",
         "",
@@ -101,30 +143,37 @@ def render_markdown(report: AcceptanceReport, *, title: str = "SP1-7 回归基�
         "",
         "## 1. 总体",
         "",
-        f"- 题目总数：{len(report.results)}",
-        f"- 通过：{sum(1 for r in report.results if r.passed)}",
+        f"- 题目总数：{report.sample_count()}",
+        f"- 通过：{report.passed_count()}（{_channel_split(report)}）",
         f"- **{_path_distribution(report.results)}**"
         "（厂商不支持 tools 时全套会静默降级，成功率不变但工具链从未被验过）",
-        f"- 全量成功率：{report.success_rate():.2%}",
-        f"- FakeLLM 通道成功率：{report.success_rate('fakellm'):.2%}"
-        "（回归护栏，不计判定分母，DEC-024）",
-        f"- 真实 Key 通道成功率：{report.success_rate('real_key'):.2%}",
+        _rate_line("全量成功率", report, None),
+        _rate_line(
+            "FakeLLM 通道成功率", report, CHANNEL_BASELINE,
+            "（回归护栏，不计判定分母，DEC-024）",
+        ),
+        _rate_line("真实 Key 通道成功率", report, CHANNEL_REAL),
         "",
         "## 2. 题型分布（FakeLLM 通道）",
         "",
-        "| 题型 | 总数 | 通过 |",
-        "|---|---|---|",
     ]
-    for category, stat in report.by_category("fakellm").items():
-        lines.append(f"| {category} | {stat['total']} | {stat['passed']} |")
+    if not baseline_total:
+        # 空表在这里会被读成"该题型零失败"，而真实含义是"根本没跑这个通道"
+        lines.append("本批 FakeLLM 通道**无样本**——本节不适用，不是零失败。")
+    else:
+        lines += ["| 题型 | 总数 | 通过 |", "|---|---|---|"]
+        for category, stat in report.by_category(CHANNEL_BASELINE).items():
+            lines.append(f"| {category} | {stat['total']} | {stat['passed']} |")
     lines += [
         "",
         "## 3. 失败归因（FakeLLM 通道）",
         "",
     ]
-    failures = report.failure_by_module("fakellm")
-    if not failures:
-        lines.append("无失败样本。")
+    failures = report.failure_by_module(CHANNEL_BASELINE)
+    if not baseline_total:
+        lines.append("本批 FakeLLM 通道**无样本**：这里不是「无失败」，而是没测过。")
+    elif not failures:
+        lines.append(f"无失败样本（FakeLLM 通道 {baseline_total} 题全部通过）。")
     else:
         lines += ["| 模块 | 数量 |", "|---|---|"]
         for module, count in sorted(failures.items()):
