@@ -14,9 +14,11 @@ from hashlib import sha256
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import Any
+from uuid import uuid4
 
 from engine.ipc.throttle import DeltaThrottler
 from engine.orchestrator.solve_loop import SolveLoop
+from engine.tools.base import SyntheticToolCall, ToolContext
 
 # ----------------------------------------------------------------------
 # 阶段完成回调端口（留痕接线，SP1-6）
@@ -123,7 +125,9 @@ class StagePipeline:
     作为 `StageOrchestrator(runner=pipeline.process)` 注入，接上 SP1-4 沙箱、
     SP1-5 适配层与 SP1-6 留痕（sink 回调）。
     W11：registry/operations/solve_llm 注入且 tool_mode="tool_loop" 时，solving 走
-    模型驱动工具循环；否则保持既有阶段级路径（无工具能力端点降级，EN-CAP 路由）。
+    模型驱动工具循环；否则保持阶段级路径（无工具能力端点降级，EN-CAP 路由）。
+    W23②：阶段级路径的那一次沙箱执行也经 Registry 分发（留 tool.call/tool.result 与
+    tool_call 留痕），但喂给模型的仍是未截断的 `facts()`，不是模型的 `summary` 视图。
     """
 
     def __init__(
@@ -240,26 +244,55 @@ class StagePipeline:
         if registry is not None and solve_llm is not None and operations is not None \
                 and self._tool_mode == "tool_loop":
             return await self._solving_tool_loop(task_id, registry, solve_llm, operations)
-        # 阶段级路径（tool_mode=stage_level：无工具能力端点降级，行为与 SP1-7 一致）
+        # 阶段级路径（tool_mode=stage_level：无工具能力端点降级）。模型可见输出与 SP1-7 一致；
+        # W23② 起执行经 Registry 分发，多出来的只有 tool.call/tool.result 与 tool_call 留痕。
         if self._sandbox is None:
             raise RuntimeError("solving 需要注入沙箱（SP1-4 SubprocessSandbox）")
         work_dir = self._work_root / task_id
-        result = await self._sandbox.execute(_SOLVE_SCRIPT, {}, work_dir)
+        facts = (
+            await self._solve_via_registry(task_id, registry, work_dir)
+            if registry is not None
+            else (await self._sandbox.execute(_SOLVE_SCRIPT, {}, work_dir)).facts()
+        )
         prompt = (
             f"{self._problem_block(task_id)}\n\n"
-            f"【阶段级求解输出】\n{result.stdout.strip()}\n\n请复核求解结果是否合理。"
+            f"【阶段级求解输出】\n{facts['stdout']}\n\n请复核求解结果是否合理。"
         )
         reply = await self._llm([{"role": "user", "content": prompt}], "solving")
         return {
             "stage": "solving",
-            "exit_code": result.exit_code,
-            "stdout": result.stdout.strip(),
-            "timed_out": result.timed_out,
-            "artifacts": result.artifacts,
+            "exit_code": facts["exit_code"],
+            "stdout": facts["stdout"],
+            "timed_out": facts["timed_out"],
+            "artifacts": facts["artifacts"],
             "model": reply.get("model", "unknown"),
             "usage": reply["usage"],
             "duration_ms": _duration(reply),
         }
+
+    async def _solve_via_registry(
+        self, task_id: str, registry: Any, work_dir: Path
+    ) -> dict[str, Any]:
+        """阶段级求解也走 Registry 分发（W23②）：降级通道同样要留 tool.call/tool.result 与
+        tool_call 留痕，否则审计里这题"一次工具都没用"，而实际上跑了代码。
+
+        模型可见内容**一字不改**：复核提示词用的是 `ToolResult.data`（未截断的 `facts()`），
+        不是给模型看的 `summary`（脱敏 + 截到 2000）——放宽那个上限就是动判定通道。
+        """
+        call = SyntheticToolCall(
+            id=f"stage-{task_id}-{uuid4().hex[:8]}",
+            name="execute_code",
+            arguments_json=json.dumps({"code": _SOLVE_SCRIPT, "language": "python"}),
+        )
+        result = await registry.dispatch(
+            call, ToolContext(task_id=task_id, stage="solving", work_dir=work_dir)
+        )
+        if not result.data:
+            # 没跑成代码却继续往下走 = 拿空 stdout 让模型"复核合理性"，比报错更坏（EC 原则 2）。
+            code = result.error.code if result.error else "NO_DATA"
+            message = result.error.message if result.error else "分发未返回执行事实"
+            raise RuntimeError(f"阶段级求解未经沙箱执行（{code}）：{message}")
+        return dict(result.data)
 
     async def _solving_tool_loop(self, task_id: str, registry: Any, solve_llm: Any, operations: Any) -> dict[str, Any]:
         """W11：模型驱动工具循环（decide → dispatch → finalize，副作用幂等）。"""

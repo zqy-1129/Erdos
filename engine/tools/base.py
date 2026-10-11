@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ToolError(BaseModel):
@@ -30,6 +30,10 @@ class ToolResult(BaseModel):
     result_ref: str | None = None  # 产物引用（工作目录相对路径）
     duration_ms: int = 0
     error: ToolError | None = None
+    # 引擎内部消费的未截断执行事实（`ExecutionResult.facts()`）。**不进事件、不进留痕、不回注
+    # 模型**：模型侧永远只看 summary 这一份视图。它的唯一用途是让不经模型的工具调用方
+    # （阶段级降级求解，W23②）拿到全文，而不必把 summary 的截断上限放宽——那是判定通道。
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolContext(BaseModel):
@@ -51,6 +55,19 @@ class ToolCallLike(Protocol):
 
     @property
     def arguments_json(self) -> str: ...
+
+
+@dataclass(frozen=True, slots=True)
+class SyntheticToolCall:
+    """引擎自发的工具调用（没有模型参与也会发生，如阶段级降级求解 W23②）。
+
+    满足 `ToolCallLike`，因此与模型发起的调用共用同一条 dispatch：事件、留痕、错误映射
+    只有一份实现。调用方不得绕过 dispatch 自己写留痕——那正是"一句约定盖两种库"。
+    """
+
+    id: str
+    name: str
+    arguments_json: str
 
 
 @dataclass(frozen=True, slots=True)

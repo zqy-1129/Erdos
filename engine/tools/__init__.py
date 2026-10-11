@@ -5,7 +5,14 @@
 不反向依赖编排器与 IPC 方法层。
 """
 
-from engine.tools.base import ToolCallLike, ToolContext, ToolError, ToolResult, ToolSpec
+from engine.tools.base import (
+    SyntheticToolCall,
+    ToolCallLike,
+    ToolContext,
+    ToolError,
+    ToolResult,
+    ToolSpec,
+)
 from engine.tools.code_tools import ExecuteCodeArgs, make_execute_code
 from engine.tools.plot_tools import PlotFigureArgs, SeriesSpec, build_plot_script, make_plot_figure
 from engine.tools.registry import ToolRegistry, clip, mask_secrets
@@ -60,6 +67,7 @@ __all__ = [
     "PlotFigureArgs",
     "SearchReferencesArgs",
     "SeriesSpec",
+    "SyntheticToolCall",
     "ToolCallLike",
     "ToolContext",
     "ToolError",

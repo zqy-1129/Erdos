@@ -386,10 +386,12 @@ async def test_real_key_channel_full_chain_with_mock_vendor(tmp_path) -> None:
 
 
 async def test_real_key_channel_stage_level_degradation(tmp_path) -> None:
-    """降级路径保持可达：ERDOS_TOOL_MODE=stage_level 时四阶段各一次调用、无工具留痕。
+    """降级路径保持可达：ERDOS_TOOL_MODE=stage_level 时四阶段各一次调用、无内循环。
 
     W39 把默认装配翻成 tool_loop 后，降级分支不能只在单测里存在——这里用同一进程级
     链路证明显式降级仍然工作（工具能力不足/厂商不支持 tools 时的真实形态）。
+    W23② 之后本用例的"无工具留痕"期望已作废：solving 那次沙箱执行现在经 Registry 分发，
+    审计里必须看得见（看不见就是留痕与实际执行不符）。
     """
     problem = REGRESSION_SET[0]
     server = _MockVendorServer(fail_first=0, retry_after=0, tools_mode=False)
@@ -410,7 +412,11 @@ async def test_real_key_channel_stage_level_degradation(tmp_path) -> None:
     assert result.prompt_tokens == 4 * _MOCK_USAGE["prompt_tokens"]
     home = tmp_path / "homes" / problem.business_id
     task_id = f"reg-{problem.business_id}"
-    assert EventType.TOOL_CALL not in _trail_event_types(home / "audit.db", task_id)
+    types = _trail_event_types(home / "audit.db", task_id)
+    assert types.count(EventType.TOOL_CALL) == 1, (
+        f"降级通道应恰留一条 tool_call（solving 的那次沙箱执行），实际 {types.count(EventType.TOOL_CALL)}："
+        "0 条＝审计显示'一次工具都没用'而实际跑了代码，>1 条＝阶段级路径混进了内循环"
+    )
 
 
 async def test_real_key_channel_429_retry_after_through_process(tmp_path) -> None:

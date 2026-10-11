@@ -8,7 +8,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass(slots=True)
@@ -24,6 +24,21 @@ class ExecutionResult:
     # 超限由**引擎按观测峰值主动终止**（W22）。与 timed_out 分开是两个归因：
     # "代码自己 MemoryError 崩了"和"沙箱按 PRD §6.1 的承诺强杀了它"必须能区分。
     memory_exceeded: bool = False
+
+    def facts(self) -> dict[str, Any]:
+        """执行事实的**引擎内视图**（未截断，供编排层消费）。
+
+        与 `ToolResult.summary` 的分工是这条接口存在的理由：summary 是**给模型看**的视图
+        （脱敏 + 截到 2000 字符），facts 是给编排层的事实。阶段级降级通道要拿全文去复核，
+        顺手把它截到 2000 等于改判定通道行为（W23② 的前置）。
+        只含编排层实际消费的四个字段——多给一个就是第二个真相源。
+        """
+        return {
+            "stdout": self.stdout.strip(),
+            "exit_code": self.exit_code,
+            "timed_out": self.timed_out,
+            "artifacts": list(self.artifacts),
+        }
 
 
 class Sandbox(Protocol):

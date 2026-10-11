@@ -36,6 +36,7 @@ def make_execute_code(sandbox: Sandbox):
                 ok=False,
                 error=ToolError(code="TOOL_FAILED", message="执行超时，已被强制终止"),
                 summary=result.stdout.strip(),
+                data=result.facts(),
             )
         if result.memory_exceeded:
             # 独立错误码：让模型知道"是沙箱按 ≤2GB 的承诺拦下了你"，而不是"代码跑崩了"。
@@ -45,6 +46,7 @@ def make_execute_code(sandbox: Sandbox):
                 ok=False,
                 error=ToolError(code="TOOL_MEMORY_LIMIT", message=result.error or "内存超过沙箱限额"),
                 summary=result.stdout.strip(),
+                data=result.facts(),
             )
         if result.exit_code != 0:
             tail = (result.stderr or result.error or "").strip()
@@ -52,10 +54,11 @@ def make_execute_code(sandbox: Sandbox):
                 ok=False,
                 error=ToolError(code="TOOL_FAILED", message=f"退出码 {result.exit_code}：{tail}"),
                 summary=result.stdout.strip(),
+                data=result.facts(),
             )
         ref = result.artifacts[0] if result.artifacts else None
         if ref is not None and not validate_artifact_path(ctx.work_dir, ref):
             ref = None  # 越权产物路径不外引（逃逸防护，AT-13）
-        return ToolResult(ok=True, summary=result.stdout.strip(), result_ref=ref)
+        return ToolResult(ok=True, summary=result.stdout.strip(), result_ref=ref, data=result.facts())
 
     return execute

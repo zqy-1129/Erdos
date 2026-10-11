@@ -156,10 +156,17 @@ v2 客户端在拉起后、首个任务前必须调用 `initialize`：
   （`engine/tests/test_rpc_flow.py::test_real_key_channel_full_chain_with_mock_vendor` /
   `::test_real_key_channel_stage_level_degradation`）。矩阵 `probe_source=fixture`，真实端点是否
   真支持 tools 仍需 `provider_test` 实测校准（W33）。
+- **降级通道也留工具痕迹**（W23② 起）：`stage_level` 的那一次沙箱执行同样经 `registry.dispatch`
+  分发，因此 `tool.call` / `tool.result` 事件与 `tool_call` 留痕在**两条路径都可达**（此前降级
+  通道一条都没有，审计里显示"这题一次工具都没用"）。宿主侧无需改动：时间线多一条 `execute_code`
+  是如实反映。**喂给模型的求解输出不变**——复核提示词用的是未截断的执行事实，不是给模型看的
+  2000 字符摘要视图。
 - **流式请求现在向厂商索取 usage**：引擎在 `stream=true` 时带 `stream_options={"include_usage":
   true}`（W8 契约的请求侧，此前只实现了消费侧，真实厂商流式恒走本地估算）。这是**出站请求体**
   变化，不属本进程间协议，但对厂商可见：不接受未知字段的严格网关会报 400，属 W33 真厂商通道待
-  验证项。估算标记 `estimated` 目前不出留痕与事件面（登记为 G35）。
+  验证项。估算标记 `estimated` **已**随用量出留痕与 `get_status` 出口（G35 同日关闭，口径见
+  《引擎侧文档一致性与口径对齐》§8.9；本行此前写"目前不出留痕与事件面"，是 G35 关闭后忘改的
+  陈旧口径，2026-10-11 更正）。
 
 *修订记录追加：2026-10-11 编排内核自研替换批次——新增 §8（回退开关 + env 剥离）、§8.1；
 删除 §1 示例中的幻象变量 `ERDOS_ENGINE_MODE`；修复 §7 表尾行被 §8 顶出的排版错误。*
