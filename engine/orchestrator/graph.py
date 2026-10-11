@@ -1,14 +1,18 @@
-"""四阶段编排器（SP1-2）—— LangGraph 1.x 状态机实现。
+"""四阶段编排器（SP1-2）。
 
 执行计划要求（SP1-2）：
-- LangGraph 四阶段状态机（分析→建模→求解→报告），阶段顺序硬编码禁止跳级；
-- 每阶段后接门禁节点：interrupt 挂起，answer_gate 以 Command(resume) 注入人工干预；
+- 四阶段状态机（分析→建模→求解→报告），阶段顺序硬编码禁止跳级；
+- 每阶段后接门禁节点：挂起等待，answer_gate 注入人工干预后自挂起点继续；
 - Checkpoint 落 SQLite（checkpoint.SQLiteCheckpointStore，与《数据模型设计》checkpoint_data 语义对齐）；
 - 落库前对数据做敏感键脱敏：检查点不落 Key 明文。
 
-图结构：START →(按 stage_index 路由)→ stage 节点 → gate 节点（interrupt）
+图结构：START →(按 stage_index 路由)→ stage 节点 → gate 节点（挂起）
         → finish → END；pass 使 stage_index+1、reject 清除当前阶段结果（前序不受影响）。
 对外 API 与 SP1-1/SP1-2 既有调用方完全兼容（run_current_stage / answer_gate / restore / state）。
+
+图**怎么装配**由 `backend.py` 按 `ERDOS_ORCH_IMPL` 选择（LangGraph 或自研内核）；
+本文件只描述拓扑与语义，两套后端共用同一份节点体——阶段顺序、门禁决策、恢复定位
+只有一份实现，双轨比对因此只比框架层。
 """
 
 from collections.abc import Awaitable, Callable
@@ -16,11 +20,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, TypedDict
 
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.graph import END, START, StateGraph
-from langgraph.types import Command, interrupt
-
 from engine.gates.hard_checks import check_stage
+from engine.orchestrator.backend import END, build_stage_graph
 from engine.trail.redact import redact_sensitive  # 检查点脱敏（密钥域红线，公共实现）
 
 # 四阶段固定顺序（禁止跳级）
@@ -84,7 +85,7 @@ class OrchestratorState:
 
 
 # ----------------------------------------------------------------------
-# LangGraph 状态与节点 schema（每节点产出入 schema 化）
+# 图状态 schema 与拓扑（后端中性的描述，由 backend.py 装配）
 # ----------------------------------------------------------------------
 
 class GraphState(TypedDict, total=False):
@@ -112,9 +113,29 @@ class StageNodeOutput(TypedDict):
 
 
 class GateDecision(TypedDict):
-    """门禁决策载荷（interrupt resume 注入）。"""
+    """门禁决策载荷（挂起恢复时注入）。"""
 
     decision: str
+    feedback: str
+
+
+# 通道名从 schema 注解导出：自研内核的声明与 TypedDict 不可能各写一遍再漂移
+GRAPH_CHANNELS = tuple(GraphState.__annotations__)
+
+FINISH_NODE = "finish"
+
+
+def gate_node_name(stage: str) -> str:
+    """门禁节点名——`gate_{stage}` 已进 RPC 事件（gate.failed.gate），不可更名。"""
+    return f"gate_{stage}"
+
+
+_STATIC_EDGES: dict[str, str] = {
+    **{stage: gate_node_name(stage) for stage in STAGES},
+    **{gate_node_name(stage): FINISH_NODE for stage in STAGES},
+    FINISH_NODE: END,
+}
+_ENTRY_MAP: dict[str, str] = {stage: stage for stage in STAGES}
 
 
 # 阶段执行器注入点（SP1-3/SP1-4/SP1-5 真实阶段逻辑经此接入）
@@ -126,73 +147,78 @@ async def _default_stage_runner(task_id: str, stage: str) -> dict:
     return {}
 
 
-def build_orchestrator_graph(runner: StageRunner):
-    """构建 LangGraph 四阶段图：START 路由 + 4 阶段节点 + 4 门禁节点 + finish。"""
-    builder = StateGraph(GraphState)
-
-    def make_stage_node(stage: str):
-        async def node(state: StageNodeInput) -> StageNodeOutput:
-            index = int(state.get("stage_index", 0))
-            if STAGES[index] != stage:
-                raise RuntimeError(f"阶段顺序约束：期望 {STAGES[index]}，实际 {stage}")
-            results = dict(state.get("results") or {})
-            if stage in results:
-                # 恢复重挂门禁路径：阶段产物已在检查点（门禁未决崩溃后恢复），
-                # 跳过执行不重放副作用（DEC-005），图继续推进到门禁 interrupt。
-                return {"results": results}
-            data = await runner(str(state.get("task_id", "")), stage)
-            results[stage] = {"status": StageStatus.DONE.value, "step": 0, "data": data}
-            return {"results": results}
-
-        return node
-
-    def make_gate_node(stage: str):
-        async def node(state: GraphState) -> dict:
-            # 挂起等待门禁评审；Command(resume) 注入决策后自此处继续
-            payload = interrupt({"stage": stage, "message": "等待门禁评审"})
-            if isinstance(payload, dict):
-                decision = str(payload.get("decision", ""))
-            else:
-                decision = str(payload)
-            index = int(state.get("stage_index", 0))
-            if decision == "pass":
-                return {
-                    "stage_index": min(index + 1, len(STAGES) - 1),
-                    "gate_decision": "pass",
-                }
-            # reject：清除当前阶段结果（前序阶段不受影响），index 不变 → 重跑
-            results = dict(state.get("results") or {})
-            results.pop(stage, None)
-            return {"results": results, "gate_decision": "reject"}
-
-        return node
-
-    def start_route(state: GraphState) -> str:
+def make_stage_node(stage: str, runner: StageRunner):
+    async def node(state: StageNodeInput) -> StageNodeOutput:
         index = int(state.get("stage_index", 0))
-        if not 0 <= index < len(STAGES):
-            raise RuntimeError(f"非法阶段索引：{index}")
-        return STAGES[index]
+        if STAGES[index] != stage:
+            raise RuntimeError(f"阶段顺序约束：期望 {STAGES[index]}，实际 {stage}")
+        results = dict(state.get("results") or {})
+        if stage in results:
+            # 恢复重挂门禁路径：阶段产物已在检查点（门禁未决崩溃后恢复），
+            # 跳过执行不重放副作用（DEC-005），图继续推进到门禁挂起点。
+            return {"results": results}
+        data = await runner(str(state.get("task_id", "")), stage)
+        results[stage] = {"status": StageStatus.DONE.value, "step": 0, "data": data}
+        return {"results": results}
 
-    async def finish_node(state: GraphState) -> dict:
-        return {}
+    return node
 
-    for stage in STAGES:
-        builder.add_node(stage, make_stage_node(stage))
-    for stage in STAGES:
-        gate_name = f"gate_{stage}"  # LangGraph 节点名不允许 ':' 等保留字符
-        builder.add_node(gate_name, make_gate_node(stage))
-        builder.add_edge(stage, gate_name)
-        builder.add_edge(gate_name, "finish")
-    builder.add_node("finish", finish_node)
-    builder.add_edge("finish", END)
-    builder.add_conditional_edges(START, start_route, {stage: stage for stage in STAGES})
-    return builder
+
+def make_gate_node(stage: str, suspend: Callable[[dict], Any]):
+    async def node(state: GraphState) -> dict:
+        # 挂起等待门禁评审；注入决策后自此处继续（suspend 由后端提供，恢复时交出决策）
+        payload = suspend({"stage": stage, "message": "等待门禁评审"})
+        if isinstance(payload, dict):
+            decision = str(payload.get("decision", ""))
+        else:
+            decision = str(payload)
+        index = int(state.get("stage_index", 0))
+        if decision == "pass":
+            return {
+                "stage_index": min(index + 1, len(STAGES) - 1),
+                "gate_decision": "pass",
+            }
+        # reject：清除当前阶段结果（前序阶段不受影响），index 不变 → 重跑
+        results = dict(state.get("results") or {})
+        results.pop(stage, None)
+        return {"results": results, "gate_decision": "reject"}
+
+    return node
+
+
+def start_route(state: GraphState) -> str:
+    index = int(state.get("stage_index", 0))
+    if not 0 <= index < len(STAGES):
+        raise RuntimeError(f"非法阶段索引：{index}")
+    return STAGES[index]
+
+
+async def finish_node(state: GraphState) -> dict:
+    return {}
+
+
+def build_orchestrator_graph(runner: StageRunner, task_id: str, impl: str | None = None):
+    """按当前后端装配四阶段主图，返回 `CompiledGraph`（原返回裸 StateGraph builder 的签名已上移一层）。"""
+    return build_stage_graph(
+        task_id=task_id,
+        schema=GraphState,
+        channels=GRAPH_CHANNELS,
+        static=_STATIC_EDGES,
+        entry_map=_ENTRY_MAP,
+        route=start_route,
+        make_nodes=lambda suspend: {
+            **{stage: make_stage_node(stage, runner) for stage in STAGES},
+            **{gate_node_name(stage): make_gate_node(stage, suspend) for stage in STAGES},
+            FINISH_NODE: finish_node,
+        },
+        impl=impl,
+    )
 
 
 class StageOrchestrator:
-    """LangGraph 四阶段编排器（API 与 SP1-1 骨架完全兼容）。
+    """四阶段编排器（API 与 SP1-1 骨架完全兼容）。
 
-    每阶段流程：run_current_stage → 阶段节点执行 → 门禁 interrupt 挂起
+    每阶段流程：run_current_stage → 阶段节点执行 → 门禁挂起
               → answer_gate(pass) 推动 stage_index（不自动执行下一阶段）
               → answer_gate(reject) 清除当前阶段结果重跑（前序保留）。
     崩溃恢复：restore() 从 SQLite 检查点重建（图状态以恢复结果 seed）。
@@ -203,6 +229,7 @@ class StageOrchestrator:
         task_id: str,
         checkpoint: CheckpointStore | None = None,
         runner: StageRunner | None = None,
+        impl: str | None = None,
     ) -> None:
         self._task_id = task_id
         self._checkpoint = checkpoint
@@ -213,10 +240,7 @@ class StageOrchestrator:
         self.last_hard_reject: str | None = None
         self._seeded = False
         self._seed: dict[str, Any] = {}
-        self._graph = build_orchestrator_graph(self._runner).compile(
-            checkpointer=InMemorySaver()
-        )
-        self._config: dict[str, Any] = {"configurable": {"thread_id": task_id}}
+        self._backend = build_orchestrator_graph(self._runner, task_id, impl=impl)
 
     # ------------------------------------------------------------------
     # 对外视图（兼容既有调用方）
@@ -233,8 +257,8 @@ class StageOrchestrator:
         return self._state.current_index >= len(STAGES) - 1
 
     def graph(self):
-        """暴露编译后的 LangGraph 图（测试结构化断言用）。"""
-        return self._graph
+        """暴露编译后的图（测试结构化断言用）；两套后端提供同名同形的自省接口。"""
+        return self._backend.raw()
 
     # ------------------------------------------------------------------
     # 阶段推进
@@ -251,7 +275,7 @@ class StageOrchestrator:
             result = self._state.stages.get(self._state.current_stage)
             return result.data if result else {}
         invoke_input = await self._ensure_seeded()
-        result = await self._graph.ainvoke(invoke_input, self._config)
+        result = await self._backend.run(invoke_input)
         self._sync(result)
         current = self._state.stages.get(self._state.current_stage)
         self._gate_waiting = True
@@ -270,7 +294,7 @@ class StageOrchestrator:
         return current.data if current is not None else {}
 
     async def answer_gate(self, decision: str, feedback: str = "") -> dict:
-        """门禁评审结果注入（人工干预）：Command(resume) 恢复挂起的门禁节点。
+        """门禁评审结果注入（人工干预）：把决策交回挂起点，恢复被挂起的门禁节点。
 
         兼容既有调用方：无挂起门禁时按旧语义直接驱动（幂等记录决策并推进/回退）。
         """
@@ -300,9 +324,8 @@ class StageOrchestrator:
             self._state.gate_decision = None
             return {"action": "next_stage", "stage": self._state.current_stage}
         gate_stage = self._state.current_stage
-        result = await self._graph.ainvoke(
-            Command(resume={"decision": decision, "feedback": feedback}), self._config
-        )
+        payload: GateDecision = {"decision": decision, "feedback": feedback}
+        result = await self._backend.resume(payload)
         self._sync(result)
         self._gate_waiting = False
         if decision == "reject":
@@ -327,6 +350,7 @@ class StageOrchestrator:
         task_id: str,
         checkpoint: CheckpointStore,
         runner: StageRunner | None = None,
+        impl: str | None = None,
     ) -> "StageOrchestrator":
         """从检查点恢复编排器：已落库阶段全部还原，按门禁状态定位当前阶段。
 
@@ -336,7 +360,7 @@ class StageOrchestrator:
         runner 必须随恢复注入（生产路径与 SP1-7 断点恢复演练共用）：
         恢复的编排器还要执行剩余阶段，丢 runner 会静默退化为骨架空产出。
         """
-        orchestrator = cls(task_id, checkpoint, runner=runner)
+        orchestrator = cls(task_id, checkpoint, runner=runner, impl=impl)
         completed = checkpoint.completed_stages(task_id)
         seed_results: dict[str, dict[str, Any]] = {}
         for record in completed:
@@ -362,7 +386,7 @@ class StageOrchestrator:
             "results": seed_results,
         }
         # _seeded 保持 False：首次 run_current_stage 经 _ensure_seeded 注入种子，
-        # 图从恢复定位的阶段继续（新实例的 InMemorySaver 为空，不能靠 checkpointer 续状态）。
+        # 图从恢复定位的阶段继续（新实例的线程态为空，不能靠图自身续状态）。
         orchestrator._seeded = False
         return orchestrator
 

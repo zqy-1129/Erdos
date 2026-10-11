@@ -1,4 +1,4 @@
-"""求解内循环（EN-LOOP W11）：模型驱动工具循环（LangGraph 子图）。
+"""求解内循环（EN-LOOP W11）：模型驱动工具循环。
 
 图结构（设计 §7.1）：
     START → decide ─(tool_calls)→ dispatch → decide（回注后再决策）
@@ -22,13 +22,11 @@ import math
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol
-
-from langgraph.graph import END, START, StateGraph
-from typing_extensions import TypedDict
+from typing import Protocol, TypedDict
 
 from engine.adapters.openai_compat import ChatMessage, ChatResult, ToolCall
 from engine.ipc.throttle import DeltaThrottler
+from engine.orchestrator.backend import END, build_loop_graph
 from engine.orchestrator.operations import OperationLog, OperationRecord
 from engine.sandbox.base import validate_artifact_path
 from engine.tools import ToolRegistry
@@ -127,6 +125,10 @@ class SolveState(TypedDict, total=False):
     usage: dict
 
 
+# 通道名从 schema 注解导出：两套后端共用同一份声明，不会各写一遍再漂移
+LOOP_CHANNELS = tuple(SolveState.__annotations__)
+
+
 class SolveLLMPort(Protocol):
     """求解循环的 LLM 端口协议：携带 tools 的 chat（适配器经端口包装注入）。
 
@@ -154,6 +156,7 @@ class SolveLoop:
         max_repairs: int = MAX_REPAIRS,
         max_dispatches: int = MAX_DISPATCHES,
         delta_sink: Callable[[str, str], None] | None = None,  # (task_id, delta) → model.delta
+        impl: str | None = None,  # 编排后端（None=按 ERDOS_ORCH_IMPL；双轨比对显式指定）
     ) -> None:
         self._llm = llm
         self._registry = registry
@@ -164,7 +167,8 @@ class SolveLoop:
         self._max_repairs = max_repairs
         self._max_dispatches = max_dispatches
         self._delta_sink = delta_sink
-        self._graph = self._build()
+        self._impl = impl
+        self._backend = self._build()
 
     # ------------------------------------------------------------------
     async def run(self, task_prompt: str) -> dict:
@@ -192,7 +196,7 @@ class SolveLoop:
             "limitations": [],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0},
         }
-        final: SolveState = await self._graph.ainvoke(initial)
+        final: SolveState = await self._backend.run(initial)
         return {
             "status": final.get("status", "failed"),
             "results": final.get("results", []),
@@ -204,25 +208,34 @@ class SolveLoop:
 
     # ------------------------------------------------------------------
     def _build(self):
-        """构建 LangGraph 循环子图（decide/dispatch/finalize/handoff）。"""
-        builder = StateGraph(SolveState)
-        builder.add_node("decide", self._decide)
-        builder.add_node("dispatch", self._dispatch)
-        builder.add_node("finalize", self._finalize)
-        builder.add_node("handoff", self._handoff)
-        builder.add_edge(START, "decide")
-        builder.add_conditional_edges(
-            "decide", self._route_after_decide, {"dispatch": "dispatch", "finalize": "finalize"}
+        """装配循环图（decide/dispatch/finalize/handoff）；后端由 `ERDOS_ORCH_IMPL` 选择。"""
+        return build_loop_graph(
+            schema=SolveState,
+            channels=LOOP_CHANNELS,
+            entry="decide",
+            nodes={
+                "decide": self._decide,
+                "dispatch": self._dispatch,
+                "finalize": self._finalize,
+                "handoff": self._handoff,
+            },
+            static={"handoff": END},
+            conditional={
+                "decide": (
+                    self._route_after_decide,
+                    {"dispatch": "dispatch", "finalize": "finalize"},
+                ),
+                "dispatch": (
+                    self._route_after_budget,
+                    {"decide": "decide", "handoff": "handoff"},
+                ),
+                "finalize": (
+                    self._route_after_finalize,
+                    {"decide": "decide", "handoff": "handoff", "done": END},
+                ),
+            },
+            impl=self._impl,
         )
-        builder.add_conditional_edges(
-            "dispatch", self._route_after_budget, {"decide": "decide", "handoff": "handoff"}
-        )
-        builder.add_conditional_edges(
-            "finalize", self._route_after_finalize,
-            {"decide": "decide", "handoff": "handoff", "done": END},
-        )
-        builder.add_edge("handoff", END)
-        return builder.compile()
 
     def _route_after_finalize(self, state: SolveState) -> str:
         if state.get("status") == "succeeded":
