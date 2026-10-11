@@ -83,6 +83,7 @@ class FakeLLMFlow:
         sandbox: Sandbox | None = None,
         work_root: Path | None = None,
         llm: ChatLLM | None = None,
+        impl: str | None = None,
     ) -> None:
         self._store = None
         if checkpoint_path:
@@ -97,9 +98,14 @@ class FakeLLMFlow:
             task_inputs={task_id: {"title": title, "problem_text": problem_text}},
             state_loader=self._checkpoint_history,
         )
-        self._orch = StageOrchestrator(task_id, checkpoint=self._store, runner=pipeline.process)
+        self._impl = impl
+        self._orch = StageOrchestrator(
+            task_id, checkpoint=self._store, runner=pipeline.process, impl=impl
+        )
         if self._store is not None and self._store.completed_stages(task_id):
-            self._orch = StageOrchestrator.restore(task_id, self._store, runner=pipeline.process)
+            self._orch = StageOrchestrator.restore(
+                task_id, self._store, runner=pipeline.process, impl=impl
+            )
 
     def _checkpoint_history(self, task_id: str) -> dict[str, dict[str, Any]]:
         """检查点 → 跨阶段上下文（恢复后管线水合；无检查点返回空）。"""

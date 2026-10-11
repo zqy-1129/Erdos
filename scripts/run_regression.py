@@ -24,7 +24,9 @@ summary.json 的 judge_usage；rubric 门禁要求真实 Key 通道——FakeLLM
 
 import argparse
 import asyncio
+import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +37,7 @@ from engine.adapters.openai_compat import ChatMessage, ModelConfig, OpenAIChatAd
 from engine.gates.llm_evaluator import LlmRubricEvaluator
 from engine.gates.schema import load_rubric_for_stage
 from engine.ipc.stdio import configure_stdio
+from engine.orchestrator.backend import IMPL_LANGGRAPH, IMPL_NATIVE
 from engine.orchestrator.graph import STAGES
 from engine.regression.evidence import EvidenceWriter
 from engine.regression.flow import FakeLLMFlow
@@ -72,14 +75,25 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--gate", choices=("autopass", "rubric"), default="autopass",
                         help="门禁口径：autopass=基线自动通过；rubric=SP1-3 LLM 评委真实评审"
                              "（需真实 Key 通道，SP1-7 判定用）")
+    parser.add_argument("--parity", action="store_true",
+                       help="双轨校验（T2）：同一回归集在 langgraph 与自研内核两个后端上各跑一遍，"
+                            "逐题逐字段比对；只在 FakeLLM 通道可用（真实 Key 双跑等于花用户两份 token）")
     return parser.parse_args()
 
 
-def _build_factory(args: argparse.Namespace):
-    """任务流工厂（依赖注入：驱动方式 / 沙箱模式 / 工作目录）。"""
+PARITY_IMPLS = (IMPL_LANGGRAPH, IMPL_NATIVE)
+
+
+def _build_factory(args: argparse.Namespace, impl: str | None = None):
+    """任务流工厂（依赖注入：驱动方式 / 沙箱模式 / 工作目录 / 编排后端）。
+
+    impl 给定时工作目录按后端分栈：两个后端的检查点库必须互不可见，否则第二次跑会
+    认出第一次的检查点而走进"恢复"分支，比对的就不是同一条路径了。
+    """
     import tempfile
 
-    work_root = Path(args.work_root) if args.work_root else Path(tempfile.mkdtemp(prefix="erdos-reg-"))
+    base_root = Path(args.work_root) if args.work_root else Path(tempfile.mkdtemp(prefix="erdos-reg-"))
+    work_root = base_root / impl if impl else base_root
     print(f"[工作目录] {work_root}")
 
     if args.driver == "rpc":
@@ -92,6 +106,8 @@ def _build_factory(args: argparse.Namespace):
             if not asyncio.run(detect_docker_available()):
                 sys.exit("要求 Docker 沙箱但环境不可用；请安装并启动 Docker Desktop 后重试")
             extra_env["ERDOS_SANDBOX_REQUIRE_DOCKER"] = "1"  # 引擎侧强制 Docker（DEC-006）
+        if impl:
+            extra_env["ERDOS_ORCH_IMPL"] = impl  # 双轨：引擎子进程按指定后端装配编排图
 
         def factory(problem):
             return RpcTaskFlow(
@@ -129,6 +145,7 @@ def _build_factory(args: argparse.Namespace):
             checkpoint_path=checkpoint_root / f"{problem.business_id}.db",
             sandbox=sandbox,
             work_root=work_root / problem.business_id,
+            impl=impl,
         )
 
     return factory_inproc
@@ -174,7 +191,103 @@ def _build_gate_policy(args: argparse.Namespace, judge_usage: dict):
     return RubricGatePolicy(LlmRubricEvaluator(judge_llm, usage_sink=record), rubrics)
 
 
+def _kill_plan_for(problems: list, disabled: bool) -> dict[str, str]:
+    """断点恢复演练计划：每类题型抽 1 题，modeling 完成后 kill（SP1-7 §2 恢复矩阵）。"""
+    if disabled:
+        return {}
+    plan: dict[str, str] = {}
+    seen: set[str] = set()
+    for problem in problems:
+        if problem.category not in seen:
+            seen.add(problem.category)
+            plan[problem.business_id] = "modeling"
+    return plan
+
+
+def _normalize_result(result) -> dict:  # noqa: ANN001 - ProblemResult（避免脚本侧硬耦合类型）
+    """比对用视图：只剥掉运行级波动（阶段耗时），其余字段全部参与判定。
+
+    刻意不做"忽略所有数值近似"的宽松比对——token 数、产物哈希、执行过的阶段序列
+    都是确定性量，两个后端不一致就是分歧。
+    """
+    payload = asdict(result)
+    for record in payload.get("stage_records", []):
+        record["duration_ms"] = None
+    return payload
+
+
+async def _run_parity(args: argparse.Namespace) -> int:
+    """双轨校验 T2：整套回归集在两个编排后端上各跑一遍，逐题逐字段比对。"""
+    if args.gate == "rubric":
+        sys.exit("--parity 不能配 --gate rubric：评委是真实模型调用，双跑等于花用户两份 token（BYOK 预算红线）")
+    if args.api_key:
+        sys.exit("--parity 只允许 FakeLLM 通道（去掉 --api-key）：真实 Key 双跑同样违反预算红线")
+    if args.sandbox == "docker" and args.driver == "inproc":
+        print("[提示] Docker 沙箱双跑会把每题沙箱时间翻倍；确需可另行分批评")
+
+    problems = stratified_sample(args.per_category) if args.per_category else REGRESSION_SET
+    kill_plan = _kill_plan_for(problems, args.no_kill_resume)
+    print(f"[双轨] {len(problems)} 题 × 后端 {', '.join(PARITY_IMPLS)}"
+          f" · 驱动={args.driver} · 恢复演练={len(kill_plan)} 题")
+
+    by_impl: dict[str, dict[str, dict]] = {}
+    rates: dict[str, float] = {}
+    for impl in PARITY_IMPLS:
+        evidence_root = Path(args.evidence) / impl
+        runner = AcceptanceRunner(_build_factory(args, impl), channel=CHANNEL_BASELINE)
+        report = await runner.run_all(
+            problems, kill_plan=kill_plan or None, evidence=EvidenceWriter(evidence_root)
+        )
+        by_impl[impl] = {r.business_id: _normalize_result(r) for r in report.results}
+        rates[impl] = report.success_rate(CHANNEL_BASELINE)
+        print(f"  [{impl}] 通过 {sum(1 for r in report.results if r.passed)}/{len(report.results)}"
+              f" · 成功率 {rates[impl]:.2%}")
+
+    divergences: list[dict] = []
+    fields = 0
+    for business_id in sorted(by_impl[PARITY_IMPLS[0]]):
+        left_row = by_impl[PARITY_IMPLS[0]][business_id]
+        right_row = by_impl[PARITY_IMPLS[1]].get(business_id)
+        if right_row is None:
+            divergences.append({"business_id": business_id, "field": "(整题)", "left": "有", "right": "缺"})
+            continue
+        for field in sorted(set(left_row) | set(right_row)):
+            fields += 1
+            if left_row.get(field) != right_row.get(field):
+                divergences.append({
+                    "business_id": business_id,
+                    "field": field,
+                    "left": left_row.get(field),
+                    "right": right_row.get(field),
+                })
+
+    payload = {
+        "problems": len(problems),
+        "impls": list(PARITY_IMPLS),
+        "fields_compared": fields,
+        "success_rate": rates,
+        "divergences": divergences,
+        "pass": not divergences and all(rate == 1.0 for rate in rates.values()),
+    }
+    out = Path(args.evidence)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "parity.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    print(f"[双轨] 比对字段 {fields} 个（{len(problems)} 题 × {fields // max(len(problems), 1)} 字段/题）")
+    for item in divergences[:20]:
+        print(f"  [分歧] {item['business_id']}.{item['field']}: "
+              f"{PARITY_IMPLS[0]}={item['left']!r} != {PARITY_IMPLS[1]}={item['right']!r}")
+    if payload["pass"]:
+        print(f"[PASS] 两后端逐题逐字段一致 · 证据 {out / 'parity.json'}")
+        return 0
+    print(f"[FAIL] 分歧 {len(divergences)} 处 或 任一后端成功率未达 100%"
+          f"（{rates}）· 证据 {out / 'parity.json'}")
+    return 1
+
+
 async def _run(args: argparse.Namespace) -> int:
+    if args.parity:
+        return await _run_parity(args)
     if args.api_key and not (args.base_url and args.model):
         sys.exit("Key 模式需要 --base-url 与 --model（引擎拒启红线：禁猜测端点）")
     problems = stratified_sample(args.per_category) if args.per_category else REGRESSION_SET
