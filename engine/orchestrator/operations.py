@@ -34,6 +34,9 @@ class OperationLog:
 
     def __init__(self, db_path: str) -> None:
         self._conn = sqlite3.connect(db_path)
+        # 与 checkpoints.db / audit.db 对称：幂等账本写失败会让恢复判定退回"未执行"，
+        # 不该因瞬时锁竞争把它变成随机红灯。
+        self._conn.execute("PRAGMA busy_timeout = 3000")
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS operations (

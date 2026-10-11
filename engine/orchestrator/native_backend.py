@@ -1,7 +1,9 @@
 """自研内核后端（`engine/orchestrator/kernel/` 的适配层）。
 
 与 `langgraph_backend.py` 严格对称：同样的中性拓扑描述进来，同样的 `CompiledGraph`
-调用面出去。两套后端可互换这一条本身由 `test_orchestrator_backend.py` 守护。
+调用面出去。"两套后端可互换"这条本身由三个文件守护：`test_backend_selection.py`
+（拓扑与调用面同形）、`test_orchestrator_parity.py`（逐序列比对行为）、
+`test_persistence_compat.py`（跨实现读写同一张检查点表）。
 """
 
 from collections.abc import Callable, Mapping

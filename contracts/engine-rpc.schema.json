@@ -32,12 +32,25 @@
     },
     "limits": {
       "max_line_bytes": 1048576,
-      "on_exceed": "protocol_error（EC-S6：不解析、按协议错误计数）"
+      "on_exceed": "protocol_error（EC-S6：不解析、按协议错误计数）",
+      "enforcement_status": "客户端读向已实现（main/engine-host/rpc.ts）；引擎侧未实现（ipc/server.py 裸 readline），登记为缺口 G25（2026-10-11 审计）"
     },
     "guards": {
       "engine": "engine/tests/test_entry_wiring.py + engine/tests/test_contract_alignment.py transport 段",
       "client": "client/tests/contract-transport.test.ts"
     }
+  },
+  "handshake": {
+    "summary": "协议版本协商的期望值单源（此前 2 这个数字在引擎与客户端各硬编码一遍，契约只写 minimum:1，升位无机器守护）",
+    "protocol_version": { "const": 2 },
+    "engine_reports": "initialize 响应 result.protocol_version",
+    "client_sends": "initialize 请求 params.client_protocol_version",
+    "on_mismatch": "引擎置 compatible=false 并拒发任务（SCHEMA_UNSUPPORTED）；客户端按不兼容处理",
+    "guards": {
+      "engine": "engine/tests/test_contract_alignment.py::test_protocol_version_matches_contract",
+      "client": "client/tests/contract-transport.test.ts 协议版本守护"
+    },
+    "status": "2026-10-11 新增的守护块：只加期望值与守护指向，不改任何方法/事件的线格式（零 wire diff）；随 CT-V2 增量一并待契约 v1 评审追认"
   },
   "definitions": {
     "rpcId": { "type": ["string", "number", "null"] },

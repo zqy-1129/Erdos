@@ -20,6 +20,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, TypedDict
 
+from engine.checkpoint.store import (
+    CHECKPOINT_STATUS_EXECUTED,
+    CHECKPOINT_STATUS_GATE_PASSED,
+    gate_passed,
+)
 from engine.gates.hard_checks import check_stage
 from engine.orchestrator.backend import END, build_stage_graph
 from engine.trail.redact import redact_sensitive  # 检查点脱敏（密钥域红线，公共实现）
@@ -35,11 +40,10 @@ class StageStatus(StrEnum):
     DONE = "done"
 
 
-# 检查点阶段状态两态（SP1-7 断点恢复门禁语义）：
-#   EXECUTED = 阶段执行完成落库（门禁未决）；GATE_PASSED = 门禁通过（升级落库）。
-# 恢复时区分二者：门禁未决阶段恢复后重挂门禁（阶段不重放），未经门禁不推进。
-CHECKPOINT_EXECUTED = "stage_done"
-CHECKPOINT_GATE_PASSED = StageStatus.DONE.value
+# 检查点阶段状态两态：字面量与判定单源在存储层（checkpoint/store.py），
+# 这里按既有公开名再导出，调用方 import 路径不变。
+CHECKPOINT_EXECUTED = CHECKPOINT_STATUS_EXECUTED
+CHECKPOINT_GATE_PASSED = CHECKPOINT_STATUS_GATE_PASSED
 
 
 class CheckpointStore(Protocol):
@@ -374,8 +378,10 @@ class StageOrchestrator:
             }
         if completed:
             last = completed[-1]
-            if last.status == CHECKPOINT_EXECUTED:
-                # 门禁未决崩溃：恢复到该阶段本身，重挂门禁
+            if not gate_passed(last.status):
+                # 门禁未决崩溃（或状态字面量不可识别）：恢复到该阶段本身，重挂门禁。
+                # 未知值不走"默认推进"分支——未过门禁的阶段被跳过是数据错误，
+                # 比恢复失败更难发现。
                 orchestrator._state.current_stage = last.stage
             else:
                 idx = STAGES.index(last.stage)

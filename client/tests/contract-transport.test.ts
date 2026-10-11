@@ -145,4 +145,23 @@ describe("stdio 传输契约（客户端侧）", () => {
       );
     }
   });
+
+  it("握手协议版本取自契约单源，且全仓只硬编码一处", () => {
+    // 此前 2 这个数字在引擎与客户端各写一遍、契约只有 minimum:1，升位无机器拦截。
+    // 两侧版本不一致的后果是静默降级：引擎回 compatible=false，客户端把它当 spawn 失败
+    // 重启三次，用户看到"引擎起不来"，真实原因却是版本号没同步。
+    const doc = JSON.parse(readFileSync(contractPath, "utf-8")) as {
+      handshake?: { protocol_version?: { const?: number } };
+    };
+    const expected = doc.handshake?.protocol_version?.const;
+    assert.equal(typeof expected, "number", "契约缺少 handshake.protocol_version.const");
+
+    const host = readFileSync(join(here, "..", "main", "engine-host", "host.ts"), "utf-8");
+    const sent = host.match(/client_protocol_version:\s*(\d+)/);
+    assert.ok(sent, "host.ts 里找不到 client_protocol_version，协议已改但守护未同步");
+    assert.equal(Number(sent[1]), expected, "客户端发出的版本与契约期望不一致");
+
+    const hardcoded = host.match(/client_protocol_version/g) ?? [];
+    assert.equal(hardcoded.length, 1, "client_protocol_version 只允许出现一处硬编码");
+  });
 });

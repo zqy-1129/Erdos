@@ -28,8 +28,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from engine.checkpoint.store import SQLiteCheckpointStore
-from engine.orchestrator.graph import CHECKPOINT_EXECUTED, STAGES
+from engine.checkpoint.store import SQLiteCheckpointStore, gate_passed
+from engine.orchestrator.graph import STAGES
 from engine.trail.store import EventType, TrailStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -306,10 +306,10 @@ class RpcTaskFlow:
     # 内部：检查点定位 / 阶段等待 / 留痕回读
     # ------------------------------------------------------------------
     def _resolve_stage(self) -> str:
-        """检查点 → 当前阶段（与 StageOrchestrator.restore 定位口径一致）。
+        """检查点 → 当前阶段（与 StageOrchestrator.restore 同一份判定，见 checkpoint.gate_passed）。
 
         最后落库记录为「执行完成（门禁未决）」时定位到该阶段本身（恢复后重挂
-        门禁）；为「门禁通过」时定位到下一阶段。
+        门禁）；为「门禁通过」时定位到下一阶段。未知字面量抛错而不是默认推进。
         """
         db = self._home / "checkpoints.db"
         if not db.exists():
@@ -322,7 +322,7 @@ class RpcTaskFlow:
         if not completed:
             return STAGES[0]
         last = completed[-1]
-        if last.status == CHECKPOINT_EXECUTED:
+        if not gate_passed(last.status):
             return last.stage
         last_index = STAGES.index(last.stage)
         return STAGES[min(last_index + 1, len(STAGES) - 1)]

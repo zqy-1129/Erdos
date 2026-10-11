@@ -162,7 +162,15 @@ def register_all(
             if checkpoint is not None:
                 # 若有历史检查点，恢复（断点续跑，不重算已完成阶段；runner 必须随恢复注入，
                 # 否则剩余阶段静默退化为骨架空产出——SP1-7 断点恢复演练语义）
-                restored = StageOrchestrator.restore(task_id, checkpoint, runner=runner)
+                try:
+                    restored = StageOrchestrator.restore(task_id, checkpoint, runner=runner)
+                except ValueError as exc:
+                    # 检查点状态字面量非法等本地数据问题不能报成 INVALID_PARAMS（那是
+                    # "你的参数错了"，会诱导调用方改参数重试）；按内部错误域归类，
+                    # 与 task_create 落盘失败同一口径。
+                    raise RpcError(
+                        INTERNAL_ERROR, f"本地检查点无法用于恢复（保留现场，未推进阶段）：{exc}"
+                    ) from exc
                 if restored.state.stages:
                     state.orchestrator = restored
                     if restored.current_stage != stage:

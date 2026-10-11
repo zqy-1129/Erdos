@@ -43,6 +43,9 @@ class TrailStore:
 
     def __init__(self, db_path: str) -> None:
         self._conn = sqlite3.connect(db_path)
+        # 与 checkpoints.db 对称：留痕写失败按红线要让任务失败，
+        # 不该由主进程跨进程只读并发把写入堵成 "database is locked"。
+        self._conn.execute("PRAGMA busy_timeout = 3000")
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS audit_trail (

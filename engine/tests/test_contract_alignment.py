@@ -11,6 +11,7 @@
 
 import ast
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -115,3 +116,46 @@ def test_configure_stdio_runs_before_any_protocol_io() -> None:
     assert isinstance(first, ast.Expr) and isinstance(first.value, ast.Call)
     callee = first.value.func
     assert isinstance(callee, ast.Name) and callee.id == "configure_stdio"
+
+
+# ----------------------------------------------------------------------
+# 握手版本单源守护（2026-10-11 新增：此前 2 这个数字在引擎与客户端各硬编码一遍，
+# 契约只有 minimum:1 → 升位没有任何机器拦截，属"两处各写一遍、改一处漏一处"的既有形状）
+# ----------------------------------------------------------------------
+REPO_ROOT_FOR_HANDSHAKE = Path(__file__).resolve().parents[2]
+
+
+def test_protocol_version_matches_contract() -> None:
+    """引擎上报的 protocol_version 必须等于契约 handshake.const，而不是"看起来对"。"""
+    expected = _schema()["handshake"]["protocol_version"]["const"]
+    entry = (REPO_ROOT_FOR_HANDSHAKE / "engine" / "__main__.py").read_text(encoding="utf-8")
+    reported = re.search(r'"protocol_version":\s*(\d+)', entry)
+    assert reported is not None, "engine/__main__.py 里找不到上报的 protocol_version，协议已改但守护未同步"
+    assert int(reported.group(1)) == expected, f"引擎 {reported.group(1)} != 契约 {expected}"
+
+
+def test_client_handshake_version_matches_contract() -> None:
+    """跨端一致性：客户端 initialize 发的 client_protocol_version 也必须等于契约期望值。
+
+    两侧不一致的后果是静默降级——引擎回 compatible=false、客户端把它当 spawn 失败重启三次，
+    用户看到的是"引擎起不来"，而真实原因是版本号没同步。
+    """
+    expected = _schema()["handshake"]["protocol_version"]["const"]
+    host = (
+        REPO_ROOT_FOR_HANDSHAKE / "client" / "main" / "engine-host" / "host.ts"
+    ).read_text(encoding="utf-8")
+    sent = re.search(r"client_protocol_version:\s*(\d+)", host)
+    assert sent is not None, "host.ts 里找不到 client_protocol_version，协议已改但守护未同步"
+    assert int(sent.group(1)) == expected, f"客户端 {sent.group(1)} != 契约 {expected}"
+
+
+def test_contract_handshake_block_has_no_wire_effect() -> None:
+    """handshake 块只做期望值与守护指向：方法/事件的线格式必须与新增前一致。"""
+    schema = _schema()
+    assert set(schema["methods"]) == {
+        "start_stage", "pause", "resume", "cancel", "get_status", "answer_gate",
+        "initialize", "provider_test", "events_replay", "task_create",
+    }
+    assert set(schema["events"]) == {
+        "stage.progress", "artifact.ready", "gate.failed", "tool.call", "tool.result", "model.delta"
+    }

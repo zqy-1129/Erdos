@@ -16,9 +16,13 @@ CT-V2 增量后现行 10 方法 + 6 事件，待 10-10 冻结评审追认）。
 ```
 spawn("python", ["-m", "engine"], {
   stdio: ["pipe", "pipe", "pipe"],   // stdin/stdout/stderr
-  env: { ...process.env, ERDOS_ENGINE_MODE: "subprocess" },
+  env: { ...process.env, ERDOS_ENGINE_HOME: home },
 })
 ```
+
+> `ERDOS_ENGINE_MODE` 曾出现在本示例里，但引擎与主进程都不读它——已删除（2026-10-11 审计）。
+> 开发态覆盖解释器的真实变量是 `ERDOS_ENGINE_CMD`，它由**主进程**读取
+> （`client/main/index.ts:65` → `engineCommand()`），引擎侧不感知，因此不在 §8 登记。
 
 正式安装包通过 `main/engine-launch.ts` 解析 `process.resourcesPath/engine` 中的已校验入口，
 参数为 `[]`，工作目录为入口所在目录；不使用开发解释器或 `ERDOS_ENGINE_CMD`。
@@ -109,17 +113,34 @@ v2 客户端在拉起后、首个任务前必须调用 `initialize`：
 | `engine:answer_gate` | `answer_gate` |
 | `engine:provider_test` | `provider_test`（EN-CAP 端点探测；Key 用引擎已注入的） |
 | `engine:events_replay` | `events_replay`（断线重连事件补发；§5） |
+| `engine:event` | 6 类 NDJSON 事件转发（§6） |
 
 ## 8. 引擎环境变量（2026-10-11 补：编排后端回退开关与 env 消毒）
 
 主进程按 §1 的方式把 `process.env` 原样交给引擎子进程，因此下列变量在**用户环境里设置即生效**，
-不需要改客户端代码、也不需要发版。
+不需要改客户端代码、也不需要发版。清单与 `docs/acceptance/engine-facts.json` 的 `env_vars`
+分区同源（该分区由 `scripts/engine_fact_sheet.py` 从代码机器抽取，含常量间接读取）。
 
 | 变量 | 作用 | 谁负责 |
 |---|---|---|
 | `ERDOS_ENGINE_HOME` | 任务/库数据根目录（缺失以退出码 2 拒启） | 主进程必给（§1） |
-| `ERDOS_MODEL_BASE_URL` / `ERDOS_MODEL_NAME` / `ERDOS_MODEL_PROVIDER` | Key 模式的模型坐标（禁猜默认端点） | 主进程必给（§3） |
+| `ERDOS_MODEL_BASE_URL` / `ERDOS_MODEL_NAME` | Key 模式的模型坐标（禁猜默认端点，缺失退出码 2） | 主进程必给（§3） |
+| `ERDOS_MODEL_PROVIDER` | 厂商族（能力矩阵键）；**默认 `openai-compat` 不在离线能力矩阵内**，未显式设置时按 `stage_level` 降级，见 §8.1 | 主进程给，缺省走降级 |
+| `ERDOS_TOOL_MODE` | 强制求解路径 `tool_loop` / `stage_level`；不校验取值（§8.1） | 排障用，产品路径不设 |
+| `ERDOS_SANDBOX_PYTHON` | 沙箱执行体解释器（解析顺序 `ERDOS_SANDBOX_PYTHON` → `sys.executable` → PATH 探测） | 打包/CI 显式给；Windows 上 PATH 的 `python` 可能是商店占位 stub |
+| `ERDOS_SANDBOX_IMAGE` | Docker 沙箱镜像名 | 仅 Docker 模式 |
+| `ERDOS_SANDBOX_REQUIRE_DOCKER` | `=1` 时强制 Docker，探针未过即 `SandboxUnavailableError`（DEC-006）；**客户端目前从不设置**，因此 Windows 无 Docker 时静默降级 subprocess | 正式构建/CI |
 | `ERDOS_ORCH_IMPL` = `native`（默认）/ `langgraph` | **编排后端回退开关**：引擎四阶段编排与求解内循环用自研内核还是 LangGraph。灰度期发现编排侧回归时设 `langgraph` 即时回滚（秒级、不发版）；两套后端读写同一张 `checkpoints` 表，回滚不需要数据迁移（兼容性由 `engine/tests/test_persistence_compat.py` 守护）。LangGraph 在 SP5-3 摘除依赖后该变量作废 | 引擎；客户端不主动设置 |
 | `LANGCHAIN_*` / `LANGSMITH_*` | **引擎在包导入期无条件剥离**。原因：宿主若设过 `LANGCHAIN_TRACING_V2=true`，LangSmith 会把每次图执行的输入/输出（含题面与论文正文）POST 到外部端点，与「题面不出本机」(DEC-010) 和 BYOK 不中转直接冲突。主进程**不要**为了"传参"往这两个命名空间写任何东西 | 引擎 |
 
-| `engine:event` | 6 类 NDJSON 事件转发（§6） |
+### 8.1 两条与变量有关的行为口径（不写清就会被读成"设了就生效"）
+
+- **`ERDOS_TOOL_MODE` 不校验取值**：填任意非空字符串都会被当作显式覆盖透传，包括拼错的值；
+  它同时决定 `initialize` 上报的 `capabilities.tool_mode`，因此拼错会让客户端看到非法枚举值。
+- **默认装配走不到工具循环**：`ERDOS_MODEL_PROVIDER` 缺省 `openai-compat` 不在引擎离线能力矩阵
+  （矩阵只有 `openai`/`deepseek`/`vllm`/`dashscope-compat`）→ 真实 Key 冷启动默认 `stage_level`，
+  `solve_loop`/`tool.call` 留痕整条链在用户机主路径不可达，除非先跑过 `provider_test` 落能力缓存。
+  这是 10-24 J-1024 判定内容的前置事实，不是本批引入的缺陷。
+
+*修订记录追加：2026-10-11 编排内核自研替换批次——新增 §8（回退开关 + env 剥离）、§8.1；
+删除 §1 示例中的幻象变量 `ERDOS_ENGINE_MODE`；修复 §7 表尾行被 §8 顶出的排版错误。*

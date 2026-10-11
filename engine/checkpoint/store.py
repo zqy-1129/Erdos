@@ -6,6 +6,12 @@
 - 任务题面（title/problem_text）同库持久化（R1：崩溃/重启后不丢题面，start_stage 水合恢复）。
 
 红线：检查点不落 Key 明文（SP1-2 禁止项，此处数据仅编排状态与题面，无敏感字段）。
+
+状态字面量与 `gate_passed()` 的归属说明：恢复时"该阶段是否已过门禁"决定要不要重挂门禁，
+这是**数据正确性判据**而不是实现细节，所以字面量、合法集与判定函数都放在存储层这一份里，
+编排器（orchestrator/graph.py）与回归 RPC 驱动（regression/rpc_flow.py）共用。
+未知字面量一律拒绝而不是默认推进：客户端 `main/local-history.ts` 把非 `done` 视为未完成，
+引擎若把未知值当作"已过门禁"，两侧对同一份库会得出**相反**结论（一个跳阶段、一个重跑）。
 """
 
 import json
@@ -13,6 +19,23 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+
+# 检查点阶段状态两态（SP1-7 断点恢复门禁语义）
+CHECKPOINT_STATUS_EXECUTED = "stage_done"  # 阶段执行完成落库，门禁未决
+CHECKPOINT_STATUS_GATE_PASSED = "done"  # 门禁通过
+CHECKPOINT_STATUSES = (CHECKPOINT_STATUS_EXECUTED, CHECKPOINT_STATUS_GATE_PASSED)
+
+
+def gate_passed(status: str) -> bool:
+    """该检查点是否代表「门禁已通过」；未知字面量抛错（fail-closed）。"""
+    if status == CHECKPOINT_STATUS_GATE_PASSED:
+        return True
+    if status == CHECKPOINT_STATUS_EXECUTED:
+        return False
+    raise ValueError(
+        f"检查点状态字面量未知：{status!r}（只接受 {CHECKPOINT_STATUSES}）；"
+        "已拒绝据此推进阶段，保留现场待人工核对"
+    )
 
 
 @dataclass(slots=True)
@@ -64,7 +87,15 @@ class SQLiteCheckpointStore:
         self._conn.commit()
 
     def save_stage(self, task_id: str, stage: str, status: str, step: int, data: dict) -> None:
-        """保存阶段检查点（覆盖更新）。"""
+        """保存阶段检查点（覆盖更新）。
+
+        写入侧也校验字面量：第三个状态值一旦落库，恢复定位就变成两侧解读相反的数据，
+        所以宁可让写它的代码当场报错。
+        """
+        if status not in CHECKPOINT_STATUSES:
+            raise ValueError(
+                f"检查点状态字面量非法：{status!r}（只接受 {CHECKPOINT_STATUSES}）"
+            )
         updated_at = datetime.now(UTC).isoformat()
         self._conn.execute(
             """
