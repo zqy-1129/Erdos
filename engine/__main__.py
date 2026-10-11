@@ -203,6 +203,10 @@ def _build_llm(keys: KeyStore, trail: TrailRecorder, config: ModelConfig | None)
             "usage": {
                 "prompt_tokens": reply.usage.prompt_tokens,
                 "completion_tokens": reply.usage.completion_tokens,
+                # G35：厂商计量与本地估算必须在留痕里分得开。适配器早就有 `estimated`，
+                # 但只活在内存对象上、组装 usage 时被丢掉——于是用量留痕看着像厂商账单，
+                # 实际可能是 `len(text)//3` 的猜值。加性字段，不改进程间协议（契约零 diff）。
+                "estimated": reply.usage.estimated,
             },
             "model": cfg.model,
             "stage": stage,

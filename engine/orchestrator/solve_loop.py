@@ -267,6 +267,10 @@ class SolveLoop:
         usage["prompt_tokens"] = usage.get("prompt_tokens", 0) + result.usage.prompt_tokens
         usage["completion_tokens"] = usage.get("completion_tokens", 0) + result.usage.completion_tokens
         usage["calls"] = usage.get("calls", 0) + 1
+        # 内循环是多次调用，"这一阶段的用量里有多少是猜的"不能压成一个布尔丢失：
+        # 记估算次数（G35），审计时 `estimated_calls < calls` 才说明部分是厂商计量。
+        if result.usage.estimated:
+            usage["estimated_calls"] = usage.get("estimated_calls", 0) + 1
         return {
             "messages": state["messages"] + [_message_to_dict(
                 ChatMessage(role="assistant", content=result.content, tool_calls=tuple(result.tool_calls or []) or None)

@@ -311,6 +311,19 @@ def _vendor_factory(root: Path, base_url: str, *, extra_env: dict[str, str] | No
     return build
 
 
+def _model_call_usages(audit_db: Path, task_id: str) -> list[dict]:
+    """留痕库里每次 model_call 的 usage 明细（G35 判据要看 estimated 标志）。"""
+    store = TrailStore(str(audit_db))
+    try:
+        return [
+            dict(e.detail.get("usage") or {})
+            for e in store.events(task_id)
+            if e.event_type == EventType.MODEL_CALL
+        ]
+    finally:
+        store.close()
+
+
 def _trail_event_types(audit_db: Path, task_id: str) -> list[str]:
     store = TrailStore(str(audit_db))
     try:
@@ -356,6 +369,12 @@ async def test_real_key_channel_full_chain_with_mock_vendor(tmp_path) -> None:
     )
     assert result.paper_sha256
     assert (home / "tasks" / task_id / "paper.md").exists()
+
+    # G35：留痕里的用量必须带"是不是估的"。全 200 应答都回了 usage（含流式末块），
+    # 所以这里应当全是厂商计量——一旦哪天退回估算，这条断言会先红。
+    usages = _model_call_usages(audit, task_id)
+    assert usages, "四阶段应各留一条 model_call"
+    assert all(u.get("estimated") is False for u in usages), usages
 
     # Key 注入链路：stdin 首行 → 适配器 Authorization 头（仅此处出现，不出现在留痕）
     assert {req["authorization"] for req in server.requests} == {"Bearer sk-test-vendor-key"}

@@ -51,6 +51,9 @@ class FakeLLM:
             "usage": {
                 "prompt_tokens": self._estimate_tokens(prompt),
                 "completion_tokens": self._estimate_tokens(text),
+                # 护栏通道本来就是猜值，如实标注（G35）：DEC-024 要求 fake 与真实分开统计，
+                # 留痕里这条 estimated=True 就是那条纪律的落点。
+                "estimated": True,
             },
             "model": "fake-llm/deterministic",
             "stage": stage,
@@ -279,6 +282,10 @@ class StagePipeline:
             "usage": {
                 "prompt_tokens": usage.get("prompt_tokens", 0),
                 "completion_tokens": usage.get("completion_tokens", 0),
+                # 内循环是多次调用，布尔位说不清程度 → 同时带计数（G35）
+                "calls": usage.get("calls", 0),
+                "estimated_calls": usage.get("estimated_calls", 0),
+                "estimated": bool(usage.get("estimated_calls", 0)),
             },
         }
 

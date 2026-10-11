@@ -94,6 +94,37 @@ def _loop(tmp_path: Path, llm: ScriptedLLM, sandbox: CountingSandbox | None = No
 
 
 # ----------------------------------------------------------------------
+# 用量计量来源（G35）：内循环多次调用的"估算次数"必须单独可见
+# ----------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_usage_counts_estimated_calls_separately(tmp_path: Path) -> None:
+    """厂商没回 usage 时按文本估算——内循环是多次调用，压成一个布尔会丢信息。
+
+    留痕判据因此是 `estimated_calls < calls`（部分是厂商计量），而不是"这阶段估没估"。
+    """
+    estimated = ChatResult(
+        content=json.dumps({"results": [{"name": "slope", "value": 1.985, "unit": "1"}]},
+                           ensure_ascii=False),
+        usage=Usage(prompt_tokens=99, completion_tokens=11, total_tokens=110, estimated=True),
+        finish_reason="stop",
+    )
+    outcome = await _loop(tmp_path, ScriptedLLM([estimated])).run("求解拟合")
+    usage = outcome["usage"]
+    assert usage["estimated_calls"] == usage["calls"] == 1, usage
+
+
+@pytest.mark.asyncio
+async def test_vendor_reported_usage_is_not_counted_as_estimated(tmp_path: Path) -> None:
+    """正向对照：厂商回了 usage 就不该记成估算（否则这字段恒真、等于没有）。"""
+    outcome = await _loop(
+        tmp_path, ScriptedLLM([_final([{"name": "slope", "value": 1.985, "unit": "1"}])])
+    ).run("求解拟合")
+    usage = outcome["usage"]
+    assert usage.get("estimated_calls", 0) == 0
+    assert usage["calls"] == 1 and usage["prompt_tokens"] > 0
+
+
+# ----------------------------------------------------------------------
 # OperationLog（崩溃点矩阵）
 # ----------------------------------------------------------------------
 def test_operations_first_wins(tmp_path: Path) -> None:
