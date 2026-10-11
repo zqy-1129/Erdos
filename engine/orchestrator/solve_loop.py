@@ -123,6 +123,7 @@ class SolveState(TypedDict, total=False):
     status: str
     limitations: list[str]
     usage: dict
+    isolation_mode: str  # 真正执行代码的沙箱自报的模式（DEC-006 证据链，不是调用方猜测）
 
 
 # 通道名从 schema 注解导出：两套后端共用同一份声明，不会各写一遍再漂移
@@ -204,6 +205,7 @@ class SolveLoop:
             "dispatch_count": final.get("dispatch_count", 0),
             "limitations": final.get("limitations", []),
             "usage": final.get("usage", {}),
+            "isolation_mode": final.get("isolation_mode") or None,
         }
 
     # ------------------------------------------------------------------
@@ -302,6 +304,7 @@ class SolveLoop:
         exec_seq = state.get("exec_seq", 0)
         repair_count = state.get("repair_count", 0)
         dispatch_count = state.get("dispatch_count", 0)
+        isolation_mode = state.get("isolation_mode", "")
         for call_dict in last.get("tool_calls") or []:
             call = ToolCall(
                 id=call_dict["id"], name=call_dict["name"],
@@ -322,6 +325,8 @@ class SolveLoop:
                 work_dir = self._work_root / self._task_id
                 ctx = ToolContext(task_id=self._task_id, stage="solving", work_dir=work_dir)
                 result = await self._registry.dispatch(call, ctx)
+                # 执行体自报的隔离模式：最后一次派发为准（同一循环内沙箱对象不变）
+                isolation_mode = str(result.data.get("isolation_mode") or isolation_mode)
                 self._operations.record_done(
                     self._task_id, "solving", self._attempt, exec_seq,
                     result.result_ref or f"tool:{call.name}:{call.id}",
@@ -337,7 +342,8 @@ class SolveLoop:
                 "role": "tool", "content": observation, "tool_call_id": call.id,
             }]
         return {"messages": messages, "exec_seq": exec_seq,
-                "repair_count": repair_count, "dispatch_count": dispatch_count}
+                "repair_count": repair_count, "dispatch_count": dispatch_count,
+                "isolation_mode": isolation_mode}
 
     async def _finalize(self, state: SolveState) -> dict:
         """最终输出校验（硬检查）：通过 → succeeded；失败 → 回注修复。"""

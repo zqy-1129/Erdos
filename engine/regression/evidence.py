@@ -72,6 +72,26 @@ class EvidenceWriter:
         return summary_path, report_path
 
 
+def _path_distribution(results: list[ProblemResult]) -> str:
+    """路径/隔离模式分布（"100% 通过"必须能读出它是怎么通过的，G41 证据面）。"""
+    def tally(pick) -> str:  # noqa: ANN001 - 局部小取值函数
+        counts: dict[str, int] = {}
+        for r in results:
+            key = pick(r) or "未知"
+            counts[key] = counts.get(key, 0) + 1
+        return "、".join(f"{k} {v}" for k, v in sorted(counts.items())) or "无样本"
+
+    return f"求解路径 {tally(lambda r: r.solve_path)} · 沙箱隔离 {tally(lambda r: r.isolation_mode)}"
+
+
+def _path_cell(r: ProblemResult) -> str:
+    parts = [r.solve_path or "未知"]
+    if r.dispatch_count is not None:
+        parts.append(f"派发{r.dispatch_count}")
+    parts.append(f"隔离:{r.isolation_mode or '未知'}")
+    return "·".join(parts)
+
+
 def render_markdown(report: AcceptanceReport, *, title: str = "SP1-7 回归基线报告") -> str:
     """渲染 Markdown 报告：总体/题型分布/失败归因/逐题明细。"""
     lines = [
@@ -83,6 +103,8 @@ def render_markdown(report: AcceptanceReport, *, title: str = "SP1-7 回归基�
         "",
         f"- 题目总数：{len(report.results)}",
         f"- 通过：{sum(1 for r in report.results if r.passed)}",
+        f"- **{_path_distribution(report.results)}**"
+        "（厂商不支持 tools 时全套会静默降级，成功率不变但工具链从未被验过）",
         f"- 全量成功率：{report.success_rate():.2%}",
         f"- FakeLLM 通道成功率：{report.success_rate('fakellm'):.2%}"
         "（回归护栏，不计判定分母，DEC-024）",
@@ -112,15 +134,15 @@ def render_markdown(report: AcceptanceReport, *, title: str = "SP1-7 回归基�
         "## 4. 逐题明细",
         "",
         "| 题目 | 题型 | 通道 | 结果 | 归因 | 恢复 | 阶段耗时合计(ms) | prompt tokens | "
-        "completion tokens | 产物哈希 | 门禁评分 |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "completion tokens | 产物哈希 | 门禁评分 | 求解路径·派发·隔离 |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in report.results:
         lines.append(
             f"| {r.business_id} | {r.category} | {r.channel} | {'通过' if r.passed else '失败'} "
             f"| {r.failure_module or '-'} | {'是' if r.resumed else '-'} | {r.duration_ms} "
             f"| {r.prompt_tokens} | {r.completion_tokens} | {r.paper_sha256 or '-'} "
-            f"| {_scores_cell(r)} |"
+            f"| {_scores_cell(r)} | {_path_cell(r)} |"
         )
 
     scored = [r for r in report.results if r.gate_scores]

@@ -6,10 +6,19 @@
 
 from pydantic import BaseModel, Field
 
-from engine.sandbox.base import Sandbox, validate_artifact_path
+from engine.sandbox.base import ExecutionResult, Sandbox, validate_artifact_path
 from engine.tools.base import ToolContext, ToolError, ToolResult
 
 _MAX_LANGUAGE = "python"  # v1 仅 Python（依赖预装在版本化执行环境，开发文档 §8.3）
+
+
+def _facts(result: ExecutionResult, sandbox: Sandbox) -> dict:
+    """执行事实 + **真正执行的那个沙箱**的隔离模式。
+
+    isolation_mode 只能由执行体自报：调用方手里可能握着另一个沙箱对象（装配巧合下两者相同，
+    但合规字段不能靠装配）。DEC-006 的"如实上报"要落在数据上，不是落在注释上。
+    """
+    return {**result.facts(), "isolation_mode": getattr(sandbox, "isolation_mode", "unknown")}
 
 
 class ExecuteCodeArgs(BaseModel):
@@ -36,7 +45,7 @@ def make_execute_code(sandbox: Sandbox):
                 ok=False,
                 error=ToolError(code="TOOL_FAILED", message="执行超时，已被强制终止"),
                 summary=result.stdout.strip(),
-                data=result.facts(),
+                data=_facts(result, sandbox),
             )
         if result.memory_exceeded:
             # 独立错误码：让模型知道"是沙箱按 ≤2GB 的承诺拦下了你"，而不是"代码跑崩了"。
@@ -46,7 +55,7 @@ def make_execute_code(sandbox: Sandbox):
                 ok=False,
                 error=ToolError(code="TOOL_MEMORY_LIMIT", message=result.error or "内存超过沙箱限额"),
                 summary=result.stdout.strip(),
-                data=result.facts(),
+                data=_facts(result, sandbox),
             )
         if result.exit_code != 0:
             tail = (result.stderr or result.error or "").strip()
@@ -54,11 +63,11 @@ def make_execute_code(sandbox: Sandbox):
                 ok=False,
                 error=ToolError(code="TOOL_FAILED", message=f"退出码 {result.exit_code}：{tail}"),
                 summary=result.stdout.strip(),
-                data=result.facts(),
+                data=_facts(result, sandbox),
             )
         ref = result.artifacts[0] if result.artifacts else None
         if ref is not None and not validate_artifact_path(ctx.work_dir, ref):
             ref = None  # 越权产物路径不外引（逃逸防护，AT-13）
-        return ToolResult(ok=True, summary=result.stdout.strip(), result_ref=ref, data=result.facts())
+        return ToolResult(ok=True, summary=result.stdout.strip(), result_ref=ref, data=_facts(result, sandbox))
 
     return execute

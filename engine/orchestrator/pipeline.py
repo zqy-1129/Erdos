@@ -249,11 +249,15 @@ class StagePipeline:
         if self._sandbox is None:
             raise RuntimeError("solving 需要注入沙箱（SP1-4 SubprocessSandbox）")
         work_dir = self._work_root / task_id
-        facts = (
-            await self._solve_via_registry(task_id, registry, work_dir)
-            if registry is not None
-            else (await self._sandbox.execute(_SOLVE_SCRIPT, {}, work_dir)).facts()
-        )
+        if registry is not None:
+            facts = await self._solve_via_registry(task_id, registry, work_dir)
+        else:
+            # 未注入 Registry（骨架/单测）：直连沙箱，此时执行体就是 self._sandbox，模式由它自报
+            result = await self._sandbox.execute(_SOLVE_SCRIPT, {}, work_dir)
+            facts = {
+                **result.facts(),
+                "isolation_mode": getattr(self._sandbox, "isolation_mode", "unknown"),
+            }
         prompt = (
             f"{self._problem_block(task_id)}\n\n"
             f"【阶段级求解输出】\n{facts['stdout']}\n\n请复核求解结果是否合理。"
@@ -261,6 +265,11 @@ class StagePipeline:
         reply = await self._llm([{"role": "user", "content": prompt}], "solving")
         return {
             "stage": "solving",
+            # 求解路径自述（G41 证据面）：两条路径都显式给 mode，读取方不必靠"缺字段"反推。
+            "mode": "stage_level",
+            # 隔离模式来自**真正执行代码的那个沙箱**（Registry 里的执行体自报），
+            # 不是管线手里握的对象——两者在产品装配下相同，但合规字段不能靠装配巧合。
+            "isolation_mode": facts.get("isolation_mode", "unknown"),
             "exit_code": facts["exit_code"],
             "stdout": facts["stdout"],
             "timed_out": facts["timed_out"],
@@ -317,6 +326,9 @@ class StagePipeline:
         return {
             "stage": "solving",
             "mode": "tool_loop",
+            # 沙箱真实模式由执行体自报并经循环带出（DEC-006）；从未派发过就是 unknown，
+            # 不去读管线手里的沙箱对象——那可能不是跑代码的那一个。
+            "isolation_mode": outcome.get("isolation_mode") or "unknown",
             "duration_ms": round((time.monotonic() - loop_started) * 1000, 1),
             "status": outcome["status"],
             "results": outcome["results"],

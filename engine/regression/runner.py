@@ -83,6 +83,12 @@ class ProblemResult:
     kill_after_stage: str | None
     executed_stages: tuple[str, ...]
     gate_scores: tuple[GateScore, ...] = ()
+    # 求解路径归因（G41 的证据面）：没有这三项，"通过率 100%" 无法解释——
+    # 厂商不支持 tools 时全套会静默跑 stage_level，工具链从未被验过而报告看不出来。
+    # None = 未到 solving 阶段 / 该路径无此概念（stage_level 无派发计数），不是 0。
+    solve_path: str | None = None  # "tool_loop" | "stage_level"
+    isolation_mode: str | None = None  # 沙箱如实上报（docker/subprocess/stub/unknown）
+    dispatch_count: int | None = None  # 工具循环实际派发次数
 
     @property
     def duration_ms(self) -> float:
@@ -250,7 +256,20 @@ class AcceptanceRunner:
         prompt_tokens = completion_tokens = 0
         paper_sha: str | None = None
         resumed = False
+        solve_path: str | None = None
+        isolation_mode: str | None = None
+        dispatch_count: int | None = None
         executed_pre: tuple[str, ...] = ()  # kill 前旧任务流的执行记录（恢复后拼接去重）
+
+        def _note_path(stage: str, data: dict[str, Any]) -> None:
+            """从 solving 产出里取路径归因三件（缺失就留 None，不猜成 tool_loop）。"""
+            nonlocal solve_path, isolation_mode, dispatch_count
+            if stage != "solving":
+                return
+            solve_path = data.get("mode")
+            isolation_mode = data.get("isolation_mode")
+            dispatch = data.get("dispatch_count")
+            dispatch_count = None if dispatch is None else int(dispatch)
 
         async def _verdict(stage: str, data: dict[str, Any]) -> tuple[str, str]:
             """本阶段门禁裁决 → (decision, 失败原因)；rubric 分数记入 scores。
@@ -293,6 +312,9 @@ class AcceptanceRunner:
                 "kill_after_stage": kill_after_stage,
                 "executed_stages": executed_pre + flow.executed_stages(),
                 "gate_scores": tuple(scores),
+                "solve_path": solve_path,
+                "isolation_mode": isolation_mode,
+                "dispatch_count": dispatch_count,
             }
             defaults.update(overrides)
             return ProblemResult(**defaults)
@@ -303,6 +325,7 @@ class AcceptanceRunner:
                 stage = STAGES[index]
                 started = time.perf_counter()
                 data = await flow.run_stage(stage)
+                _note_path(stage, data)
                 elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
                 usage = data.get("usage") or {}
                 stage_prompt = int(usage.get("prompt_tokens", 0) or 0)
@@ -336,6 +359,7 @@ class AcceptanceRunner:
                     # 恢复后门禁重挂（阶段不重放，DEC-005），补门禁应答后续跑。
                     # 阶段记录/usage 已在 kill 前计入，此处不重复记账。
                     replay = await flow.run_stage(stage)
+                    _note_path(stage, replay)
                     decision, reason = await _verdict(stage, replay)
                     if decision != "pass":
                         return _result(

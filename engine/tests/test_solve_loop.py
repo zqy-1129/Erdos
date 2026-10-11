@@ -53,6 +53,8 @@ class ScriptedLLM:
 class CountingSandbox:
     """计数沙箱替身：记录 execute 次数与代码，返回可编程结果。"""
 
+    isolation_mode = "counter"  # 自报模式，供"执行体说了算"的断言用
+
     def __init__(self, results: list[ExecutionResult] | None = None) -> None:
         self.execute_count = 0
         self.codes: list[str] = []
@@ -295,15 +297,48 @@ async def test_pipeline_tool_loop_branch(tmp_path: Path) -> None:
     assert data["mode"] == "tool_loop"
     assert data["status"] == "succeeded"
     assert data["results"] == [{"name": "result", "value": 7}]
+    # 一轮都没派发 → 隔离模式如实记 unknown，不拿"管线手里的沙箱"（这里是 None）凑一个值
+    assert data["isolation_mode"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_isolation_mode_comes_from_the_executing_sandbox(tmp_path) -> None:  # noqa: ANN001
+    """真派发过代码时，隔离模式必须来自跑代码的那个沙箱（执行体自报，经循环带出）。"""
+    inner = CountingSandbox()
+    pipeline = StagePipeline(
+        llm=FakeLLM().chat,
+        sandbox=None,
+        registry=build_default_registry(inner),
+        operations=OperationLog(str(tmp_path / "ops.db")),
+        solve_llm=ScriptedLLM([_tool_call("c1", "execute_code", "print(1)"), _final([{"name": "r", "value": 1}])]),
+        tool_mode="tool_loop",
+        work_root=tmp_path,
+    )
+    data = await pipeline.process("t9b", "solving")
+
+    assert inner.execute_count == 1
+    assert data["dispatch_count"] == 1
+    assert data["isolation_mode"] == "counter", (
+        f"隔离模式没取自营沙箱：{data['isolation_mode']}"
+    )
 
 
 @pytest.mark.asyncio
 async def test_pipeline_stage_level_fallback_unchanged(tmp_path: Path) -> None:
-    """stage_level 降级路径保持 SP1-7 行为（硬编码脚本 + 复核），不走循环。"""
+    """stage_level 降级路径保持 SP1-7 行为（硬编码脚本 + 复核），不走循环。
+
+    两个判据都是"正向信号"而不是"字段缺失"：
+    ① "没走循环"看执行体被调用几次（走循环会是多次派发），不是看 `mode` 键在不在——
+       W23② 起两条路径都显式自述 mode，靠缺字段反推路径正是本次要消掉的形状；
+    ② `isolation_mode` 必须是**真正跑代码的那个沙箱**自报的（这里是 Registry 里的
+       CountingSandbox），而不是管线手里握着的 SubprocessSandbox——装配巧合下两者相同，
+       合规字段不能靠巧合（DEC-006）。
+    """
+    inner = CountingSandbox()
     pipeline = StagePipeline(
         llm=FakeLLM().chat,
         sandbox=SubprocessSandbox(timeout=30),
-        registry=build_default_registry(CountingSandbox()),
+        registry=build_default_registry(inner),
         operations=OperationLog(str(tmp_path / "ops.db")),
         solve_llm=ScriptedLLM([_final([{"name": "x", "value": 1}])]),
         tool_mode="stage_level",
@@ -311,7 +346,11 @@ async def test_pipeline_stage_level_fallback_unchanged(tmp_path: Path) -> None:
     )
     data = await pipeline.process("t10", "solving")
     assert "exit_code" in data  # 既有阶段级产出字段
-    assert "mode" not in data  # 未进入 tool_loop
+    assert data["mode"] == "stage_level"  # 自述路径，不靠调用方反推
+    assert inner.execute_count == 1, "降级路径应恰执行一次（走循环会是多次派发）"
+    assert data["isolation_mode"] == "counter", (
+        f"隔离模式取自未执行的沙箱：{data['isolation_mode']}"
+    )
 
 
 # ----------------------------------------------------------------------
