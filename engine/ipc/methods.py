@@ -16,21 +16,24 @@ W2 集成：
 """
 
 import asyncio
+import sys
 
 from engine.adapters.capabilities import probe_capabilities
 from engine.ipc.events import EventEmitter
 from engine.ipc.rpc import INTERNAL_ERROR, SCHEMA_UNSUPPORTED, RpcError
 from engine.ipc.server import JsonRpcServer
-from engine.ipc.state import EngineState, TaskState
+from engine.ipc.state import EngineState, EngineStatus, TaskState
 from engine.orchestrator.graph import StageOrchestrator, StageRunner
 
 
 class EngineRuntime:
     """在跑阶段任务的运行时句柄：main 退出前 drain，保证事件回流完整。"""
 
-    def __init__(self) -> None:
+    def __init__(self, state: EngineState | None = None) -> None:
         # 单任务引擎，按 task_id 记录；W11 将升级为 OperationLog 幂等
         self.running: dict[str, asyncio.Task] = {}
+        # 退出链要把"取消了哪一个任务"落到状态与诊断里，所以必须认得 state
+        self._state = state
 
     async def drain(self, cancel: bool = False) -> None:
         """等待（或取消）全部在跑阶段任务。
@@ -38,13 +41,40 @@ class EngineRuntime:
         cancel=False：stdin EOF 路径——等当前阶段跑完，事件/检查点完整落盘后退出；
         cancel=True：KeyboardInterrupt 路径——协作取消后退出。
         """
-        tasks = [t for t in self.running.values() if not t.done()]
-        if not tasks:
+        live = [(task_id, t) for task_id, t in self.running.items() if not t.done()]
+        if not live:
             return
+        tasks = [t for _, t in live]
         if cancel:
             for t in tasks:
                 t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        if cancel:
+            for task_id, _ in live:
+                self._note_cancelled(task_id)
+
+    def _note_cancelled(self, task_id: str) -> None:
+        """取消档退出链的落点：点名记录 + 引擎级状态归位。
+
+        原先这里只 `t.cancel()` 就把 task_id 丢了，引擎里没有任何一处说得出"是哪一题
+        在哪个阶段被中断"——而进程紧接着就退出，stderr 是唯一能被事后读到的记录
+        （检查点只能说明"做到哪"，说明不了"为什么停"）。
+
+        **不在此重复改写 task 状态**：阶段任务自己已在 CancelledError 分支写成 cancelled
+        （见 `_run_stage`），两处写同一事实就是下一个漂移点。drain 只补两件没人做的事：
+        ① stderr 点名 task_id + 阶段；② 引擎级 status 不再报 running（没东西在跑却报
+        running 会让宿主与嵌入式调用方误判）。
+        """
+        state = self._state
+        if state is None:
+            return
+        stage = "?"
+        if state.task is not None and state.task.task_id == task_id:
+            stage = state.task.stage
+        sys.stderr.write(f"[engine] 退出链取消在跑任务：{task_id}（阶段 {stage} 未完成）\n")
+        sys.stderr.flush()
+        if state.status == EngineStatus.RUNNING.value:
+            state.status = EngineStatus.IDLE.value
 
 
 def register_all(
@@ -64,7 +94,7 @@ def register_all(
 
     返回 EngineRuntime：调用方在事件循环退出前 drain，避免后台阶段任务被静默丢弃。
     """
-    runtime = EngineRuntime()
+    runtime = EngineRuntime(state)
     running = runtime.running
     last_error: dict[str, str] = {}
 

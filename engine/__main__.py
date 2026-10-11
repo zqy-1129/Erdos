@@ -353,8 +353,14 @@ def main() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
+    stop_requested = {"cancel": False}
+
     def _graceful(_signum, _frame):  # noqa: ANN001 - signal 处理签名
-        # 协作停机；检查点已在阶段完成时同步落盘，300ms 硬上限兜底强制退出
+        # 协作停机：**信号 = 取消在跑的阶段**，不是等它跑完。检查点已在阶段完成时同步落盘，
+        # 300ms 硬上限兜底强制退出。此前这里只 stop + 定时 os._exit，把在跑任务直接打死，
+        # 既不点名 task_id（退出链的点名记录只在 drain(cancel=True) 里写）、也不给
+        # CancelledError 分支任何机会——SIGTERM/SIGBREAK 才是用户"停引擎"的真实路径。
+        stop_requested["cancel"] = True
         server.stop()
         loop.call_later(GRACE_EXIT_SECONDS, lambda: os._exit(0))
 
@@ -366,8 +372,9 @@ def main() -> None:
         loop.run_until_complete(
             server.serve(initial_lines=[first_line] if is_request else None)
         )
-        # stdin EOF：等当前阶段收尾（事件/检查点完整落盘）再退出
-        loop.run_until_complete(runtime.drain())
+        # stdin EOF：等当前阶段收尾（事件/检查点完整落盘）再退出；
+        # 信号停机走同一句但带 cancel=True——两条路径的差别就在这一个参数上。
+        loop.run_until_complete(runtime.drain(cancel=stop_requested["cancel"]))
     except KeyboardInterrupt:
         server.stop()
         loop.run_until_complete(runtime.drain(cancel=True))
