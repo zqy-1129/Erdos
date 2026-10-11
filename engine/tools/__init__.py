@@ -38,6 +38,9 @@ def build_default_registry(
             args_model=PlotFigureArgs,
             danger_level="high",
             executor=make_plot_figure(sandbox),
+            # 产物类别（契约 artifact enum 同源）：登记进 artifact_index 的 kind 由此单源给出。
+            # execute_code 不给 kind——它可能产出任意文件，硬猜类别等于编造证据。
+            artifact_kind="figure",
         )
     )
     registry.register(

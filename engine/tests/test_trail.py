@@ -19,7 +19,7 @@ async def test_sink_records_measured_model_duration(tmp_path) -> None:
     from engine.__main__ import _build_sink
 
     recorder, store = _recorder(tmp_path)
-    await _build_sink(recorder)("t1", "analysis", {
+    await _build_sink(recorder, tmp_path / "tasks")("t1", "analysis", {
         "model": "timed-model",
         "usage": {"prompt_tokens": 10, "completion_tokens": 20},
         "duration_ms": 1234.5,
@@ -33,7 +33,7 @@ async def test_sink_omits_duration_when_not_measured(tmp_path) -> None:
     from engine.__main__ import _build_sink
 
     recorder, store = _recorder(tmp_path)
-    await _build_sink(recorder)("t1", "analysis", {
+    await _build_sink(recorder, tmp_path / "tasks")("t1", "analysis", {
         "model": "fake-llm/deterministic",
         "usage": {"prompt_tokens": 10, "completion_tokens": 20},
     })

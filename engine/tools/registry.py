@@ -11,6 +11,7 @@ dispatch 语义（《任务执行手册》W9）：
 import json
 import re
 import time
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -62,6 +63,14 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return sorted(self._tools)
 
+    def specs(self) -> list[ToolSpec]:
+        """已注册的工具规格（只读快照）。
+
+        与 `names()` 同一类自省口：产物类别 `artifact_kind` 是注册时声明的承诺，
+        声明是否与契约 enum 一致需要机器可比对——否则又是"注释里说同源"。
+        """
+        return list(self._tools.values())
+
     def tool_payloads(self) -> list[dict]:
         """OpenAI tools 数组（parameters 由 args_model 单源生成）。"""
         return [
@@ -100,18 +109,17 @@ class ToolRegistry:
         )
 
         if self._trail is not None:
-            self._trail.record_tool_call(
-                ctx.task_id,
-                ctx.stage,
-                call.name,
-                {
-                    "call_id": call.id,
-                    "args_summary": args_summary,
-                    "ok": result.ok,
-                    "duration_ms": result.duration_ms,
-                    "error": result.error.model_dump() if result.error else None,
-                },
-            )
+            detail: dict[str, Any] = {
+                "call_id": call.id,
+                "args_summary": args_summary,
+                "ok": result.ok,
+                "duration_ms": result.duration_ms,
+                "error": result.error.model_dump() if result.error else None,
+            }
+            # 产物登记结果并进同一条 tool_call：留痕条数 = 调用次数。多写一条会让
+            # "这题到底调了几次工具"这种复核问题永远答错（审计是逐条数着看的）。
+            detail.update(self._register_artifact(spec, result, ctx, self._trail))
+            self._trail.record_tool_call(ctx.task_id, ctx.stage, call.name, detail)
         if self._events is not None:
             self._events.emit(
                 "tool.result",
@@ -124,6 +132,30 @@ class ToolRegistry:
                 error=clip(result.error.message, ERROR_LIMIT) if result.error else None,
             )
         return result
+
+    def _register_artifact(
+        self, spec: ToolSpec | None, result: ToolResult, ctx: ToolContext, trail: TrailRecorder
+    ) -> dict:
+        """产物登记（W23/G41 的留痕侧）：返回要并进 tool_call 明细的标记，永不抛错。
+
+        - 只有工具自己声明了 `artifact_kind` 才登记：`execute_code` 可能产出任意文件，引擎侧不可
+          枚举，硬猜 kind 就是编造证据；
+        - **文件真在盘上才登记**：`record_artifact` 会算 sha256，登记一个不存在的文件等于伪造
+          支撑材料；
+        - 声称有产物却盘上没有（沙箱替身、失败分支都可能这样）→ 回 `artifact_missing`，
+          让"工具说它画了图"与"图上确实有图"在审计里是两件可区分的事。
+        """
+        if spec is None or spec.artifact_kind is None or not result.ok or not result.result_ref:
+            return {}
+        path = ctx.work_dir / result.result_ref
+        if not path.exists():
+            return {
+                "artifact_missing": True,
+                "expected_kind": spec.artifact_kind,
+                "expected_path": result.result_ref,
+            }
+        trail.record_artifact(ctx.task_id, ctx.stage, spec.artifact_kind, path)
+        return {"artifact_kind": spec.artifact_kind, "artifact_path": result.result_ref}
 
     async def _execute(self, spec: ToolSpec, call: ToolCallLike, ctx: ToolContext) -> ToolResult:
         """参数校验 + 执行器调用；异常收敛为结构化错误。"""

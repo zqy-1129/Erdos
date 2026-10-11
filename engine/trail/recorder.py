@@ -12,6 +12,13 @@ from typing import Any
 
 from engine.trail.store import EventType, TrailStore
 
+# 沙箱产物扩展名 → 契约 artifact enum（figure/data/table/code/paper）；认不出的一律不登记
+_ARTIFACT_KIND_BY_SUFFIX = {
+    ".png": "figure", ".jpg": "figure", ".jpeg": "figure", ".svg": "figure",
+    ".csv": "data", ".tsv": "data", ".json": "data", ".xlsx": "data", ".npy": "data",
+    ".md": "paper",
+}
+
 
 class TrailRecorder:
     """四类事件记录器：model_call / tool_call / artifact / manual_edit。"""
@@ -68,6 +75,16 @@ class TrailRecorder:
             task_id, stage, EventType.MANUAL_EDIT,
             detail={"note": note},
         )
+
+
+def kind_for_file(path: str | Path) -> str | None:
+    """按扩展名给沙箱产物归类（契约 `artifact.ready.artifact` enum 同源）。
+
+    认不出来的**返回 None 而不是兜底成 "data"**：登记一个错类别等于编造证据，
+    而少登记一条只是少一条支撑材料（合规声明按实际登记的哈希出）。
+    """
+    suffix = Path(path).suffix.lower()
+    return _ARTIFACT_KIND_BY_SUFFIX.get(suffix)
 
 
 def sha256_of(path: str | Path) -> str:

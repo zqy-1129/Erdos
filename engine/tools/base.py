@@ -66,6 +66,7 @@ class ToolSpec:
     args_model: type[BaseModel]
     danger_level: str  # "low" | "high"（high → 必须经沙箱执行）
     executor: Callable[[Any, ToolContext], Awaitable[ToolResult]]  # 首参运行时为 args_model 实例
+    artifact_kind: str | None = None  # 产物类别（契约 artifact enum 同源）；None=该工具不产出可登记产物
 
     def parameter_schema(self) -> dict:
         """args_model → OpenAI function parameters JSON Schema（不手抄双份）。"""

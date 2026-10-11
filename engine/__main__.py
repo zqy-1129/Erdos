@@ -52,7 +52,7 @@ from engine.orchestrator.pipeline import FakeLLM, StagePipeline
 from engine.sandbox.base import SandboxUnavailableError
 from engine.sandbox.subprocess_sandbox import make_sandbox
 from engine.tools import build_default_registry
-from engine.trail.recorder import TrailRecorder
+from engine.trail.recorder import TrailRecorder, kind_for_file
 from engine.trail.store import TrailStore
 
 GRACE_EXIT_SECONDS = 0.3  # SIGTERM 后硬上限（engine-protocol.md §4）
@@ -219,8 +219,12 @@ def _build_llm(keys: KeyStore, trail: TrailRecorder, config: ModelConfig | None)
     return llm, solve_llm_port
 
 
-def _build_sink(trail: TrailRecorder):
-    """留痕 sink：每次阶段产出后记录 model_call 与 writing 产物（F-007 不可关闭）。"""
+def _build_sink(trail: TrailRecorder, work_root: Path):
+    """留痕 sink：每次阶段产出后记录 model_call 与产物（F-007 不可关闭）。
+
+    writing 的 paper 由管线自己算 sha256；solving 的产物是沙箱落在工作目录里的任意文件，
+    管线只给出相对路径清单，所以在这里按扩展名归类登记（认不出的一律不登记，见 kind_for_file）。
+    """
 
     async def sink(task_id: str, stage: str, data: dict[str, Any]) -> None:
         model = data.get("model")
@@ -234,6 +238,13 @@ def _build_sink(trail: TrailRecorder):
         paper_path = data.get("paper_path")
         if stage == "writing" and paper_path and Path(str(paper_path)).exists():
             trail.record_artifact(task_id, stage, "paper", Path(str(paper_path)))
+        if stage == "solving":
+            task_dir = work_root / task_id
+            for rel in data.get("artifacts") or []:
+                path = task_dir / str(rel)
+                kind = kind_for_file(path)
+                if kind and path.is_file():
+                    trail.record_artifact(task_id, stage, kind, path)
 
     return sink
 
@@ -297,7 +308,7 @@ def main() -> None:
     pipeline = StagePipeline(
         llm=text_llm,
         sandbox=sandbox,
-        sink=_build_sink(trail),
+        sink=_build_sink(trail, home / "tasks"),
         work_root=home / "tasks",
         registry=registry,
         operations=operations,
@@ -322,6 +333,7 @@ def main() -> None:
         },
         key_store=keys,
         capability_cache=CapabilityCache(home),
+        trail=trail,  # F-007 第四类留痕（manual_edit）的唯一生产入口：人工门禁决策
     )
 
     loop = asyncio.new_event_loop()

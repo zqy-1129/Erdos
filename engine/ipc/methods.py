@@ -58,8 +58,9 @@ def register_all(
     key_store=None,  # noqa: ANN001 - KeyStore | None（provider_test 用，Key 不经方法传递）
     capability_cache=None,  # noqa: ANN001 - CapabilityCache | None（探测结果落盘供装配期复用）
     probe_transport=None,  # noqa: ANN001 - httpx.AsyncBaseTransport | None（测试注入）
+    trail=None,  # noqa: ANN001 - TrailRecorder | None（F-007 四类留痕的人工侧埋点；None=骨架路径不留痕）
 ) -> EngineRuntime:
-    """注册全部 10 个 RPC 方法；可注入 checkpoint / task_store / runner / 事件 / 运行时信息 / 探测依赖。
+    """注册全部 10 个 RPC 方法；可注入 checkpoint / task_store / runner / 事件 / 运行时信息 / 探测依赖 / 留痕。
 
     返回 EngineRuntime：调用方在事件循环退出前 drain，避免后台阶段任务被静默丢弃。
     """
@@ -218,6 +219,22 @@ def register_all(
         snapshot["protocol"] = server.guard.stats.as_dict()
         return snapshot
 
+    def _note_gate_decision(task_id: str, gate: str, decision: str, feedback: str) -> None:
+        """人工门禁决策留痕（F-007 四类事件的第四类：manual_edit 此前零生产调用方）。
+
+        顺序是刻意的：**先写留痕再推进状态机**——留痕写不进去（磁盘/锁）就该让这次操作失败，
+        而不是留下一个"门禁被人工放行过、却查无人记录"的既成事实。
+        文本不在此处脱敏：`TrailStore.append_event` 落库前统一走 `redact_sensitive`（留痕词表单源），
+        在入口再掩一遍会形成第二份词表——那正是 G32 一族的漂移来源。
+        """
+        if trail is None:
+            return
+        stage = state.task.stage if state.task is not None else gate.removeprefix("gate_")
+        note = f"门禁决策：{decision}（gate={gate}）"
+        if feedback:
+            note += f"；人工意见：{feedback}"
+        trail.record_manual_edit(task_id, stage, note)
+
     async def answer_gate(params: dict):
         task_id = params.get("task_id")
         gate = params.get("gate")
@@ -234,9 +251,11 @@ def register_all(
             if state.task is not None and state.task.status == "failed":
                 raise ValueError(f"阶段执行失败，不能通过门禁：{last_error.get(task_id, '未知错误')}")
             feedback = params.get("feedback", "")
+            _note_gate_decision(task_id, gate, decision, str(feedback))
             action = await state.orchestrator.answer_gate(decision, feedback)
             return {"task_id": task_id, "gate": gate, "decision": decision, "action": action["action"]}
-        # SP1-1 骨架：仅记录决策
+        # SP1-1 骨架：仅记录决策。`_require_task` 要求先 start_stage，而 start_stage 必建编排器，
+        # 所以经 RPC 到不了这一支（登记为零可达分支，见对齐报告）；留痕只接生产可达的那一支。
         state.answer_gate(task_id, gate, decision)
         return {"task_id": task_id, "gate": gate, "decision": decision}
 
