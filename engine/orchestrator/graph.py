@@ -134,6 +134,26 @@ def gate_node_name(stage: str) -> str:
     return f"gate_{stage}"
 
 
+def _latest_stage(records: list[Any]) -> Any:  # noqa: ANN401 - CheckpointRecord（存储层类型，此处只读字段）
+    """取**阶段顺序**最靠后的一条检查点记录，而不是最后写入的那条。
+
+    恢复定位是数据正确性判据（选错就要么重跑已完成阶段、要么跳过未过门禁的阶段），
+    所以它只能依赖"分析→建模→求解→报告"这条业务序，不能依赖 `updated_at` 的时间序：
+    两条记录落在同一时间戳时 SQL 会退化成不定序（字母序更是把 writing 排到 solving 前面），
+    而驳回重跑只会让**当前**阶段的 updated_at 变新，早先阶段的行也可能被后写。
+    未知阶段名一律拒绝——与 `gate_passed()` 对未知状态字面量的处理同一口径。
+    """
+    indexes = []
+    for record in records:
+        try:
+            indexes.append(STAGES.index(record.stage))
+        except ValueError as exc:
+            raise ValueError(
+                f"检查点含未知阶段 {record.stage!r}（只接受 {STAGES}）；已拒绝据此定位恢复点，保留现场待人工核对"
+            ) from exc
+    return records[max(range(len(records)), key=indexes.__getitem__)]
+
+
 _STATIC_EDGES: dict[str, str] = {
     **{stage: gate_node_name(stage) for stage in STAGES},
     **{gate_node_name(stage): FINISH_NODE for stage in STAGES},
@@ -358,8 +378,8 @@ class StageOrchestrator:
     ) -> "StageOrchestrator":
         """从检查点恢复编排器：已落库阶段全部还原，按门禁状态定位当前阶段。
 
-        - 最后落库记录为「门禁通过」→ 当前阶段 = 其下一个（不重算已完成阶段）；
-        - 最后落库记录为「执行完成（门禁未决）」→ 当前阶段 = 该阶段本身：
+        - 阶段序最靠后的记录为「门禁通过」→ 当前阶段 = 其下一个（不重算已完成阶段）；
+        - 阶段序最靠后的记录为「执行完成（门禁未决）」→ 当前阶段 = 该阶段本身：
           run_current_stage 经阶段节点跳过守卫重挂门禁（不重放副作用，DEC-005）。
         runner 必须随恢复注入（生产路径与 SP1-7 断点恢复演练共用）：
         恢复的编排器还要执行剩余阶段，丢 runner 会静默退化为骨架空产出。
@@ -377,7 +397,7 @@ class StageOrchestrator:
                 "data": record.data,
             }
         if completed:
-            last = completed[-1]
+            last = _latest_stage(completed)
             if not gate_passed(last.status):
                 # 门禁未决崩溃（或状态字面量不可识别）：恢复到该阶段本身，重挂门禁。
                 # 未知值不走"默认推进"分支——未过门禁的阶段被跳过是数据错误，

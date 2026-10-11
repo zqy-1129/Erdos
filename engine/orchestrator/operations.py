@@ -24,7 +24,7 @@ class OperationRecord:
     stage: str
     attempt: int
     exec_seq: int
-    status: str  # done（终态）；running 为过程态，恢复时按未完成处理
+    status: str  # 目前只有 done 一个写入方；非 done 一律按未完成处理（防御：将来若引入过程态不会误判为已执行）
     result_ref: str | None
     result_sha256: str | None = None  # 引用产物内容哈希（EC-T4；无产物引用时为 None）
 
@@ -60,7 +60,7 @@ class OperationLog:
     def find(
         self, task_id: str, stage: str, attempt: int, exec_seq: int
     ) -> OperationRecord | None:
-        """按幂等键查询；无记录/仅 running（半写）→ None（按需重执行）。"""
+        """按幂等键查询；无记录、或状态非 done（半写/将来引入的过程态）→ None（按需重执行）。"""
         cursor = self._conn.execute(
             "SELECT task_id, stage, attempt, exec_seq, status, result_ref, result_sha256 "
             "FROM operations WHERE task_id=? AND stage=? AND attempt=? AND exec_seq=?",
@@ -74,7 +74,7 @@ class OperationLog:
             status=row[4], result_ref=row[5], result_sha256=row[6],
         )
         if record.status != "done":
-            return None  # running 半写记录按未完成处理（崩溃点矩阵）
+            return None  # 非 done 按未完成处理（崩溃点矩阵：宁可重跑，不可把没做完的当做完）
         return record
 
     def record_done(
@@ -117,17 +117,23 @@ class OperationLog:
         self._conn.commit()
 
     def records(self, task_id: str, stage: str | None = None) -> list[OperationRecord]:
-        """按任务（可选阶段）查询全部记录（对账/验收用）。"""
+        """按任务（可选阶段）查询全部记录（对账/验收用）。
+
+        排序必须带上 `attempt`：主键是四元组，同一 `exec_seq` 会在不同尝试里重复出现，
+        只按 exec_seq 排会把两次尝试的流水交错成一条假时间线（"第 3 次派发"到底属于哪次
+        尝试，正是恢复对账要问的问题）。
+        """
+        order = " ORDER BY attempt, exec_seq"
         if stage is None:
             cursor = self._conn.execute(
                 "SELECT task_id, stage, attempt, exec_seq, status, result_ref, result_sha256 "
-                "FROM operations WHERE task_id=? ORDER BY exec_seq",
+                "FROM operations WHERE task_id=?" + order,
                 (task_id,),
             )
         else:
             cursor = self._conn.execute(
                 "SELECT task_id, stage, attempt, exec_seq, status, result_ref, result_sha256 "
-                "FROM operations WHERE task_id=? AND stage=? ORDER BY exec_seq",
+                "FROM operations WHERE task_id=? AND stage=?" + order,
                 (task_id, stage),
             )
         return [

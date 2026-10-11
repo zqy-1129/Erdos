@@ -160,7 +160,11 @@ class SQLiteCheckpointStore:
         self._conn.commit()
 
     def completed_stages(self, task_id: str) -> list[CheckpointRecord]:
-        """按落库顺序返回该任务全部阶段检查点记录（恢复用）。
+        """按**写入时间**（updated_at）返回该任务全部阶段检查点记录。
+
+        注意排序语义：这是"最近写过哪条"，不是"业务上走到哪个阶段"。同一时间戳并列时
+        SQL 序不定，而驳回重跑也会让某一行的时间变新——所以恢复定位（`StageOrchestrator.restore`）
+        按 STAGES 阶段序取最靠后者，不依赖本列表的位置。
 
         status 含两态（SP1-7 门禁语义）：stage_done=执行完成门禁未决、
         done=门禁通过；消费方（orchestrator.restore / rpc_flow）按状态定位。

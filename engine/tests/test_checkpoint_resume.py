@@ -359,3 +359,45 @@ async def test_task_create_after_restart_rewrites_persisted_input(tmp_path) -> N
     assert store2.load_task_input("t1") == {"title": "新题面", "problem_text": "新正文"}
     store.close()
     store2.close()
+
+
+# ----------------------------------------------------------------------
+# 恢复定位：按阶段序，不按"最后写入"（判定通道评审查出的形状）
+# ----------------------------------------------------------------------
+def test_restore_locates_by_stage_order_not_write_time(tmp_path: Path) -> None:
+    """updated_at 序 ≠ 业务序时，恢复必须仍按阶段序定位。
+
+    构造一个"晚写的早阶段"：先落 modeling（门禁已过），再回写 analysis 的行使其时间戳更新。
+    取 completed[-1] 的实现会误判成"停在 analysis 且门禁未决"，从而把已完成的建模/求解丢掉；
+    按阶段序取最靠后者才与"禁跳级"的事实一致。
+    """
+    store = SQLiteCheckpointStore(str(tmp_path / "cp.db"))
+    store.save_stage("t-order", "modeling", "done", 0, {"stage": "modeling"})
+    store.save_stage("t-order", "analysis", "stage_done", 0, {"stage": "analysis"})
+
+    restored = StageOrchestrator.restore("t-order", store, runner=None)
+
+    # 阶段序最靠后的是 modeling 且门禁已过 → 推进到 solving。
+    # 若按写入时间取尾（analysis 那行最新），会被退回"analysis 门禁未决"，白扔已完成的建模进度。
+    assert restored.current_stage == "solving", (
+        "恢复按写入时间定位：晚写的早阶段把进度吃掉了"
+    )
+    store.close()
+
+
+def test_restore_rejects_unknown_stage_literal(tmp_path: Path) -> None:
+    """未知阶段字面量必须拒绝定位——与未知状态字面量同一口径（fail-closed）。"""
+    db = str(tmp_path / "cp2.db")
+    store = SQLiteCheckpointStore(db)
+    store.save_stage("t-bad", "analysis", "done", 0, {"stage": "analysis"})
+    store.close()
+    # 绕过写入侧校验，模拟外部/旧版本落库的脏行
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO checkpoints VALUES ('t-bad','galaxy','done',0,'{}','2026-10-11T00:00:00+00:00')")
+    conn.commit()
+    conn.close()
+    reopened = SQLiteCheckpointStore(db)
+
+    with pytest.raises(ValueError, match="未知阶段"):
+        StageOrchestrator.restore("t-bad", reopened, runner=None)
+    reopened.close()
