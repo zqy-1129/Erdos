@@ -130,11 +130,20 @@ async def probe_models_endpoint(
 
 
 # 离线 fixture 矩阵：OpenAI 兼容端点的高阶能力工程默认（保守登记，probe_source=fixture；
-# 上线前以 W14 provider.test 对真实端点实测校准，不准凭接口名假定兼容——开发文档 §8.2）
+# 上线前以 provider_test 对真实端点实测校准，不准凭接口名假定兼容——开发文档 §8.2）
+#
+# `openai-compat` 必须是矩阵键：客户端按 hostname 派生 provider，非通义域一律发
+# `openai-compat`（client/main/credential-registry.ts），引擎默认值也是它。此前矩阵只有
+# `openai`，于是默认装配永远查不到条目 → 保守降级 stage_level，工具循环与 tool.call 留痕
+# 在用户机主路径整条不可达（登记为 G31）。不直接 alias 到 `openai` 行：那会把
+# structured_output 一起当作已具备，属于凭接口名假定兼容。
 FIXTURE_MATRIX: dict[str, "ProviderCapabilities"] = {
     "openai": ProviderCapabilities(
         tools=True, tool_choice=True, structured_output=True, models_endpoint=True,
         probe_source="fixture",
+    ),
+    "openai-compat": ProviderCapabilities(
+        tools=True, tool_choice=True, models_endpoint=True, probe_source="fixture"
     ),
     "deepseek": ProviderCapabilities(
         tools=True, tool_choice=True, structured_output=True, models_endpoint=True,
@@ -147,6 +156,10 @@ FIXTURE_MATRIX: dict[str, "ProviderCapabilities"] = {
         tools=True, tool_choice=True, models_endpoint=True, probe_source="fixture"
     ),
 }
+
+DEFAULT_PROVIDER = "openai-compat"  # ERDOS_MODEL_PROVIDER 缺省值（与客户端派生值同名）
+KNOWN_PROVIDERS = tuple(FIXTURE_MATRIX)
+TOOL_MODES = ("tool_loop", "stage_level")  # 契约 capabilities.tool_mode 枚举同源
 
 
 def fixture_capabilities(provider: str) -> ProviderCapabilities | None:

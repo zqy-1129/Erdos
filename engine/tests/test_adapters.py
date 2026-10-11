@@ -7,6 +7,8 @@
 """
 
 
+import json
+
 import httpx
 import pytest
 
@@ -134,6 +136,43 @@ async def test_chat_stream_success() -> None:
     result = await adapter.chat([ChatMessage("user", "hi")], stream=True)
     assert result.content == "你好"
     assert result.streamed is True
+
+
+async def test_chat_stream_asks_vendor_for_usage() -> None:
+    """W8 请求侧契约：流式请求带 stream_options.include_usage，末块 usage 优先于估算。
+
+    不发该声明的厂商不会在末块回 usage，引擎只能按字符数估算——用量留痕与厂商账单
+    长期对不上，且下游没有任何信号提示"这不是真实计量"。
+    """
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(json.loads(request.content))
+        body = (
+            'data: {"choices":[{"delta":{"content":"你好"}}]}\n\n'
+            'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,'
+            '"total_tokens":30}}\n\n'
+            "data: [DONE]\n\n"
+        )
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    adapter = _adapter(handler)
+    result = await adapter.chat([ChatMessage("user", "hi")], stream=True)
+    assert seen["stream_options"] == {"include_usage": True}
+    assert result.usage.prompt_tokens == 10
+    assert result.usage.estimated is False
+
+
+async def test_chat_stream_without_vendor_usage_estimates() -> None:
+    """厂商末块不给 usage：按已聚合文本估算并标 estimated=True（禁止报 0）。"""
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = 'data: {"choices":[{"delta":{"content":"一二三四五六七八九十"}}]}\n\ndata: [DONE]\n\n'
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    adapter = _adapter(handler)
+    result = await adapter.chat([ChatMessage("user", "hi")], stream=True)
+    assert result.usage.estimated is True
+    assert result.usage.prompt_tokens > 0 and result.usage.completion_tokens > 0
 
 
 def test_usage_accumulator() -> None:

@@ -226,6 +226,37 @@ def tool_facts() -> dict:
     }
 
 
+def provider_facts() -> dict:
+    """离线能力矩阵 / 默认 provider / tool_mode 枚举 / 客户端可产出值 四方同抽。
+
+    G31 的形状是"三个名字看起来是一回事"。只抽引擎侧无法发现漂移，必须把客户端源码里的
+    可取值一起抽出来放在同一份事实里，比对才有抓手。
+    """
+    from dataclasses import asdict
+
+    from engine.adapters.capabilities import (
+        DEFAULT_PROVIDER,
+        FIXTURE_MATRIX,
+        KNOWN_PROVIDERS,
+        TOOL_MODES,
+    )
+
+    source = read(REPO / "client" / "main" / "credential-registry.ts")
+    entry = read(ENGINE / "__main__.py")
+    return {
+        "default_provider": DEFAULT_PROVIDER,
+        "known_providers": list(KNOWN_PROVIDERS),
+        "tool_modes": list(TOOL_MODES),
+        "matrix": {p: {**asdict(c), "tool_mode": c.tool_mode} for p, c in FIXTURE_MATRIX.items()},
+        "client_produced": sorted(set(re.findall(r'"([a-z0-9-]*compat)"', source))),
+        "entry_uses_matrix_constants": {
+            "imports_default": "DEFAULT_PROVIDER" in entry,
+            "imports_tool_modes": "TOOL_MODES" in entry,
+            "literal_openai_compat_in_entry": '"openai-compat"' in entry,
+        },
+    }
+
+
 def checkpoint_schema() -> dict:
     """引擎本地三库的全部建表语句与并发参数（不能只扫 store.py）。
 
@@ -333,6 +364,7 @@ def main() -> None:
         "trail": trail_facts,
         "sandbox": sandbox_facts,
         "tools": tool_facts,
+        "providers": provider_facts,
         "quality": quality_numbers,
         "modules": module_files,
     }

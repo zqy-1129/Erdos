@@ -31,7 +31,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn
 
-from engine.adapters.capabilities import CapabilityCache, capability_key, fixture_capabilities
+from engine.adapters.capabilities import (
+    DEFAULT_PROVIDER,
+    TOOL_MODES,
+    CapabilityCache,
+    capability_key,
+    fixture_capabilities,
+)
 from engine.adapters.key_store import KeyStore
 from engine.adapters.openai_compat import ChatMessage, ModelConfig, OpenAIChatAdapter
 from engine.checkpoint.store import SQLiteCheckpointStore
@@ -119,7 +125,7 @@ def _model_config() -> ModelConfig:
     if not base_url or not model:
         _fail("Key 模式需要环境变量 ERDOS_MODEL_BASE_URL 与 ERDOS_MODEL_NAME")
     return ModelConfig(
-        provider=os.environ.get("ERDOS_MODEL_PROVIDER", "openai-compat"),
+        provider=os.environ.get("ERDOS_MODEL_PROVIDER", DEFAULT_PROVIDER),
         base_url=base_url,
         model=model,
     )
@@ -133,7 +139,14 @@ def _resolve_tool_mode(keys: KeyStore, config: ModelConfig | None, home: Path) -
     """
     forced = os.environ.get("ERDOS_TOOL_MODE")
     if forced:
-        return forced
+        # 该值会原样进 initialize.capabilities.tool_mode，而契约把它约束成二选一枚举。
+        # 拼错时宁可当场拒启，也不要向客户端上报一个契约外的能力值（客户端只能按未知值猜）。
+        if forced.strip().lower() not in TOOL_MODES:
+            _fail(
+                f"ERDOS_TOOL_MODE={forced!r} 非法，只接受 {' / '.join(TOOL_MODES)}；"
+                "取消该变量可回到按能力探测的默认路径"
+            )
+        return forced.strip().lower()
     if keys.has_key and config is not None:
         cached = CapabilityCache(home).load(capability_key(config.base_url, config.model))
         if cached is not None:

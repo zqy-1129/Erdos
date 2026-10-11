@@ -12,6 +12,7 @@ import re
 import sys
 import threading
 from pathlib import Path
+from typing import Any
 
 from engine.checkpoint.store import SQLiteCheckpointStore
 from engine.gates.llm_evaluator import LlmRubricEvaluator
@@ -136,6 +137,14 @@ def test_run_paper_e2e_script_no_key_smoke(tmp_path: Path) -> None:
 
 _MOCK_CONTENT = "【摘要】mock 摘要，覆盖问题与方法。【结论】mock 结论，含局限与改进。"
 _MOCK_USAGE = {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+# 求解内循环（tool_loop）可编程应答：一次工具调用 → 看到 tool 结果后回收敛 JSON
+_MOCK_TOOL_CALL = [
+    {
+        "id": "call-1",
+        "function": {"name": "execute_code", "arguments": '{"code": "print(1.985)"}'},
+    }
+]
+_MOCK_FINAL_RESULTS = '{"results": [{"name": "slope", "value": 1.985, "unit": ""}]}'
 
 # 评委请求识别：llm_evaluator 的 system prompt 首句（同一常量单源，避免测试与实现漂移）
 _JUDGE_MARKER = "质量门禁评委"
@@ -158,6 +167,8 @@ class _MockVendorHandler(http.server.BaseHTTPRequestHandler):
     """
 
     def do_POST(self) -> None:  # noqa: N802 - http.server 命名约定
+        # BaseHTTPRequestHandler.server 在 typeshed 里是 BaseServer，自定义字段经此取
+        srv: Any = self.server
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
         try:
@@ -167,34 +178,84 @@ class _MockVendorHandler(http.server.BaseHTTPRequestHandler):
         messages = payload.get("messages") or []
         text = " ".join(str(m.get("content", "")) for m in messages)
         is_judge = _JUDGE_MARKER in text
-        self.server.requests.append({  # type: ignore[attr-defined]
+        entry: dict = {
             "path": self.path,
             "authorization": self.headers.get("Authorization", ""),
             "model": payload.get("model", ""),
             "judge": is_judge,
-        })
+            "tools": bool(payload.get("tools")),
+            "stream": bool(payload.get("stream")),
+            "status": 200,
+        }
+        srv.requests.append(entry)
 
-        if self.server.fail_first > 0:  # type: ignore[attr-defined]
-            self.server.fail_first -= 1  # type: ignore[attr-defined]
+        if srv.fail_first > 0:
+            srv.fail_first -= 1
+            entry["status"] = 429
             self._respond(429, {"error": {"message": "slow down"}},
-                          headers={"Retry-After": str(self.server.retry_after)})  # type: ignore[attr-defined]
+                          headers={"Retry-After": str(srv.retry_after)})
             return
-        if is_judge and self.server.judge_fail_status:  # type: ignore[attr-defined]
-            self._respond(
-                self.server.judge_fail_status, {"error": {"message": "judge unavailable"}}  # type: ignore[attr-defined]
-            )
+        if is_judge and srv.judge_fail_status:
+            entry["status"] = srv.judge_fail_status
+            self._respond(srv.judge_fail_status, {"error": {"message": "judge unavailable"}})
             return
-        if is_judge and self.server.judge_score is not None:  # type: ignore[attr-defined]
-            content = _judge_output(
-                _DIMENSION_LINE.findall(text), self.server.judge_score  # type: ignore[attr-defined]
-            )
+        if is_judge and srv.judge_score is not None:
+            content = _judge_output(_DIMENSION_LINE.findall(text), srv.judge_score)
+        elif srv.tools_mode and not is_judge and payload.get("tools"):
+            # 求解内循环（tool_loop）走的是带 tools 的请求：先回一次 tool_calls，
+            # 看到 tool 结果后再回最终 JSON。G31 修复后这条路径才可达，此前引擎子进程
+            # 端到端只测过 stage_level 降级路径，工具链 + 流式从没被跑通过。
+            if not any(m.get("role") == "tool" for m in messages):
+                self._stream_or_json(payload, tool_calls=_MOCK_TOOL_CALL)
+                return
+            content = _MOCK_FINAL_RESULTS
         else:
-            content = self.server.content  # type: ignore[attr-defined]
+            content = srv.content
+        self._stream_or_json(payload, content=content)
+
+    def _stream_or_json(self, payload: dict, *, content: str = "", tool_calls: list | None = None) -> None:
+        """stream=true 时必须按 SSE 分块回（引擎求解内循环带 delta_sink，走流式）。"""
+        if payload.get("stream"):
+            delta: dict = {"role": "assistant"}
+            finish = "stop"
+            if tool_calls:
+                delta["tool_calls"] = [
+                    {"index": 0, "id": tc["id"], "type": "function", "function": tc["function"]}
+                    for tc in tool_calls
+                ]
+                finish = "tool_calls"
+            else:
+                delta["content"] = content
+            chunks: list[dict] = [
+                {"choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
+                {"choices": [{"index": 0, "delta": {}, "finish_reason": finish}]},
+            ]
+            # 如实镜像真实厂商：只有请求声明了 stream_options.include_usage 才在末块补
+            # usage。替身"无条件大方"会把引擎没索取 usage 这类缺陷掩盖成绿灯。
+            if (payload.get("stream_options") or {}).get("include_usage"):
+                chunks.append({"choices": [], "usage": dict(_MOCK_USAGE)})
+            self._respond_sse(chunks)
+            return
+        message: dict = {"role": "assistant", "content": content}
+        if tool_calls:
+            message["tool_calls"] = [
+                {"id": tc["id"], "type": "function", "function": tc["function"]} for tc in tool_calls
+            ]
         self._respond(200, {
-            "choices": [{"message": {"role": "assistant", "content": content},
-                         "finish_reason": "stop"}],
+            "choices": [{"message": message,
+                         "finish_reason": "tool_calls" if tool_calls else "stop"}],
             "usage": dict(_MOCK_USAGE),
         })
+
+    def _respond_sse(self, chunks: list[dict]) -> None:
+        body = "".join(f'data: {_json.dumps(c, ensure_ascii=False)}\n\n' for c in chunks)
+        body += "data: [DONE]\n\n"
+        raw = body.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
 
     def _respond(self, status: int, payload: dict, headers: dict[str, str] | None = None) -> None:
         body = _json.dumps(payload).encode("utf-8")
@@ -216,7 +277,7 @@ class _MockVendorServer(http.server.ThreadingHTTPServer):
     def __init__(
         self, fail_first: int, retry_after: int,
         *, content: str = _MOCK_CONTENT, judge_score: float | None = None,
-        judge_fail_status: int | None = None,
+        judge_fail_status: int | None = None, tools_mode: bool = True,
     ) -> None:
         super().__init__(("127.0.0.1", 0), _MockVendorHandler)
         self.requests: list[dict] = []
@@ -225,9 +286,12 @@ class _MockVendorServer(http.server.ThreadingHTTPServer):
         self.content = content
         self.judge_score = judge_score
         self.judge_fail_status = judge_fail_status
+        # True = 具备工具调用能力（引擎默认 provider 会选 tool_loop）；
+        # False 配合 ERDOS_TOOL_MODE=stage_level 可回退到阶段级降级路径。
+        self.tools_mode = tools_mode
 
 
-def _vendor_factory(root: Path, base_url: str):
+def _vendor_factory(root: Path, base_url: str, *, extra_env: dict[str, str] | None = None):
     """真实 Key 通道任务流工厂：注入 mock 端点与测试 Key。"""
 
     def build(problem: RegressionProblem) -> RpcTaskFlow:
@@ -240,18 +304,27 @@ def _vendor_factory(root: Path, base_url: str):
             base_url=base_url,
             model="mock-model",
             provider="openai-compat",
+            extra_env=extra_env,
             stage_timeout=_STAGE_TIMEOUT,
         )
 
     return build
 
 
+def _trail_event_types(audit_db: Path, task_id: str) -> list[str]:
+    store = TrailStore(str(audit_db))
+    try:
+        return [e.event_type for e in store.events(task_id)]
+    finally:
+        store.close()
+
+
 async def test_real_key_channel_full_chain_with_mock_vendor(tmp_path) -> None:
     """真实 Key 通道全链：stdin 注入 → 适配器 → HTTP → usage 留痕 → 论文。
 
     验证引擎进程在 Key 模式下四阶段全通，Authorization 头携带注入 Key
-    （不出现在事件/日志面），usage 来自厂商应答（非估算），决策门对
-    real_key 通道给出 GO。
+    （不出现在事件/日志面），usage 来自厂商末块（非本地估算），决策门对
+    real_key 通道给出 GO。G31 修复后默认装配走求解内循环，故求解阶段两次调用。
     """
     problem = REGRESSION_SET[0]
     server = _MockVendorServer(fail_first=0, retry_after=0)
@@ -266,11 +339,23 @@ async def test_real_key_channel_full_chain_with_mock_vendor(tmp_path) -> None:
     result = report.results[0]
     assert result.passed and result.failure_module is None
     assert result.executed_stages == STAGES
-    assert result.prompt_tokens == 4 * _MOCK_USAGE["prompt_tokens"]  # 四阶段各一次调用
-    assert result.paper_sha256
 
+    # usage 逐请求可核：每个 200 应答都带厂商计量，合计即阶段用量（估算值不可能整除）
+    ok = [r for r in server.requests if r["status"] == 200]
+    assert len(ok) == 5  # 分析/建模/写作各 1 + 求解内循环 2（tool_calls → 收敛）
+    assert result.prompt_tokens == len(ok) * _MOCK_USAGE["prompt_tokens"]
+    assert result.completion_tokens == len(ok) * _MOCK_USAGE["completion_tokens"]
+
+    # 默认装配可达工具链（G31 红线回归：曾因 provider 名不在矩阵而永久降级 stage_level）
+    assert any(r["tools"] for r in ok), "求解阶段应带 tools 发起（tool_loop 路径）"
     home = tmp_path / "homes" / problem.business_id
-    assert (home / "tasks" / f"reg-{problem.business_id}" / "paper.md").exists()
+    task_id = f"reg-{problem.business_id}"
+    audit = home / "audit.db"
+    assert EventType.TOOL_CALL in _trail_event_types(audit, task_id), (
+        "F-007 四类留痕在默认装配下必须真实产生（G31 修复前主路径整条不可达）"
+    )
+    assert result.paper_sha256
+    assert (home / "tasks" / task_id / "paper.md").exists()
 
     # Key 注入链路：stdin 首行 → 适配器 Authorization 头（仅此处出现，不出现在留痕）
     assert {req["authorization"] for req in server.requests} == {"Bearer sk-test-vendor-key"}
@@ -279,6 +364,34 @@ async def test_real_key_channel_full_chain_with_mock_vendor(tmp_path) -> None:
 
     # 真实通道决策门：1/1 通过 + 题型防偏科满足 → GO
     assert report.decision().verdict == "GO"
+
+
+async def test_real_key_channel_stage_level_degradation(tmp_path) -> None:
+    """降级路径保持可达：ERDOS_TOOL_MODE=stage_level 时四阶段各一次调用、无工具留痕。
+
+    W39 把默认装配翻成 tool_loop 后，降级分支不能只在单测里存在——这里用同一进程级
+    链路证明显式降级仍然工作（工具能力不足/厂商不支持 tools 时的真实形态）。
+    """
+    problem = REGRESSION_SET[0]
+    server = _MockVendorServer(fail_first=0, retry_after=0, tools_mode=False)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_address[1]}/v1"
+        factory = _vendor_factory(
+            tmp_path, base_url, extra_env={"ERDOS_TOOL_MODE": "stage_level"}
+        )
+        report = await AcceptanceRunner(factory, channel=CHANNEL_REAL).run_all((problem,))
+    finally:
+        server.shutdown()
+
+    result = report.results[0]
+    assert result.passed and result.failure_module is None
+    assert len(server.requests) == 4  # 无内循环：每阶段恰好一次
+    assert not any(r["tools"] for r in server.requests)
+    assert result.prompt_tokens == 4 * _MOCK_USAGE["prompt_tokens"]
+    home = tmp_path / "homes" / problem.business_id
+    task_id = f"reg-{problem.business_id}"
+    assert EventType.TOOL_CALL not in _trail_event_types(home / "audit.db", task_id)
 
 
 async def test_real_key_channel_429_retry_after_through_process(tmp_path) -> None:
@@ -295,8 +408,9 @@ async def test_real_key_channel_429_retry_after_through_process(tmp_path) -> Non
 
     result = report.results[0]
     assert result.passed  # 重试恢复，阶段不失败
-    assert len(server.requests) == 4 * 1 + 1  # 四阶段各一次成功 + 首次被 429
-    assert result.prompt_tokens == 4 * _MOCK_USAGE["prompt_tokens"]  # 失败调用不计 usage
+    ok = [r for r in server.requests if r["status"] == 200]
+    assert len(server.requests) == len(ok) + 1  # 四阶段成功调用 + 首次被 429
+    assert result.prompt_tokens == len(ok) * _MOCK_USAGE["prompt_tokens"]  # 失败调用不计 usage
 
 
 # ----------------------------------------------------------------------

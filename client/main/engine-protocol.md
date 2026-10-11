@@ -125,22 +125,35 @@ v2 客户端在拉起后、首个任务前必须调用 `initialize`：
 |---|---|---|
 | `ERDOS_ENGINE_HOME` | 任务/库数据根目录（缺失以退出码 2 拒启） | 主进程必给（§1） |
 | `ERDOS_MODEL_BASE_URL` / `ERDOS_MODEL_NAME` | Key 模式的模型坐标（禁猜默认端点，缺失退出码 2） | 主进程必给（§3） |
-| `ERDOS_MODEL_PROVIDER` | 厂商族（能力矩阵键）；**默认 `openai-compat` 不在离线能力矩阵内**，未显式设置时按 `stage_level` 降级，见 §8.1 | 主进程给，缺省走降级 |
-| `ERDOS_TOOL_MODE` | 强制求解路径 `tool_loop` / `stage_level`；不校验取值（§8.1） | 排障用，产品路径不设 |
+| `ERDOS_MODEL_PROVIDER` | 厂商族（离线能力矩阵键，缺省 `openai-compat`）；矩阵键单源 `engine/adapters/capabilities.py:KNOWN_PROVIDERS`，未知厂商保守降级 `stage_level` | 主进程给 |
+| `ERDOS_TOOL_MODE` | 强制求解路径 `tool_loop` / `stage_level`；**非法取值以退出码 2 拒启**（§8.1） | 排障用，产品路径不设 |
 | `ERDOS_SANDBOX_PYTHON` | 沙箱执行体解释器（解析顺序 `ERDOS_SANDBOX_PYTHON` → `sys.executable` → PATH 探测） | 打包/CI 显式给；Windows 上 PATH 的 `python` 可能是商店占位 stub |
 | `ERDOS_SANDBOX_IMAGE` | Docker 沙箱镜像名 | 仅 Docker 模式 |
 | `ERDOS_SANDBOX_REQUIRE_DOCKER` | `=1` 时强制 Docker，探针未过即 `SandboxUnavailableError`（DEC-006）；**客户端目前从不设置**，因此 Windows 无 Docker 时静默降级 subprocess | 正式构建/CI |
 | `ERDOS_ORCH_IMPL` = `native`（默认）/ `langgraph` | **编排后端回退开关**：引擎四阶段编排与求解内循环用自研内核还是 LangGraph。灰度期发现编排侧回归时设 `langgraph` 即时回滚（秒级、不发版）；两套后端读写同一张 `checkpoints` 表，回滚不需要数据迁移（兼容性由 `engine/tests/test_persistence_compat.py` 守护）。LangGraph 在 SP5-3 摘除依赖后该变量作废 | 引擎；客户端不主动设置 |
 | `LANGCHAIN_*` / `LANGSMITH_*` | **引擎在包导入期无条件剥离**。原因：宿主若设过 `LANGCHAIN_TRACING_V2=true`，LangSmith 会把每次图执行的输入/输出（含题面与论文正文）POST 到外部端点，与「题面不出本机」(DEC-010) 和 BYOK 不中转直接冲突。主进程**不要**为了"传参"往这两个命名空间写任何东西 | 引擎 |
 
-### 8.1 两条与变量有关的行为口径（不写清就会被读成"设了就生效"）
+### 8.1 三条与变量有关的行为口径（不写清就会被读成"设了就生效"）
 
-- **`ERDOS_TOOL_MODE` 不校验取值**：填任意非空字符串都会被当作显式覆盖透传，包括拼错的值；
-  它同时决定 `initialize` 上报的 `capabilities.tool_mode`，因此拼错会让客户端看到非法枚举值。
-- **默认装配走不到工具循环**：`ERDOS_MODEL_PROVIDER` 缺省 `openai-compat` 不在引擎离线能力矩阵
-  （矩阵只有 `openai`/`deepseek`/`vllm`/`dashscope-compat`）→ 真实 Key 冷启动默认 `stage_level`，
-  `solve_loop`/`tool.call` 留痕整条链在用户机主路径不可达，除非先跑过 `provider_test` 落能力缓存。
-  这是 10-24 J-1024 判定内容的前置事实，不是本批引入的缺陷。
+- **`ERDOS_TOOL_MODE` 严格校验**（W39/G30 起）：只接受 `tool_loop` / `stage_level`，大小写与首尾
+  空白不敏感；其余取值**退出码 2 拒启**，stderr 给出合法值清单与"取消该变量即回到按能力探测"的
+  出路。选择拒启而非静默回落：该值原样进 `initialize.capabilities.tool_mode`，而契约把它约束成
+  二选一枚举——静默回落会让拼错表现为"设了但行为不对"，客户端还会收到契约外的枚举值。
+- **默认装配已可达工具循环**（W39/G31 起）：`openai-compat` 已进离线能力矩阵
+  （`engine/adapters/capabilities.py:FIXTURE_MATRIX`），`ERDOS_MODEL_PROVIDER` 缺省即命中 →
+  真实 Key 冷启动默认 `tool_loop`，`solve_loop` 与 `tool.call` 留痕在主路径可达。矩阵行**不含
+  `structured_output`**：那是凭接口名假定兼容（开发文档 §8.2 红线）。降级路径仍可达，
+  `ERDOS_TOOL_MODE=stage_level` 显式进入；两条都有进程级用例
+  （`engine/tests/test_rpc_flow.py::test_real_key_channel_full_chain_with_mock_vendor` /
+  `::test_real_key_channel_stage_level_degradation`）。矩阵 `probe_source=fixture`，真实端点是否
+  真支持 tools 仍需 `provider_test` 实测校准（W33）。
+- **流式请求现在向厂商索取 usage**：引擎在 `stream=true` 时带 `stream_options={"include_usage":
+  true}`（W8 契约的请求侧，此前只实现了消费侧，真实厂商流式恒走本地估算）。这是**出站请求体**
+  变化，不属本进程间协议，但对厂商可见：不接受未知字段的严格网关会报 400，属 W33 真厂商通道待
+  验证项。估算标记 `estimated` 目前不出留痕与事件面（登记为 G35）。
 
 *修订记录追加：2026-10-11 编排内核自研替换批次——新增 §8（回退开关 + env 剥离）、§8.1；
 删除 §1 示例中的幻象变量 `ERDOS_ENGINE_MODE`；修复 §7 表尾行被 §8 顶出的排版错误。*
+
+*修订记录追加：2026-10-11 W39 · EN-PROVIDER-ALIGN（G30/G31）——§8 两行按实况改写（provider 矩阵
+同源、`ERDOS_TOOL_MODE` 非法值拒启），§8.1 由两条扩为三条，新增流式 usage 索取口径。*

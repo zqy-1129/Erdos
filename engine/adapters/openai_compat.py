@@ -156,6 +156,9 @@ class OpenAIChatAdapter:
         if tool_choice:
             payload["tool_choice"] = tool_choice
         if stream:
+            # W8 契约的"请求侧"：不声明 include_usage 时厂商不会在末块回 usage，
+            # 引擎只能按字符数估算，留痕/用量面长期偏差且无法与厂商账单对齐。
+            payload["stream_options"] = {"include_usage": True}
             return await self._chat_stream(payload, on_delta=on_delta)
         return await self._chat_once(payload)
 
