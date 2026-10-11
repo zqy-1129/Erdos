@@ -259,3 +259,45 @@ def test_built_in_solve_script_fits_the_tool_argument_budget() -> None:
     except ValidationError as exc:
         pytest.fail(f"内置求解脚本超出 execute_code 参数上限，阶段级路径会整条报错：{exc}")
     assert args.language == "python"
+
+
+# ----------------------------------------------------------------------
+# 新出口的边界：data 只是引擎内部视图，合成调用只带内置脚本
+# ----------------------------------------------------------------------
+def test_untruncated_facts_do_not_leak_into_outbound_channels(tmp_path: Path) -> None:
+    """`ToolResult.data` 一旦出现在事件或留痕里，就多了第三条**未脱敏未截断**的出口。
+
+    注释里的承诺不算守护，所以这里用探针实测：全文必须只在模型提示词里出现。
+    """
+    marker = "PROBE-" + "q" * 300
+    long_stdout = f"{marker}\n" + ("x=0.5 resid=1e-9\n" * 4000)
+    h = _Harness(tmp_path, _ok(long_stdout))
+
+    _run(h.pipeline().process(TASK_ID, "solving"))
+
+    assert len(long_stdout) > SUMMARY_LIMIT
+    assert marker in h.llm.prompts[0], "探针失效：全文没进复核提示词，下面的断言就是恒真"
+    assert marker not in h.sink.getvalue(), "未截断 stdout 出现在 NDJSON 事件流"
+    assert marker not in json.dumps(h.tool_call_rows(), ensure_ascii=False), (
+        "未截断 stdout 出现在留痕明细"
+    )
+
+
+def test_problem_text_stays_out_of_the_tool_surface(tmp_path: Path) -> None:
+    """合成调用的参数只含内置脚本：题面不得进事件与留痕（DEC-010 在工具面的落点）。
+
+    "顺手把上游上下文也带进工具参数"是最容易长出来的形状，而 args_summary 会同时进
+    事件流与留痕——题面一旦进去就出了本机进程的语义边界。
+    """
+    marker = "本题要求最小化总运输成本（题面外泄探针）"
+    h = _Harness(tmp_path)
+    pipeline = StagePipeline(
+        llm=h.llm.chat, sandbox=h.sandbox, work_root=h.home, registry=h.registry,
+        tool_mode="stage_level", task_inputs={TASK_ID: {"problem_text": marker, "title": "探针题"}},
+    )
+
+    _run(pipeline.process(TASK_ID, "solving"))
+
+    assert marker in h.llm.prompts[0], "探针失效：题面没进提示词，本用例恒真"
+    assert marker not in h.sink.getvalue(), "题面进了 NDJSON 事件流"
+    assert marker not in json.dumps(h.tool_call_rows(), ensure_ascii=False), "题面进了留痕明细"
