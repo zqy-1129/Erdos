@@ -214,6 +214,8 @@ def register_all(
         snapshot = state.snapshot()
         if last_error:
             snapshot["last_error"] = dict(last_error)
+        # 协议层计数（G25/W36）：超限行不得静默消失，宿主页要能看见拒收/降级了多少条
+        snapshot["protocol"] = server.guard.stats.as_dict()
         return snapshot
 
     async def answer_gate(params: dict):

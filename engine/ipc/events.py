@@ -4,11 +4,12 @@
 禁止在事件负载中出现 API Key / 敏感字段（合规红线）。
 """
 
-import json
 import sys
 import uuid
 from datetime import datetime
 from typing import Any, TextIO
+
+from engine.ipc.limits import LineGuard, bound_event_payload, dumps
 
 # 允许的事件类型（与 contracts/engine-rpc.schema.json 对齐；
 # tool.call/tool.result/model.delta 为 CT-V2 v2 增量：负载须经脱敏词表）
@@ -32,13 +33,20 @@ class EventEmitter:
     """NDJSON 事件发射器：写 stdout，逐条 schema 校验；带 seq 与回放缓冲（W14）。"""
 
     def __init__(
-        self, sink: TextIO | None = None, trace_id: str | None = None, buffer_size: int = 1000
+        self, sink: TextIO | None = None, trace_id: str | None = None, buffer_size: int = 1000,
+        guard: LineGuard | None = None,
     ) -> None:
         self._sink: TextIO = sink or sys.stdout
         self._trace_id = trace_id or uuid.uuid4().hex
         self._seq = 0
         self._buffer: list[dict] = []  # 回放缓冲（环形，events_replay 消费）
         self._buffer_size = buffer_size
+        self._guard = guard or LineGuard()
+
+    @property
+    def guard(self) -> LineGuard:
+        """协议层计数（与 server 共用同一实例时，宿主页能看到读写两侧合计）。"""
+        return self._guard
 
     @property
     def last_seq(self) -> int:
@@ -57,7 +65,19 @@ class EventEmitter:
         missing = REQUIRED_FIELDS[event] - set(payload)
         if missing:
             raise ValueError(f"事件 {event} 缺必填字段：{sorted(missing)}")
-        line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        payload, degraded = bound_event_payload(payload, REQUIRED_FIELDS[event])
+        if degraded:
+            # 标记本身也占字节：加上后再收一次，保证"发出去的这一行"满足上限而不是近似满足
+            payload["truncated"] = True
+            payload, _ = bound_event_payload(payload, REQUIRED_FIELDS[event])
+        line = dumps(payload)
+        if self._guard.exceeds(line):
+            # 必填路由字段本身撑爆上限（极端）：不发这一条。发出去宿主会整行丢弃并按协议错误
+            # 处理，结果同样是丢事件，还额外把链路搞坏——所以留在引擎侧计数并放弃。
+            self._guard.note_oversized_out()
+            return ""
+        if degraded:
+            self._guard.note_truncated()  # 计数描述"实际发出去的东西"，不描述中途尝试
         self._sink.write(line + "\n")
         self._sink.flush()
         if event not in NO_REPLAY_EVENTS:  # token 流不进缓冲（允许丢帧、不补发）

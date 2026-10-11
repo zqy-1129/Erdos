@@ -33,7 +33,7 @@
     "limits": {
       "max_line_bytes": 1048576,
       "on_exceed": "protocol_error（EC-S6：不解析、按协议错误计数）",
-      "enforcement_status": "客户端读向已实现（main/engine-host/rpc.ts）；引擎侧未实现（ipc/server.py 裸 readline），登记为缺口 G25（2026-10-11 审计）"
+      "enforcement_status": "两侧均已实现：客户端读向（main/engine-host/rpc.ts，字面量与本页同源，由 engine/tests/test_line_limit_guard.py 三方互证）；引擎读写双向（engine/ipc/limits.py：超限行按协议错误拒绝/降级，计数经 get_status.protocol 暴露）。引擎读向限的是『愿意解析并分派的单行规模』，不是 stdin 缓冲字节数——stdin 是 configure_stdio() 重配过的 UTF-8 strict 文本层且首行握手同源，改走 buffer 有双层缓冲丢字节风险（G25，2026-10-11 落地）"
     },
     "guards": {
       "engine": "engine/tests/test_entry_wiring.py + engine/tests/test_contract_alignment.py transport 段",
