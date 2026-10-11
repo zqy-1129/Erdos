@@ -27,8 +27,15 @@ SuspendFn = Callable[[Any], Any]
 
 
 def orchestration_impl() -> str:
-    """当前编排后端；默认 langgraph（P5 翻默认值时只改这一处默认值）。"""
-    value = (os.environ.get(IMPL_ENV) or IMPL_LANGGRAPH).strip().lower()
+    """当前编排后端。
+
+    P5 起默认 `native`（自研内核）；`langgraph` 保留为显式回退值，供灰度期出问题时的
+    秒级回滚使用——改环境变量即可，不需要发版。P7 摘依赖时本函数与两个分支一起删。
+    """
+    # 空值（含纯空白）按"未设置"处理：启动器/CI YAML 里写 `ERDOS_ORCH_IMPL=` 是常见的
+    # 取消赋值方式，为此拒启比按默认跑更糟。但**非空的拼错值必须报错**——那会让人以为
+    # 自己已经回滚了，而实际跑的是另一个实现。
+    value = (os.environ.get(IMPL_ENV) or "").strip().lower() or IMPL_NATIVE
     if value not in VALID_IMPLS:
         raise ValueError(f"{IMPL_ENV} 只能是 {VALID_IMPLS} 之一，收到 {value!r}")
     return value

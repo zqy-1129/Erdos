@@ -109,4 +109,17 @@ v2 客户端在拉起后、首个任务前必须调用 `initialize`：
 | `engine:answer_gate` | `answer_gate` |
 | `engine:provider_test` | `provider_test`（EN-CAP 端点探测；Key 用引擎已注入的） |
 | `engine:events_replay` | `events_replay`（断线重连事件补发；§5） |
+
+## 8. 引擎环境变量（2026-10-11 补：编排后端回退开关与 env 消毒）
+
+主进程按 §1 的方式把 `process.env` 原样交给引擎子进程，因此下列变量在**用户环境里设置即生效**，
+不需要改客户端代码、也不需要发版。
+
+| 变量 | 作用 | 谁负责 |
+|---|---|---|
+| `ERDOS_ENGINE_HOME` | 任务/库数据根目录（缺失以退出码 2 拒启） | 主进程必给（§1） |
+| `ERDOS_MODEL_BASE_URL` / `ERDOS_MODEL_NAME` / `ERDOS_MODEL_PROVIDER` | Key 模式的模型坐标（禁猜默认端点） | 主进程必给（§3） |
+| `ERDOS_ORCH_IMPL` = `native`（默认）/ `langgraph` | **编排后端回退开关**：引擎四阶段编排与求解内循环用自研内核还是 LangGraph。灰度期发现编排侧回归时设 `langgraph` 即时回滚（秒级、不发版）；两套后端读写同一张 `checkpoints` 表，回滚不需要数据迁移（兼容性由 `engine/tests/test_persistence_compat.py` 守护）。LangGraph 在 SP5-3 摘除依赖后该变量作废 | 引擎；客户端不主动设置 |
+| `LANGCHAIN_*` / `LANGSMITH_*` | **引擎在包导入期无条件剥离**。原因：宿主若设过 `LANGCHAIN_TRACING_V2=true`，LangSmith 会把每次图执行的输入/输出（含题面与论文正文）POST 到外部端点，与「题面不出本机」(DEC-010) 和 BYOK 不中转直接冲突。主进程**不要**为了"传参"往这两个命名空间写任何东西 | 引擎 |
+
 | `engine:event` | 6 类 NDJSON 事件转发（§6） |
