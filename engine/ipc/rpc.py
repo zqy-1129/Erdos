@@ -51,7 +51,15 @@ def parse_request(line: str) -> RpcRequest:
         params = {}
     if not isinstance(params, dict):
         raise RpcError(INVALID_PARAMS, "params 必须是对象")
-    return RpcRequest(id=obj.get("id"), method=method, params=params)
+    request_id = obj.get("id")
+    # JSON-RPC 2.0 只允许 id 为 String / Number / Null。放行对象/数组/布尔的后果不是"不规范"这么轻：
+    # 错误响应要把 id 原样回显，于是回显变成放大——一条**读向已放行**的请求行能让写向产出一行超限，
+    # 宿主按协议错误整行丢弃（engine-host/rpc.ts:99），该请求就永远没有回应。
+    if request_id is not None and (
+        isinstance(request_id, bool) or not isinstance(request_id, (str, int, float))
+    ):
+        raise RpcError(INVALID_REQUEST, "id 必须是字符串、数字或 null")
+    return RpcRequest(id=request_id, method=method, params=params)
 
 
 def encode_response(request_id: Any, result: Any) -> str:

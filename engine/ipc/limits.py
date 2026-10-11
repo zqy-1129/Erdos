@@ -18,6 +18,10 @@ from typing import Any
 
 MAX_LINE_BYTES = 1048576  # 与契约 transport.limits.max_line_bytes 同源（守护比对字面值，G32 同族）
 
+# 错误信封的 id 长到回显不起时（退化成 id=null），消息保留的字节预算——
+# 此时已无法靠对 id 找回是哪条请求，留可读的诊断前缀比留 id 更有价值。
+MAX_ERROR_MESSAGE_BYTES = 2048
+
 # 截断时不许动的字段：标识与枚举类字段截断会让宿主无法路由（task_id 截断=事件投给错的任务）
 _UNTOUCHABLE = frozenset(
     {"trace_id", "event", "timestamp", "seq", "task_id", "stage", "tool", "call_id", "artifact", "gate"}
@@ -31,6 +35,23 @@ def line_bytes(text: str) -> int:
     return len(text.encode("utf-8"))
 
 
+def clip_bytes(text: str, budget: int) -> str:
+    """按 UTF-8 **字节**预算截断并追加截断标记；不切断多字节字符，也不谎称是原文。
+
+    按字符数截会得到"看着没到上限、编码后超限"的行（CJK 一字 3 字节），
+    而协议上限量的正是字节数——所以预算也必须按字节花。
+    """
+    if budget <= 0:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= budget:
+        return text
+    keep = budget - line_bytes(_TRUNCATE_MARK)
+    if keep <= 0:
+        return _TRUNCATE_MARK if line_bytes(_TRUNCATE_MARK) <= budget else ""
+    return encoded[:keep].decode("utf-8", errors="ignore") + _TRUNCATE_MARK
+
+
 def dumps(value: Any) -> str:
     """协议序列化：紧凑分隔符 + 不转义非 ASCII，与 EventEmitter/encode_error 一致。"""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
@@ -41,7 +62,7 @@ class ProtocolStats:
     """协议层异常计数（get_status 的 `protocol` 字段）；只增不减，供宿主观测而非静默吞掉。"""
 
     oversized_in: int = 0  # 读向：被拒绝的超限请求行
-    oversized_out: int = 0  # 写向：被降级为错误信封的超限响应
+    oversized_out: int = 0  # 写向：被降级的超限出站行（成功响应退化为错误信封，或错误信封被截断/弃 id）
     truncated_events: int = 0  # 写向：被就地截断的事件数
 
     def as_dict(self) -> dict[str, int]:

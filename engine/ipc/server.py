@@ -2,6 +2,9 @@
 
 从 stdin 逐行读 JSON-RPC 请求，经方法注册表分发，写响应到 stdout；
 事件经 stdout NDJSON 流发射（用独立 sink 区分响应与事件由主进程按字段分流）。
+
+出站纪律：凡写 stdout 的行——成功响应**和错误响应**——都必须先行宽判定（`limits.py`）。
+宿主把超限行整行丢弃，所以"有一条出口没兜"不是报错信息难看，而是那条请求永远没有回应。
 """
 
 import asyncio
@@ -10,7 +13,13 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from engine.ipc.events import EventEmitter
-from engine.ipc.limits import MAX_LINE_BYTES, LineGuard
+from engine.ipc.limits import (
+    MAX_ERROR_MESSAGE_BYTES,
+    MAX_LINE_BYTES,
+    LineGuard,
+    clip_bytes,
+    line_bytes,
+)
 from engine.ipc.rpc import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -57,40 +66,65 @@ class JsonRpcServer:
             # 读向：超限请求行当场拒绝并计数，**不断链**（EC-S6）。上限管的是"引擎愿意解析并
             # 分派的单行规模"，不是 stdin 缓冲字节数——见 limits.py 模块头的边界说明。
             self._guard.note_oversized_in()
-            return encode_error(
+            return self._bounded_error(
                 None, INVALID_REQUEST,
                 f"单行超过契约上限 {MAX_LINE_BYTES} 字节，已拒绝（EC-S6；计数见 get_status.protocol）",
             )
         try:
             req = parse_request(line)
         except RpcError as exc:
-            return encode_error(None, exc.code, exc.message)
+            return self._bounded_error(None, exc.code, exc.message)
 
         handler = self._methods.get(req.method)
         if handler is None:
-            return encode_error(req.id, METHOD_NOT_FOUND, f"未知方法：{req.method}")
+            return self._bounded_error(req.id, METHOD_NOT_FOUND, f"未知方法：{req.method}")
 
         try:
             result = await handler(req.params)
-            return self._bounded(encode_response(req.id, result), req.id)
+            return self._bounded_result(encode_response(req.id, result), req.id)
         except ValueError as exc:
-            return encode_error(req.id, INVALID_PARAMS, str(exc))
+            return self._bounded_error(req.id, INVALID_PARAMS, str(exc))
         except RpcError as exc:
-            return encode_error(req.id, exc.code, exc.message)
+            return self._bounded_error(req.id, exc.code, exc.message)
         except Exception as exc:  # noqa: BLE001 - 收敛为 internal error
-            return encode_error(req.id, INTERNAL_ERROR, f"内部错误：{exc}")
+            return self._bounded_error(req.id, INTERNAL_ERROR, f"内部错误：{exc}")
 
-    def _bounded(self, response: str, request_id: Any) -> str:
-        """写向兜底：响应超限不发出去（宿主 rpc.ts 会整行丢弃并记协议错误 = 静默丢结果），
+    def _bounded_result(self, response: str, request_id: Any) -> str:
+        """写向兜底（成功响应）：响应超限不发出去（宿主 rpc.ts 会整行丢弃并记协议错误 = 静默丢结果），
         改发错误信封并计数。最现实的触发点是 `events_replay` 一次取太多事件。"""
         if not self._guard.exceeds(response):
             return response
-        self._guard.note_oversized_out()
-        return encode_error(
+        self._guard.note_oversized_out()  # 一条出站的行只计一次：计数在"决定降级"这一层，不在截断层
+        return self._degraded_error(
             request_id, INTERNAL_ERROR,
             f"响应超过契约单行上限 {MAX_LINE_BYTES} 字节，已拒绝返回；"
             "请调小 events_replay 的 limit 分页取（计数见 get_status.protocol）",
         )
+
+    def _bounded_error(self, request_id: Any, code: int, message: str) -> str:
+        """写向兜底（错误响应）：**每一条**出站行都过这里，不靠"错误消息本来就很短"。
+
+        宿主对超限行是整行丢弃（`engine-host/rpc.ts:99`），所以"引擎报了个长错误"在客户端
+        表现为"这条请求永远没有回应"——比报错误更坏，而 `oversized_out` 也不会 +1（旧实现
+        只兜成功响应，五条错误出口全裸）。截断顺序是有意的：
+        ① 先砍消息、保住 id（宿主靠 id 把失败对上号）；
+        ② 连 id 都回显不起（超长 id 会把读向放行的行放大成超限行）才退到 id=null，
+           此时找回请求已无可能，改留可读诊断前缀。
+        """
+        line = encode_error(request_id, code, message)
+        if not self._guard.exceeds(line):
+            return line
+        self._guard.note_oversized_out()
+        return self._degraded_error(request_id, code, message)
+
+    def _degraded_error(self, request_id: Any, code: int, message: str) -> str:
+        """把错误信封压进单行上限；**不计数**（一条行只在决定降级的那一层计一次）。"""
+        headroom = MAX_LINE_BYTES - line_bytes(encode_error(request_id, code, ""))
+        clipped = clip_bytes(message, max(0, headroom))
+        candidate = encode_error(request_id, code, clipped)
+        if not self._guard.exceeds(candidate):
+            return candidate
+        return encode_error(None, code, clip_bytes(message, MAX_ERROR_MESSAGE_BYTES))
 
     async def serve(self, initial_lines: list[str] | None = None) -> None:
         """主循环：逐行读 stdin，写响应到 stdout，直到 stop。
