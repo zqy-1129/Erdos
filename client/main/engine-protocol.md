@@ -58,6 +58,13 @@ Windows ADS、反斜杠、空路径段、末尾点/空格以及符号链接。`v
   引擎侧守护见 `engine/tests/test_contract_alignment.py`（configure_stdio 参数逐字取自契约），
   客户端侧见 `client/tests/contract-transport.test.ts`（LF/UTF-8 写出与读入、单行上限取自契约）。
   改本节文字若不同步 `transport` 段，两侧守护会红。
+- **单行上限覆盖到每一条出站行（2026-10-12 实况更正，提交 `2b4ce09`）**：引擎侧的成功响应与错误响应
+  都先行宽判定（`engine/ipc/server.py` 的 `_bounded_result` / `_bounded_error`）。此前只有成功响应兜了，
+  五条错误出口裸奔——而主进程对超限行的处置是**整行丢弃**（`client/main/engine-host/rpc.ts:99`），
+  于是"引擎回了一条长错误"的可见表现是**这条请求永远没有回应**，不是"看到一条错误"。主进程侧两条口径：
+  ① `id` 必须是数字或字符串（JSON-RPC 2.0；对象/数组/布尔一律 `INVALID_REQUEST`，引擎不回显非 Scalar id，
+  现有实现用自增数字即合规）；② 收到 `id: null` 的错误响应是**降级信号**（引擎装不下你的 id 或消息），
+  属协议层异常而非普通业务失败，对应计数在 `get_status.protocol.oversized_out`，不得静默吞掉。
 
 ## 3. Key 注入（SP1-5 红线）
 
@@ -188,3 +195,8 @@ v2 客户端在拉起后、首个任务前必须调用 `initialize`：
 *修订记录追加：2026-10-11 退出链评审批次——上一条口径又被进程级演练证伪一次：取消一度接在
 `serve()` 返回之后，而宿主保持 stdin 打开时它不会在 300ms 内返回，于是点名从未落地。现由
 `_graceful` 经 `call_soon_threadsafe` 直接排 `drain(cancel=True)`，§4"优雅退出"行同步。*
+
+*修订记录追加：2026-10-12 写向行宽批次——§2 新增"单行上限覆盖到每一条出站行"一条。此前该节只写了
+上限取自契约，未写覆盖范围，实况是引擎只兜成功响应、错误出口全裸（超限的错误行被本进程 rpc.ts:99
+整行丢弃 = 该请求永无回应），现补齐并给出主进程侧两条口径（id 必须 Scalar；`id: null` 是降级信号）。
+代码提交 `2b4ce09`，守护 `engine/tests/test_error_line_bound.py`（24 例，含三次反证各自变红）。*
