@@ -133,6 +133,7 @@ v2 客户端在拉起后、首个任务前必须调用 `initialize`：
 | `ERDOS_SANDBOX_PYTHON` | 沙箱执行体解释器（解析顺序 `ERDOS_SANDBOX_PYTHON` → `sys.executable` → PATH 探测） | 打包/CI 显式给；Windows 上 PATH 的 `python` 可能是商店占位 stub |
 | `ERDOS_SANDBOX_IMAGE` | Docker 沙箱镜像名 | 仅 Docker 模式 |
 | `ERDOS_SANDBOX_REQUIRE_DOCKER` | `=1` 时强制 Docker，探针未过即 `SandboxUnavailableError`（DEC-006）；**客户端目前从不设置**，因此 Windows 无 Docker 时静默降级 subprocess | 正式构建/CI |
+| `ERDOS_SANDBOX_MEMORY_MB` | subprocess 降级模式的内存限额（默认取 `sandbox/constants.py` 的 2048）；**非法值构造期报错→退出码 2**，不静默回落（回落会让"我设了 4096"看起来生效而实际没生效）。限额是否真的生效看 `engine-facts.json` 的 `sandbox.memory_enforced_in_subprocess`（运行时探测，不是文本推断） | 排障/大内存题；产品路径默认 2048 |
 | `ERDOS_ORCH_IMPL` = `native`（默认）/ `langgraph` | **编排后端回退开关**：引擎四阶段编排与求解内循环用自研内核还是 LangGraph。灰度期发现编排侧回归时设 `langgraph` 即时回滚（秒级、不发版）；两套后端读写同一张 `checkpoints` 表，回滚不需要数据迁移（兼容性由 `engine/tests/test_persistence_compat.py` 守护）。LangGraph 在 SP5-3 摘除依赖后该变量作废 | 引擎；客户端不主动设置 |
 | `LANGCHAIN_*` / `LANGSMITH_*` | **引擎在包导入期无条件剥离**。原因：宿主若设过 `LANGCHAIN_TRACING_V2=true`，LangSmith 会把每次图执行的输入/输出（含题面与论文正文）POST 到外部端点，与「题面不出本机」(DEC-010) 和 BYOK 不中转直接冲突。主进程**不要**为了"传参"往这两个命名空间写任何东西 | 引擎 |
 
@@ -162,4 +163,6 @@ v2 客户端在拉起后、首个任务前必须调用 `initialize`：
 同源、`ERDOS_TOOL_MODE` 非法值拒启），§8.1 由两条扩为三条，新增流式 usage 索取口径。*
 
 *修订记录追加：2026-10-11 W40 · EN-BOOT-DIAG（G38/G39）——§3 补"首行握手 10s 超时拒启"条款
+
+*修订记录追加：2026-10-11 W22 · EN-MEM（G9/G32 沙箱行）——§8 新增 `ERDOS_SANDBOX_MEMORY_MB` 一行；subprocess 模式的 ≤2GB 承诺从"字段已存"变为"作业真拦 + 三信号归因"，不可用时一次性 stderr 说明（DEC-006）。*
 （含 EOF 与超时的两条路径之分），§4 表新增"拒启（exit code = 2）不应重启"一行并登记 G42。*

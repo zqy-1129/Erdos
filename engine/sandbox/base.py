@@ -21,6 +21,9 @@ class ExecutionResult:
     timed_out: bool = False
     error: str | None = None  # 结构化错误（模型可读，供求解内循环回传）
     artifacts: list[str] = field(default_factory=list)  # 产物相对路径（工作目录内）
+    # 超限由**引擎按观测峰值主动终止**（W22）。与 timed_out 分开是两个归因：
+    # "代码自己 MemoryError 崩了"和"沙箱按 PRD §6.1 的承诺强杀了它"必须能区分。
+    memory_exceeded: bool = False
 
 
 class Sandbox(Protocol):

@@ -37,6 +37,15 @@ def make_execute_code(sandbox: Sandbox):
                 error=ToolError(code="TOOL_FAILED", message="执行超时，已被强制终止"),
                 summary=result.stdout.strip(),
             )
+        if result.memory_exceeded:
+            # 独立错误码：让模型知道"是沙箱按 ≤2GB 的承诺拦下了你"，而不是"代码跑崩了"。
+            # 归因文案（限额数值 + 分批出路）由沙箱给出，这里只负责送到模型眼前——
+            # 走下面的通用分支会被 stderr 尾部挤掉，而那句尾部只有 MemoryError 栈，没有出路。
+            return ToolResult(
+                ok=False,
+                error=ToolError(code="TOOL_MEMORY_LIMIT", message=result.error or "内存超过沙箱限额"),
+                summary=result.stdout.strip(),
+            )
         if result.exit_code != 0:
             tail = (result.stderr or result.error or "").strip()
             return ToolResult(
