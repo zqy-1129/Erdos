@@ -194,7 +194,11 @@ class RpcTaskFlow:
         self._executed: list[str] = []
         self._cursor: str | None = None
         self._hard_reject: str | None = None  # 引擎 gate.failed 原因（本轮阶段内有效）
-        self._on_event = on_event  # 事件回调（展示/证据用；异常不外抛，见 _pump_events）
+        self._on_event = on_event  # 事件回调（展示/证据用；异常计数并点名，见 _pump_events）
+        # 展示/证据回调失败不 kill 驱动，但绝不静默：计数可供上层与人工复盘核对
+        # （"这一题跑通了"与"这一题的事件都送出去了"是两件事）。
+        self.event_callback_errors = 0
+        self._callback_note_shown = False
 
         # 覆盖率钩子会随环境传进引擎子进程，其导入期告警按宿主码页写入管道，早于引擎
         # configure_stdio() 生效，导致 stderr 诊断解码失败（进程级验收丢日志），必须剥离。
@@ -277,8 +281,17 @@ class RpcTaskFlow:
             if self._on_event is not None:
                 try:
                     self._on_event(event)
-                except Exception:  # noqa: BLE001 - 展示回调失败不 kill 驱动
-                    pass
+                except Exception as exc:  # noqa: BLE001 - 展示回调失败不 kill 驱动，但必须可见
+                    # 不静默：本项目有过"兜底形同虚设而一切看起来正常"的四次教训（服务端
+                    # claim/upsert/append/月赠）。计数 + 首次点名，让"展示断了"至少可查。
+                    self.event_callback_errors += 1
+                    if not self._callback_note_shown:
+                        self._callback_note_shown = True
+                        sys.stderr.write(
+                            f"[regression] 事件回调失败（驱动继续，计数入 event_callback_errors）："
+                            f"{type(exc).__name__}: {exc}\n"
+                        )
+                        sys.stderr.flush()
 
     async def answer_gate(self, decision: str) -> dict[str, Any]:
         gate = f"gate_{self.current_stage()}"

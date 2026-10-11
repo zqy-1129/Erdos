@@ -62,6 +62,9 @@ class DockerSandbox:
         self._docker_bin = docker_bin
         # 运行器注入点：测试替身 / 真实 asyncio subprocess
         self._run = runner or self._run_process
+        # 容器回收失败次数（兜底失效必须可查，不静默吞）
+        self.removal_failures = 0
+        self._removal_note_shown = False
 
     async def _run_process(self, argv: list[str]) -> tuple[int, bytes, bytes]:
         """真实执行器：create_subprocess_exec + 总时长兜底超时。"""
@@ -123,11 +126,22 @@ class DockerSandbox:
         )
 
     async def _force_remove(self, container: str) -> None:
-        """docker rm -f：超时/异常路径的容器兜底回收（尽力而为，失败不掩盖原异常）。"""
+        """docker rm -f：超时/异常路径的容器兜底回收（尽力而为，失败不掩盖原异常）。
+
+        失败**必须可见**：回收不生效就是资源持续泄漏，而主流程照样返回正常结果——
+        与本项目反复清理的"兜底形同虚设但看起来一切正常"同族。不静默吞，改计数 + 首次点名。
+        """
         try:
             await self._run([self._docker_bin, "rm", "-f", container])
-        except Exception:  # noqa: BLE001 - 兜底回收失败不改变主流程结果
-            pass
+        except Exception as exc:  # noqa: BLE001 - 兜底回收失败不改变主流程结果
+            self.removal_failures += 1
+            if not self._removal_note_shown:
+                self._removal_note_shown = True
+                sys.stderr.write(
+                    f"[engine] 容器兜底回收失败（后续仍会计数入 removal_failures）："
+                    f"{type(exc).__name__}: {exc}\n"
+                )
+                sys.stderr.flush()
 
 
 async def gc_orphans(docker_bin: str = "docker", runner: Callable[[list[str]], Awaitable[tuple[int, bytes, bytes]]] | None = None) -> int:

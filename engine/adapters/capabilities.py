@@ -13,6 +13,7 @@
 
 import hashlib
 import json
+import sys
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -74,6 +75,10 @@ class CapabilityCache:
     def __init__(self, root: Path, ttl_seconds: int = CACHE_TTL_SECONDS) -> None:
         self._path = root / CACHE_FILENAME
         self._ttl = ttl_seconds
+        # 写缓存失败不阻塞任务，但必须点名一次：静默失败等于缓存永久失效，
+        # 每个任务都重探一次厂商——BYOK 下花的是用户的额度。
+        self._write_note_shown = False
+        self.write_failures = 0
 
     def load(self, key: str) -> ProviderCapabilities | None:
         try:
@@ -105,8 +110,15 @@ class CapabilityCache:
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
-        except OSError:
-            pass  # 缓存写失败不阻塞任务（探测结果即时返回，下次重探）
+        except OSError as exc:
+            # 探测结果已即时返回，不阻塞任务；但"缓存永久失效"不能听起来像正常。
+            self.write_failures += 1
+            if not self._write_note_shown:
+                self._write_note_shown = True
+                sys.stderr.write(
+                    f"[engine] 能力缓存写入失败（将每次重探厂商，消耗用户额度）：{exc}\n"
+                )
+                sys.stderr.flush()
 
 
 async def probe_models_endpoint(
