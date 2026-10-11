@@ -78,12 +78,17 @@ class ChatMessage:
 
 @dataclass(slots=True)
 class Usage:
-    """单次调用用量与成本。"""
+    """单次调用用量（**不含成本**，见 G45）。
+
+    引擎侧没有任何单价来源，此前却写死 `2.0/8.0` 每百万 token 给**所有**模型算 `cost_cents`——
+    那既是凭空造数（客户端 F-002 的口径是"未知模型返回 null 且明确不估算"），又是浮点分
+    （红线要求资金用整数分）。要恢复引擎侧计价得同时满足：① 有真实单价来源（厂商账单/已登记
+    目录）② 整数分 ③ 未登记模型一律不给出数值。缺任何一条就继续留空，别留一个看着可信的猜测。
+    """
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
-    cost_cents: float = 0.0  # 预计成本（分）
     estimated: bool = False  # W8：流式末块无 usage 时按文本估算（禁止报 0）
 
 
@@ -100,17 +105,15 @@ class ChatResult:
 
 @dataclass(slots=True)
 class UsageAccumulator:
-    """跨调用用量累计（落 trail，SP1-6 接口）。"""
+    """跨调用用量累计（落 trail，SP1-6 接口）。只累计**可核实**的量：token 与调用次数。"""
 
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
-    total_cost_cents: float = 0.0
     calls: int = 0
 
     def add(self, usage: Usage) -> None:
         self.total_prompt_tokens += usage.prompt_tokens
         self.total_completion_tokens += usage.completion_tokens
-        self.total_cost_cents += usage.cost_cents
         self.calls += 1
 
 
@@ -352,14 +355,10 @@ def _parse_tool_call(raw: dict) -> ToolCall:
 
 
 def _parse_usage(raw: dict | None) -> Usage:
-    """解析 usage（含成本估算，按 tokens 粗略计价）。"""
+    """解析 usage（只取厂商回了什么就记什么；**不折算成本**，见 `Usage` 的说明与 G45）。"""
     if not raw:
         return Usage()
     prompt = int(raw.get("prompt_tokens", 0))
     completion = int(raw.get("completion_tokens", 0))
     total = int(raw.get("total_tokens", prompt + completion))
-    # 预计成本：按通用定价粗略估算（元/百万 token），可配置化
-    cost_cents = round((prompt * 2.0 + completion * 8.0) / 1_000_000 * 100, 4)
-    return Usage(
-        prompt_tokens=prompt, completion_tokens=completion, total_tokens=total, cost_cents=cost_cents
-    )
+    return Usage(prompt_tokens=prompt, completion_tokens=completion, total_tokens=total)

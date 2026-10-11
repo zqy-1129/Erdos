@@ -176,16 +176,42 @@ async def test_chat_stream_without_vendor_usage_estimates() -> None:
 
 
 def test_usage_accumulator() -> None:
-    """usage 累计：多次调用累计正确。"""
+    """usage 累计：只累计可核实的量（token 与调用次数）。"""
     from engine.adapters.openai_compat import Usage, UsageAccumulator
 
     acc = UsageAccumulator()
-    acc.add(Usage(prompt_tokens=10, completion_tokens=20, total_tokens=30, cost_cents=0.1))
-    acc.add(Usage(prompt_tokens=5, completion_tokens=10, total_tokens=15, cost_cents=0.05))
+    acc.add(Usage(prompt_tokens=10, completion_tokens=20, total_tokens=30))
+    acc.add(Usage(prompt_tokens=5, completion_tokens=10, total_tokens=15))
     assert acc.total_prompt_tokens == 15
     assert acc.total_completion_tokens == 30
     assert acc.calls == 2
-    assert abs(acc.total_cost_cents - 0.15) < 1e-6
+
+
+def test_engine_does_not_fabricate_costs() -> None:
+    """G45：引擎没有任何单价来源，就不许给出成本数值。
+
+    两层判据——只查属性会漏掉"换个字段名再塞回来"（`estimated_cost`/`cost_yuan`），
+    只查源码又管不住从厂商响应里透传进来的字段：
+    ① `Usage` / `UsageAccumulator` 里不得出现任何含 cost 的字段；
+    ② 适配器源码里不得再出现"按每百万 token 折算"的乘法（原缺陷的形状）。
+    要恢复引擎侧计价必须同时有：真实单价来源、整数分、未登记模型不给数值（F-002）。
+    """
+    import inspect
+    import pathlib
+    import re
+
+    from engine.adapters import openai_compat as mod
+
+    for cls in (mod.Usage, mod.UsageAccumulator):
+        fields = getattr(cls, "__dataclass_fields__", {})
+        assert not [name for name in fields if "cost" in name.lower()], (
+            f"{cls.__name__} 又出现了成本字段：{list(fields)}"
+        )
+
+    source = pathlib.Path(inspect.getfile(mod)).read_text(encoding="utf-8")
+    assert not re.search(r"\*\s*\d+\.\d+[^\n]*/\s*1_?000_?000", source), (
+        "适配器里再次出现写死的每百万 token 单价折算"
+    )
 
 
 # ----------------------------------------------------------------------
