@@ -55,6 +55,109 @@ def _percentile(values: list[float], pct: float) -> float:
     return ordered[idx]
 
 
+TTFT_TARGET_MS = 500.0  # W15 判据：首 token → model.delta 事件发出
+_TTFT_CHUNKS = 200  # 每块 20 字符，够跨过 256 字符阈值触发首次发射
+
+
+_SSE_NL = chr(10) + chr(10)  # SSE 事件分隔（连续两个换行）
+
+def _sse_body(chunks: int, size: int) -> bytes:
+    """构造一段 OpenAI 兼容 SSE：多个 content 增量 + stop 块 + 末块 usage（include_usage 语义）。"""
+    lines = []
+    for i in range(chunks):
+        delta = {
+            "choices": [{"index": 0, "delta": {"content": f"{i:0>{size - 2}}ab"}, "finish_reason": None}]
+        }
+        lines.append("data: " + json.dumps(delta) + _SSE_NL)
+    lines.append('data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}' + _SSE_NL)
+    lines.append('data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}' + _SSE_NL)
+    lines.append("data: [DONE]" + _SSE_NL)
+    return "".join(lines).encode("utf-8")
+
+
+async def ttft_probe(
+    samples: int,
+    *,
+    interval: float = 0.05,
+    char_threshold: int = 256,
+    gap_s: float = 0.0,
+    chunks: int = _TTFT_CHUNKS,
+) -> dict:
+    """首 token → model.delta 事件发出 的滞后取样（引擎自身开销护栏，非厂商达标值）。
+
+    走的是真实链路：适配器 SSE 解析 → on_delta → DeltaThrottler → 事件出口，
+    只是端点用 httpx.MockTransport 顶掉（CI 可跑、不花用户 token）。
+    `gap_s>0` 模拟 token 间隔，用来验证取样器**能测出滞后**——只报一个接近 0 的数的
+    话，这条判据等于没有（DEC-024：口径与来源必须分开标注）。
+    """
+    import httpx
+
+    from engine.adapters.key_store import KeyStore
+    from engine.adapters.openai_compat import ChatMessage, ModelConfig, OpenAIChatAdapter
+    from engine.ipc.throttle import DeltaThrottler
+
+    keys = KeyStore()
+    keys.inject("sk-bench-not-real")
+
+    async def run_one() -> float:
+        state = {"first_token": None, "first_emit": None}
+
+        def transport_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, content=_sse_body(chunks, 20),
+                headers={"content-type": "text/event-stream"},
+            )
+
+        adapter = OpenAIChatAdapter(
+            ModelConfig("openai-compat", "https://bench.test/v1", "bench-model"),
+            keys,
+            transport=httpx.MockTransport(transport_handler),
+        )
+        throttler = DeltaThrottler(
+            emit=lambda _t: state.__setitem__(
+                "first_emit", time.perf_counter() if state["first_emit"] is None else state["first_emit"]
+            ),
+            interval=interval,
+            char_threshold=char_threshold,
+        )
+
+        def on_delta(text: str) -> None:
+            if state["first_token"] is None:
+                state["first_token"] = time.perf_counter()
+            if gap_s:
+                time.sleep(gap_s)
+            throttler.push(text)
+
+        await adapter.chat([ChatMessage(role="user", content="基准流式")], stream=True, on_delta=on_delta)
+        throttler.flush()
+        if state["first_token"] is None or state["first_emit"] is None:
+            raise AssertionError("取样器没抓到首 token 或首次发射：判据不可信")
+        return (state["first_emit"] - state["first_token"]) * 1000.0
+
+    async def run_all() -> list[float]:
+        return [await run_one() for _ in range(samples)]
+
+    lags = await run_all()
+    p50 = _percentile(lags, 50)
+    p95 = _percentile(lags, 95)
+    return {
+        "channel": "fake-local-transport",
+        "target_ms": TTFT_TARGET_MS,
+        "samples": samples,
+        "throttle_interval_ms": round(interval * 1000, 1),
+        "throttle_char_threshold": char_threshold,
+        "chunk_gap_ms": round(gap_s * 1000, 2),
+        "chunks": chunks,
+        "p50_ms": round(p50, 2),
+        "p95_ms": round(p95, 2),
+        "max_ms": round(max(lags), 2),
+        "pass": p95 <= TTFT_TARGET_MS,
+        # 判据口径：本地 mock 只证明"引擎自身不引入 >500ms 的额外滞后"；
+        # 真实厂商的达标值必须用 --api-key 通道另测（DEC-024），未测就写未测。
+        "note": "本地 mock 端点（httpx.MockTransport），非真实厂商测量",
+    }
+
+
 def bench_cold_start(samples: int, work_root: Path) -> dict:
     """冷启动 + 握手：逐次拉起引擎、发 initialize、测到响应首字节的墙钟。"""
     req = json.dumps(
@@ -171,8 +274,17 @@ def _render_md(results: dict) -> str:
         "",
         f"- initialize 上报 tool_mode：{cold['reported_tool_modes']}",
         f"- 留痕 sink 覆盖阶段：{stages['sink_stages']}",
-        "- 未覆盖：首 token < 500ms（EN-STREAM，需真实 Key 通道取样 10 次）、事件吞吐 100 事件/s"
-        "（客户端渲染侧压测口径）",
+        "- 未覆盖：真实厂商通道的首 token 达标值（需凭据走 run_paper_e2e.py --api-key，见第 4 节）、事件吞吐 100 事件/s（客户端渲染侧压测口径）",
+    ]
+    ttft = results["ttft"]
+    lines += [
+        "",
+        "## 4. 首 token → 事件发出滞后（W15/W25 判据 ≤500ms）",
+        "",
+        f"- 通道：{ttft['channel']}（{ttft['note']}）",
+        f"- 取样 {ttft['samples']} 次：p50 **{ttft['p50_ms']}ms** / p95 **{ttft['p95_ms']}ms** / max {ttft['max_ms']}ms，判据 ≤{ttft['target_ms']}ms → **{'PASS' if ttft['pass'] else 'FAIL'}**",
+        f"- 节流参数：间隔 {ttft['throttle_interval_ms']}ms / 字符阈值 {ttft['throttle_char_threshold']}（判据含节流器自身等待，是设计行为不是偏差）",
+        "- 这条只证明引擎自身不引入 >500ms 的额外滞后；厂商网络与生成速度不在其内（DEC-024 分开记）。",
     ]
     return "\n".join(lines) + "\n"
 
@@ -185,6 +297,7 @@ async def _run(args: argparse.Namespace) -> dict:
         "cold_start": bench_cold_start(args.samples, work_root),
         "sandbox_kill": await bench_sandbox_kill(work_root),
         "stage_wall_clock": await bench_stage_wall_clock(work_root),
+        "ttft": await ttft_probe(max(3, args.samples // 2)),
     }
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -195,8 +308,13 @@ async def _run(args: argparse.Namespace) -> dict:
     md = _render_md(results)
     (out_dir / f"engine-bench-{stamp}.md").write_text(md, encoding="utf-8")
     print(md)
-    all_pass = all(r["pass"] for r in (results["cold_start"], results["sandbox_kill"],
-                                        results["stage_wall_clock"]))
+    all_pass = all(
+        r["pass"]
+        for r in (
+            results["cold_start"], results["sandbox_kill"],
+            results["stage_wall_clock"], results["ttft"],
+        )
+    )
     print(f"[判定] {'PASS' if all_pass else 'FAIL'} · 证据：{out_dir}/engine-bench-{stamp}.{{json,md}}")
     return results
 

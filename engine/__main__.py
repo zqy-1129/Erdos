@@ -192,11 +192,21 @@ def _build_llm(keys: KeyStore, trail: TrailRecorder, config: ModelConfig | None)
     cfg = config or _model_config()
     adapter = OpenAIChatAdapter(cfg, keys)
 
-    async def llm(messages: list[dict[str, str]], stage: str) -> dict[str, Any]:
-        """适配 pipeline 的 _LLM 端口：(messages, stage) → {content, usage, model, stage, duration_ms}。"""
+    async def llm(
+        messages: list[dict[str, str]],
+        stage: str,
+        on_delta: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        """适配 pipeline 的 _LLM 端口：(messages, stage[, on_delta]) → {content, usage, model, ...}。
+
+        W25：给了增量回调就走流式（writing 阶段接同一节流器）。流式与否则由调用方决定，
+        端口本身不猜——非流式仍是默认，避免给"只要文本"的阶段无谓换上 SSE。
+        """
         started = time.monotonic()
         reply = await adapter.chat(
-            [ChatMessage(role=m["role"], content=m["content"]) for m in messages]
+            [ChatMessage(role=m["role"], content=m["content"]) for m in messages],
+            stream=on_delta is not None,
+            on_delta=on_delta,
         )
         return {
             "content": reply.content,

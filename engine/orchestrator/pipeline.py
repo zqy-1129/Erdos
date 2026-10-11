@@ -15,6 +15,7 @@ from pathlib import Path
 from tempfile import mkdtemp
 from typing import Any
 
+from engine.ipc.throttle import DeltaThrottler
 from engine.orchestrator.solve_loop import SolveLoop
 
 # ----------------------------------------------------------------------
@@ -30,7 +31,13 @@ class FakeLLM:
     def _estimate_tokens(text: str) -> int:
         return max(1, len(text) // 3)
 
-    async def chat(self, messages: list[dict[str, str]], stage: str) -> dict[str, Any]:
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        stage: str,
+        on_delta: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        """确定性假模型。on_delta 存在时把整段作为一次增量发出（离线演示也要有流式行为）。"""
         prompt = " ".join(m.get("content", "") for m in messages)
         if stage == "analysis":
             text = (
@@ -46,7 +53,7 @@ class FakeLLM:
             text = "论文草稿：摘要/问题重述/模型/求解/结果分析/结论 六节齐全。"
         else:
             text = f"（求解阶段由沙箱执行，模型仅复核）：{prompt[:40]}"
-        return {
+        result = {
             "content": text,
             "usage": {
                 "prompt_tokens": self._estimate_tokens(prompt),
@@ -58,9 +65,15 @@ class FakeLLM:
             "model": "fake-llm/deterministic",
             "stage": stage,
         }
+        if on_delta is not None and text:
+            on_delta(text)  # 单次整段：假模型没有真实 token 流，但有增量语义
+        return result
 
 
-_LLM = Callable[[list[dict[str, str]], str], Awaitable[dict[str, Any]]]
+# 文本模型端口。W25 起 writing 阶段可带 token 增量回调（on_delta），
+# 与求解内循环共用同一 DeltaThrottler 语义；不带则等价原行为（非流式、不产 model.delta）。
+# 用 `...` 而非精确签名：本仓有十余处假模型只实现 (messages, stage)，收紧会让它们全部不兼容。
+_LLM = Callable[..., Awaitable[dict[str, Any]]]
 
 
 def _extract_section(text: str, name: str) -> str:
@@ -311,7 +324,21 @@ class StagePipeline:
             "【摘要】300 字以内，概括问题、方法与主要结果；\n"
             "【结论】总结结果意义、局限与改进方向，不得引用不存在的数值。"
         )
-        reply = await self._llm([{"role": "user", "content": prompt}], "writing")
+        # W25：报告阶段接同一节流器（50ms/256 字符合并）。终态仍以 stage.progress=1.0 与
+        # artifact.ready 为权威；delta 允许丢帧、不进回放缓冲（W15 语义保持不变）。
+        emit_delta = self._delta_sink  # 局部变量：mypy 不收窄实例属性，判空后仍报 None 不可调用
+        throttler = (
+            DeltaThrottler(emit=lambda text: emit_delta(task_id, text))
+            if emit_delta is not None
+            else None
+        )
+        reply = await self._llm(
+            [{"role": "user", "content": prompt}],
+            "writing",
+            on_delta=throttler.push if throttler is not None else None,
+        )
+        if throttler is not None:
+            throttler.flush()  # 单次调用结束必须收尾，否则尾部增量丢在缓冲里
         abstract = _extract_section(reply["content"], "摘要")
         conclusion = _extract_section(reply["content"], "结论")
 

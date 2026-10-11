@@ -127,6 +127,28 @@ describe("工具事件归约（FE-TOOLUI W12）", () => {
     assert.equal(state.modelOutput, "abc");
   });
 
+  it("换阶段清空 modelOutput（model.delta 不带 stage，W25 起两阶段都流式）", () => {
+    const state = applyBatch(initialEngineState, [
+      progress("solving", 0.05),
+      delta("求解中……"),
+      delta("slope=1.98"),
+      progress("solving", 1.0),
+      progress("writing", 0.05),
+      delta("摘要："),
+    ]);
+    assert.equal(state.stage, "writing");
+    assert.equal(state.modelOutput, "摘要：", "writing 的输出区里不该残留上一阶段的尾巴");
+  });
+
+  it("同阶段的进度事件不清空 modelOutput（终态 1.0 之后仍可读完本阶段输出）", () => {
+    const state = applyBatch(initialEngineState, [
+      progress("writing", 0.05),
+      delta("摘要：本文"),
+      progress("writing", 1.0),
+    ]);
+    assert.equal(state.modelOutput, "摘要：本文");
+  });
+
   it("tool.call 不改变 artifacts/gates 引用（局部更新语义，避免无谓重渲染）", () => {
     const base = {
       ...initialEngineState,

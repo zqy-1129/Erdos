@@ -102,6 +102,11 @@ v2 客户端在拉起后、首个任务前必须调用 `initialize`：
 主进程按 `engine:event` 通道转发给渲染层；转发前按白名单校验事件名，
 未知事件拒绝并计数（EC-N4）。
 
+- **`model.delta` 的产生范围（W25 起）**：`solving` 与 `writing` 两个阶段都会产 delta，其余阶段不产。
+  该事件**不带 stage 字段**（契约如此），所以渲染层必须自己在 `stage.progress` 换阶段时清缓冲——
+  `engine-slice.ts` 已按此实现（不清会出现"上一阶段尾巴 + 本阶段开头"拼成一段）。
+  delta 允许丢帧、**不进回放缓冲**：断线重连后终态仍以 `stage.progress=1.0` 与 `artifact.ready` 为权威。
+
 ## 7. 与引擎 IPC 的对应（现行 10 方法）
 
 | 客户端通道（ipc.ts） | 引擎 RPC 方法 |

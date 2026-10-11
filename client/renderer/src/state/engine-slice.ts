@@ -94,9 +94,16 @@ export function applyBatch(state: EngineViewState, batch: EngineEvent[]): Engine
     switch (event.event) {
       case "stage.progress": {
         patch.taskId = event.task_id;
+        const previousStage = patch.stage;  // 批内比较必须用累计值：applyBatch 是在一个 patch 上连折叠
         patch.stage = event.stage;
         patch.running = true;
         patch.stageProgress = { ...patch.stageProgress, [event.stage]: event.progress };
+        if (previousStage !== event.stage) {
+          // 换阶段清空流式缓冲：model.delta 不带 stage 字段，而 W25 起 solving 与 writing 都会产
+          // delta。不清就变成"上一阶段的尾巴 + 本阶段开头"拼在同一段里，而本字段的语义
+          // （见类型注释）是"当前阶段输出"。
+          patch.modelOutput = "";
+        }
         patch.log = [...patch.log, `${logLine(event.event, event)} ${event.stage} ${Math.round(event.progress * 100)}%`];
         break;
       }
