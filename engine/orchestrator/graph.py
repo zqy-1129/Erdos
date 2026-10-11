@@ -139,8 +139,9 @@ def _latest_stage(records: list[Any]) -> Any:  # noqa: ANN401 - CheckpointRecord
 
     恢复定位是数据正确性判据（选错就要么重跑已完成阶段、要么跳过未过门禁的阶段），
     所以它只能依赖"分析→建模→求解→报告"这条业务序，不能依赖 `updated_at` 的时间序：
-    两条记录落在同一时间戳时 SQL 会退化成不定序（字母序更是把 writing 排到 solving 前面），
-    而驳回重跑只会让**当前**阶段的 updated_at 变新，早先阶段的行也可能被后写。
+    时间序描述的是"最近写过哪一行"，今天恰好与业务序一致（每阶段各写一次、按业务序推进），
+    但那是**写入模式的巧合**而不是不变量——重跑或回退更早阶段的任何通道都会打破它，
+    且相同时间戳并列时 SQL 不保证返回顺序。
     未知阶段名一律拒绝——与 `gate_passed()` 对未知状态字面量的处理同一口径。
     """
     indexes = []
@@ -152,6 +153,26 @@ def _latest_stage(records: list[Any]) -> Any:  # noqa: ANN401 - CheckpointRecord
                 f"检查点含未知阶段 {record.stage!r}（只接受 {STAGES}）；已拒绝据此定位恢复点，保留现场待人工核对"
             ) from exc
     return records[max(range(len(records)), key=indexes.__getitem__)]
+
+
+def resume_stage(records: list[Any]) -> str:  # noqa: ANN401 - CheckpointRecord（存储层类型，此处只读字段）
+    """阶段检查点记录 → 恢复后应处的阶段（空记录 = 全新任务，从 analysis 起）。
+
+    **判定单源**：编排器（`StageOrchestrator.restore`）与回归 RPC 驱动（`rpc_flow`）读同一张
+    checkpoints 表，定位必须走这一份实现——各写一遍就会出现同一份库两种恢复点（驱动以为该跑
+    solving、编排器以为该重跑 analysis，`start_stage` 当场互相否决）。
+    阶段序最靠后的记录：门禁未决 → 该阶段本身（重挂门禁，不重放副作用，DEC-005）；
+    已过门禁 → 其下一个阶段（不重算已完成阶段）。
+    """
+    if not records:
+        return STAGES[0]
+    last = _latest_stage(records)
+    if not gate_passed(last.status):
+        # 未知字面量在 gate_passed() 里抛错，不会走到"默认推进"分支：
+        # 未过门禁的阶段被跳过是数据错误，比恢复失败更难发现。
+        return last.stage
+    idx = STAGES.index(last.stage)
+    return STAGES[min(idx + 1, len(STAGES) - 1)]
 
 
 _STATIC_EDGES: dict[str, str] = {
@@ -378,9 +399,9 @@ class StageOrchestrator:
     ) -> "StageOrchestrator":
         """从检查点恢复编排器：已落库阶段全部还原，按门禁状态定位当前阶段。
 
-        - 阶段序最靠后的记录为「门禁通过」→ 当前阶段 = 其下一个（不重算已完成阶段）；
-        - 阶段序最靠后的记录为「执行完成（门禁未决）」→ 当前阶段 = 该阶段本身：
-          run_current_stage 经阶段节点跳过守卫重挂门禁（不重放副作用，DEC-005）。
+        定位由 `resume_stage()` 单源给出（回归驱动共用）：阶段序最靠后的记录为「门禁通过」
+        → 当前阶段 = 其下一个（不重算已完成阶段）；为「执行完成（门禁未决）」→ 当前阶段 =
+        该阶段本身，run_current_stage 经阶段节点跳过守卫重挂门禁（不重放副作用，DEC-005）。
         runner 必须随恢复注入（生产路径与 SP1-7 断点恢复演练共用）：
         恢复的编排器还要执行剩余阶段，丢 runner 会静默退化为骨架空产出。
         """
@@ -396,16 +417,7 @@ class StageOrchestrator:
                 "step": record.step,
                 "data": record.data,
             }
-        if completed:
-            last = _latest_stage(completed)
-            if not gate_passed(last.status):
-                # 门禁未决崩溃（或状态字面量不可识别）：恢复到该阶段本身，重挂门禁。
-                # 未知值不走"默认推进"分支——未过门禁的阶段被跳过是数据错误，
-                # 比恢复失败更难发现。
-                orchestrator._state.current_stage = last.stage
-            else:
-                idx = STAGES.index(last.stage)
-                orchestrator._state.current_stage = STAGES[min(idx + 1, len(STAGES) - 1)]
+        orchestrator._state.current_stage = resume_stage(completed)
         orchestrator._seed = {
             "task_id": task_id,
             "stage_index": orchestrator._state.current_index,

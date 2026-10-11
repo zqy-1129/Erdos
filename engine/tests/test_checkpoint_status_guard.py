@@ -5,11 +5,12 @@
 "看起来跑通了但语义不同"同形。且客户端 `main/local-history.ts` 的默认方向相反
 （非 done 即未完成），同一份库两侧读出相反结论。
 
-这里锁四件事：
+这里锁五件事：
 1. 字面量合法集只有一个来源（存储层）；
 2. 写入侧拒绝第三个值；
 3. 读取侧（编排恢复 + 回归驱动）遇未知值一律拒绝推进，保留现场；
-4. 跨端不出现第二份字面量定义（客户端只比对 "done"，语义与引擎一致：未知=未过门禁）。
+4. 跨端不出现第二份字面量定义（客户端只比对 "done"，语义与引擎一致：未知=未过门禁）；
+5. 读取侧两个消费方对**同一份库**给出**同一个恢复点**（"记录→阶段"的判定只有一份实现）。
 """
 
 import ast
@@ -27,7 +28,9 @@ from engine.orchestrator.graph import (
     CHECKPOINT_EXECUTED,
     CHECKPOINT_GATE_PASSED,
     StageOrchestrator,
+    resume_stage,
 )
+from engine.regression.rpc_flow import resolve_resume_stage
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -71,8 +74,9 @@ def test_write_rejects_third_status(tmp_path: Path) -> None:
 def _inject_unknown_status(db: str, task_id: str, stage: str, status: str) -> None:
     """绕过存储层直接写一个非法状态值（模拟老库/旁路工具/人为损坏）。
 
-    updated_at 取"晚于正常写入"的值：`completed_stages` 按 updated_at 排序，恢复定位看的是
-    **最后落库那一条**，所以必须让它排在最后，否则测的是排序而不是状态判定。
+    注入的阶段必须是业务上**更靠后**的那个（modeling > analysis）：恢复定位按阶段序取最靠后的
+    记录（`resume_stage`），排在后面的行才参与判定——写成更早的阶段就根本不会被读到，
+    测的是排序而不是状态判定。updated_at 同时给到最新，覆盖"时间序与阶段序一致"的情形。
     """
     conn = sqlite3.connect(db)
     conn.execute(
@@ -146,20 +150,81 @@ async def test_rpc_start_stage_reports_internal_error_not_invalid_params(tmp_pat
     store.close()
 
 
-def test_rpc_flow_uses_the_shared_predicate_not_its_own_copy() -> None:
-    """回归驱动器曾自带一份 `== CHECKPOINT_EXECUTED` 判断——两处各写一遍就会各错一遍。"""
+def test_rpc_flow_uses_the_shared_judgement_not_its_own_copy() -> None:
+    """回归驱动器不得自己实现"取哪条记录 + 门禁是否已过"。
+
+    这里原来锁的是"驱动器别复制一份 `== CHECKPOINT_EXECUTED`"，但定位规则本身仍是两份实现：
+    编排器改成按阶段序取值后，驱动还按最后落库取值——同一份库两种恢复点，
+    于是驱动发的 start_stage 被引擎的阶段顺序校验否决（20 题演练里的随机红灯）。
+    所以本批把"记录→阶段"整段判定收成一份（`orchestrator.graph.resume_stage`），守护也跟着升级。
+    """
     source = (REPO_ROOT / "engine" / "regression" / "rpc_flow.py").read_text(encoding="utf-8")
-    assert "gate_passed(" in source
-    assert '== CHECKPOINT_EXECUTED' not in source
-    assert '"stage_done"' not in source
     tree = ast.parse(source)
-    imported = {
-        alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module == "engine.checkpoint.store"
-        for alias in node.names
-    }
-    assert "gate_passed" in imported
+
+    def _imported_from(module: str) -> set[str]:
+        return {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module == module
+            for alias in node.names
+        }
+
+    assert "resume_stage" in _imported_from("engine.orchestrator.graph")
+    # 判定所需的原料一个都不许出现在驱动里（出现了就说明又写了一遍）
+    assert "gate_passed" not in _imported_from("engine.checkpoint.store")
+    for forbidden in ("gate_passed(", "completed[-1]", "== CHECKPOINT_EXECUTED", '"stage_done"'):
+        assert forbidden not in source, f"驱动器又写了一遍恢复判定：{forbidden}"
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [
+        # 业务上更靠后的阶段先落库，更早的阶段后被回写（时间序尾 = analysis）：
+        # 按时间取尾会退回 analysis 重跑，把已过门禁的建模进度吃掉
+        ((("modeling", "done"), ("analysis", "stage_done")), "solving"),
+        # 更深：solving 门禁未决 + analysis 晚写且已过门禁。按时间取尾得到 "modeling"，
+        # 那是**跳过一个从未过门禁的阶段**——比多跑一遍更危险的方向
+        ((("solving", "stage_done"), ("analysis", "done")), "solving"),
+        # 正向对照：时间序与阶段序同向（正常推进路径），两种实现都给出同一答案
+        ((("analysis", "done"), ("modeling", "done")), "solving"),
+        # 最后阶段已过门禁 → 停在 writing（min(idx+1, len-1) 的钳制语义）
+        ((("writing", "done"),), "writing"),
+    ],
+)
+def test_orchestrator_and_rpc_driver_resolve_the_same_stage(
+    tmp_path: Path, rows: tuple, expected: str
+) -> None:
+    """同一份 checkpoints.db，编排器与回归驱动必须定位到同一个阶段（判定只有一份实现）。
+
+    这两侧读的是同一个库：驱动以为该跑 X、引擎以为该跑 Y 时，`start_stage` 的阶段顺序校验
+    当场互相否决，表现为 kill/恢复演练里的随机红灯。判据本身与 `completed_stages` 的
+    返回顺序无关（按 STAGES 阶段序取值），所以这里不需要控制写入时间戳。
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    store = SQLiteCheckpointStore(str(home / "checkpoints.db"))
+    for stage, status in rows:
+        store.save_stage("t-both", stage, status, 0, {"stage": stage})
+
+    completed = store.completed_stages("t-both")
+    assert resume_stage(completed) == expected
+    assert StageOrchestrator.restore("t-both", store, runner=None).current_stage == expected
+    assert resolve_resume_stage(home, "t-both") == expected
+    store.close()
+
+
+def test_resolve_resume_stage_defaults_to_analysis_without_history(tmp_path: Path) -> None:
+    """无库 / 有库无记录都从 analysis 起——默认值也只有一份（`resume_stage` 的空输入分支）。"""
+    empty_home = tmp_path / "no-db"
+    empty_home.mkdir()
+    assert resolve_resume_stage(empty_home, "t-none") == "analysis"
+
+    home = tmp_path / "empty-db"
+    home.mkdir()
+    store = SQLiteCheckpointStore(str(home / "checkpoints.db"))
+    store.close()
+    assert resolve_resume_stage(home, "t-none") == "analysis"
+    assert resume_stage([]) == "analysis"
 
 
 def test_client_side_treats_unknown_as_not_passed() -> None:

@@ -7,8 +7,9 @@
 设计约定：
 - 协议面：仅使用既有 RPC 方法（initialize/task_create/start_stage/answer_gate/
   get_status），不改契约（无需 CT-V2 登记）；
-- 阶段定位：current_stage 经引擎检查点库（engine_home/checkpoints.db）解析，与
-  StageOrchestrator.restore 同口径；阶段产物 data 同库回读（rubric 评委的评审对象），
+- 阶段定位：current_stage 经引擎检查点库（engine_home/checkpoints.db）解析，判据与生产
+  路径同源（`orchestrator.graph.resume_stage`，restore 也走它），驱动不另写一遍；
+  阶段产物 data 同库回读（rubric 评委的评审对象），
   usage 与产物哈希经留痕库（engine_home/audit.db）回读——两处均为驱动自建引擎 home
   的本地只读访问，避免为回归工具扩展产品契约；
 - 失败归因：阶段 failed 时按引擎 last_error 的异常类型重映射（Connection→adapter、
@@ -28,8 +29,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from engine.checkpoint.store import SQLiteCheckpointStore, gate_passed
-from engine.orchestrator.graph import STAGES
+from engine.checkpoint.store import SQLiteCheckpointStore
+from engine.orchestrator.graph import STAGES, resume_stage
 from engine.trail.store import EventType, TrailStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -39,6 +40,25 @@ _STDERR_TAIL_LINES = 20
 
 class RpcFlowError(RuntimeError):
     """RPC 任务流错误（传输/协议层）。"""
+
+
+def resolve_resume_stage(engine_home: Path, task_id: str) -> str:
+    """引擎 home 的检查点库 → 本流应处的阶段。
+
+    定位判据不在这里写第二遍：读行交 `orchestrator.graph.resume_stage()`，与生产路径
+    （`ipc.methods.start_stage` 的 restore 分支）同一份。曾经这里是独立实现且按
+    「最后落库」取值，与编排器改后的「阶段序最靠后」对同一份库可以给出相反结论——
+    驱动与引擎的 `start_stage` 阶段顺序校验会当场互相否决。
+    """
+    db = engine_home / "checkpoints.db"
+    if not db.exists():
+        return STAGES[0]
+    store = SQLiteCheckpointStore(str(db))
+    try:
+        completed = store.completed_stages(task_id)
+    finally:
+        store.close()
+    return resume_stage(completed)
 
 
 class _EngineTransport:
@@ -236,7 +256,7 @@ class RpcTaskFlow:
     # ------------------------------------------------------------------
     def current_stage(self) -> str:
         if self._cursor is None:
-            self._cursor = self._resolve_stage()
+            self._cursor = resolve_resume_stage(self._home, self._task_id)
         return self._cursor
 
     async def run_stage(self, stage: str) -> dict[str, Any]:
@@ -316,30 +336,8 @@ class RpcTaskFlow:
         self._transport.close(force=force)
 
     # ------------------------------------------------------------------
-    # 内部：检查点定位 / 阶段等待 / 留痕回读
+    # 内部：阶段等待 / 留痕回读
     # ------------------------------------------------------------------
-    def _resolve_stage(self) -> str:
-        """检查点 → 当前阶段（与 StageOrchestrator.restore 同一份判定，见 checkpoint.gate_passed）。
-
-        最后落库记录为「执行完成（门禁未决）」时定位到该阶段本身（恢复后重挂
-        门禁）；为「门禁通过」时定位到下一阶段。未知字面量抛错而不是默认推进。
-        """
-        db = self._home / "checkpoints.db"
-        if not db.exists():
-            return STAGES[0]
-        store = SQLiteCheckpointStore(str(db))
-        try:
-            completed = store.completed_stages(self._task_id)
-        finally:
-            store.close()
-        if not completed:
-            return STAGES[0]
-        last = completed[-1]
-        if not gate_passed(last.status):
-            return last.stage
-        last_index = STAGES.index(last.stage)
-        return STAGES[min(last_index + 1, len(STAGES) - 1)]
-
     def _await_stage(self) -> None:
         """轮询 get_status 至阶段终态；failed 按异常类型重映射（归因）。
 
