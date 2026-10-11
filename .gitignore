@@ -39,8 +39,13 @@ client/coverage/
 # 飞书文档本地同步缓存（飞书为准，缓存不入库）
 .feishu-docs/
 
-# 验收证据本地归档（docs/acceptance 逐题 JSON/报告，不入库，见 SP1-7 交付报告）
-docs/
+# 验收证据本地归档（逐题 JSON/报告/探针输出，不入库，见 SP1-7 交付报告）
+docs/acceptance/
+# 飞书文档本地缓存的分析副本（正文由 .feishu-docs/sync-all 拉取，不入库）
+docs/feishu-*/
+# 注：这里刻意不写整目录 `docs/`。2026-10-11 文档审计发现宽忽略会让"交付物被静默漏掉"：
+# 放在 docs/ 下的任何非证据文件都不会进版本库，也没有任何提示。新增需入库的 docs 内容时
+# 直接 git add 即可；确属本机证据/缓存的再往上面两条规则里放。
 
 # Personal Trilium notes and local note databases are not project deliverables.
 /trilium/
