@@ -30,7 +30,7 @@ from engine.orchestrator.backend import END, build_loop_graph
 from engine.orchestrator.operations import OperationLog, OperationRecord
 from engine.sandbox.base import validate_artifact_path
 from engine.tools import ToolRegistry
-from engine.tools.base import ToolContext
+from engine.tools.base import TOOL_NOT_AVAILABLE, ToolContext
 
 MAX_REPAIRS = 3  # 每次求解尝试的修复上限（开发文档 §5.3 / DEC-008）
 MAX_DISPATCHES = 8  # 分发次数硬上限（防无界循环，预算红线）
@@ -120,6 +120,10 @@ class SolveState(TypedDict, total=False):
     results: list[dict]
     repair_count: int
     dispatch_count: int
+    # 其中"引擎宣告了自己还没实现的能力"的次数（G48 归因面）：占位工具 `search_references` 在
+    # EN-19A 之前恒返回 NOT_AVAILABLE，它的失败既计 dispatch_count 又计 repair_count，
+    # 于是终态可能被读成"模型/沙箱不行"。单列一个计数才说得出真实原因；**不改动任何预算语义**。
+    unavailable_count: int
     status: str
     limitations: list[str]
     usage: dict
@@ -193,6 +197,7 @@ class SolveLoop:
             "results": [],
             "repair_count": 0,
             "dispatch_count": 0,
+            "unavailable_count": 0,
             "status": "running",
             "limitations": [],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0},
@@ -304,6 +309,7 @@ class SolveLoop:
         exec_seq = state.get("exec_seq", 0)
         repair_count = state.get("repair_count", 0)
         dispatch_count = state.get("dispatch_count", 0)
+        unavailable_count = state.get("unavailable_count", 0)
         isolation_mode = state.get("isolation_mode", "")
         for call_dict in last.get("tool_calls") or []:
             call = ToolCall(
@@ -337,12 +343,16 @@ class SolveLoop:
                     observation = result.summary or f"[ok] {result.result_ref or '执行完成'}"
                 else:
                     repair_count += 1
+                    if result.error is not None and result.error.code == TOOL_NOT_AVAILABLE:
+                        # 与"模型写错了/沙箱挂了"分开记：这类失败无论重试多少次都不会成功
+                        unavailable_count += 1
                     observation = f"[失败 {result.error.code}] {result.error.message}" if result.error else "[失败] 未知错误"
             messages = messages + [{
                 "role": "tool", "content": observation, "tool_call_id": call.id,
             }]
         return {"messages": messages, "exec_seq": exec_seq,
                 "repair_count": repair_count, "dispatch_count": dispatch_count,
+                "unavailable_count": unavailable_count,
                 "isolation_mode": isolation_mode}
 
     async def _finalize(self, state: SolveState) -> dict:
@@ -360,8 +370,19 @@ class SolveLoop:
 
     async def _handoff(self, state: SolveState) -> dict:
         """预算耗尽转人工：awaiting_input（复用既有门禁语义，保留现场）。"""
+        note = (
+            f"修复/分发预算耗尽（repair={state.get('repair_count', 0)}, "
+            f"dispatch={state.get('dispatch_count', 0)}）"
+        )
+        unavailable = state.get("unavailable_count", 0)
+        if unavailable:
+            # 占位工具烧掉的派发**重试多少次都不会成功**：只写"预算耗尽"会把引擎的过度宣告
+            # 报成模型或沙箱的问题（G48 归因面）。预算语义本批刻意不动，先把"是谁的问题"说清。
+            note += (
+                f"；其中 {unavailable} 次派发指向引擎尚未实现的能力（恒 NOT_AVAILABLE），"
+                "非模型或沙箱故障"
+            )
         return {
             "status": "awaiting_input",
-            "limitations": state.get("limitations", [])
-            + [f"修复/分发预算耗尽（repair={state.get('repair_count', 0)}, dispatch={state.get('dispatch_count', 0)}）"],
+            "limitations": state.get("limitations", []) + [note],
         }

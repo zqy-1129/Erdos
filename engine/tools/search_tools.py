@@ -6,7 +6,7 @@ EN-19A（19 赛事内容检索集成）待 ARCH 决策与 SP4 数据契约后实
 
 from pydantic import BaseModel, Field
 
-from engine.tools.base import ToolContext, ToolError, ToolResult
+from engine.tools.base import TOOL_NOT_AVAILABLE, ToolContext, ToolError, ToolResult
 
 
 class SearchReferencesArgs(BaseModel):
@@ -21,7 +21,7 @@ async def search_references(args: SearchReferencesArgs, ctx: ToolContext) -> Too
     return ToolResult(
         ok=False,
         error=ToolError(
-            code="NOT_AVAILABLE",
+            code=TOOL_NOT_AVAILABLE,
             message=f"本地参考检索尚未接入（EN-19A 待 19 赛事数据契约后启用）；查询已登记：{args.query}",
         ),
     )

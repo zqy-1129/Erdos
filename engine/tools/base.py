@@ -22,6 +22,12 @@ class ToolError(BaseModel):
     message: str
 
 
+# 「引擎宣告了自己还没实现的能力」这一码被两处读：占位执行器返回它，求解循环按它单列归因计数
+# （G48：占位工具烧掉的派发预算不能被报成模型或沙箱的问题）。写成常量而不是各写一遍字面量，
+# 否则哪天占位改码，归因会静默退回"预算耗尽"。
+TOOL_NOT_AVAILABLE = "NOT_AVAILABLE"
+
+
 class ToolResult(BaseModel):
     """一次工具执行结果（Registry dispatch 的统一出口）。"""
 
