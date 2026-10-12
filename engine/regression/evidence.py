@@ -2,7 +2,7 @@
 
 证据目录（默认 docs/acceptance/sp1-7/）：
 - 逐题 JSON：{business_id}.json（通道/usage/逐阶段耗时/产物哈希/失败归因/恢复标记）；
-- summary.json：汇总统计与决策门结论；
+- summary.json：汇总统计、整集冻结指纹（`seed_set`）与决策门结论；
 - report.md：Markdown 基线报告（判定报告附录引用）。
 """
 
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from engine.orchestrator.graph import STAGES
-from engine.regression.problems import RegressionProblem
+from engine.regression.problems import RegressionProblem, manifest
 from engine.regression.runner import (
     CHANNEL_BASELINE,
     CHANNEL_REAL,
@@ -72,6 +72,11 @@ class EvidenceWriter:
             "success_rate_real_key": report.success_rate(CHANNEL_REAL),
             "by_category_baseline": report.by_category(CHANNEL_BASELINE),
             "failure_by_module_baseline": report.failure_by_module(CHANNEL_BASELINE),
+            # 整集冻结指纹（G46①）：`manifest()` 不传参 = 取 `REGRESSION_SET` 全集，
+            # **不是本次跑的那批**。冒烟跑（--per-category）也要能证明样本没变，
+            # 否则校验依据只在全量跑时存在，而 11-05 之后恰恰主要靠冒烟跑。
+            # docstring 早就承诺"判定报告附录引用"，此前生产链路零调用方。
+            "seed_set": manifest(),
             "decision": str(report.decision()),
             **(extra or {}),
         }
@@ -133,6 +138,31 @@ def _rate_line(
     return f"- {label}：{report.success_rate(channel):.2%}（{report.passed_count(channel)}/{total}）{note}"
 
 
+def _seed_set_lines(report: AcceptanceReport) -> list[str]:
+    """整集冻结指纹 + 「本次 M 题 / 整集 N 题」标注（G46①③）。
+
+    冒烟跑（`--per-category`）默认写进同一个证据目录，会用 4 题报告覆盖 20 题基线；没有这行
+    标注，被覆盖后的 `report.md` 与全量跑出来的看起来一模一样（只有题数不同，而题数正好是
+    唯一可能被读成"抽样比例"却没人写的东西）。指纹取**整集**，所以冒烟跑同样能证明样本没变。
+    """
+    seed = manifest()
+    ran = report.sample_count()
+    if ran == seed["count"]:
+        scope = f"本次 {ran} 题 = 整集 {seed['count']} 题（全量）"
+    elif ran == 0:
+        # 与 §1 的比率同一口径：零样本要写"无样本"，"抽样 0 题"会被读成一次做了却什么都没中的抽样
+        scope = f"本次**无样本**（未跑任何题）/ 整集 {seed['count']} 题"
+    else:
+        scope = f"**本次抽样 {ran} 题 / 整集 {seed['count']} 题**"
+    buckets = "、".join(f"{c} {n}" for c, n in seed["categories"].items())
+    return [
+        f"- 题目总数：{ran}（{scope}）",
+        f"- 整集冻结指纹：`set_sha256={seed['set_sha256']}`"
+        "（逐题哈希见 `summary.json` 的 `seed_set`；11-05 冻结后据此校验样本未变）",
+        f"- 整集题型分桶：{buckets}",
+    ]
+
+
 def render_markdown(report: AcceptanceReport, *, title: str = "SP1-7 回归基线报告") -> str:
     """渲染 Markdown 报告：总体/题型分布/失败归因/逐题明细。"""
     baseline_total = report.sample_count(CHANNEL_BASELINE)
@@ -143,7 +173,7 @@ def render_markdown(report: AcceptanceReport, *, title: str = "SP1-7 回归基�
         "",
         "## 1. 总体",
         "",
-        f"- 题目总数：{report.sample_count()}",
+        *_seed_set_lines(report),
         f"- 通过：{report.passed_count()}（{_channel_split(report)}）",
         f"- **{_path_distribution(report.results)}**"
         "（厂商不支持 tools 时全套会静默降级，成功率不变但工具链从未被验过）",

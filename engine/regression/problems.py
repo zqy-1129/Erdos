@@ -4,7 +4,8 @@
 4 类题型；每题含题面、参考答案要点锚点（QA 冻结前校对）。旧 10 题口径（10-01）已废弃。
 
 冻结纪律：11-05 冻结后不再改样本；manifest() 输出逐题内容哈希与集合级 set_sha256，
-作为冻结清单校验依据（判定报告附录引用）。
+作为冻结清单校验依据（判定报告附录引用）。消费方是 `regression/evidence.py`：整集摘要写进
+summary.json 的 `seed_set` 与 report.md 的总体节（冒烟跑也带整集指纹，才能证明样本没变）。
 
 题面说明：条目为 EN 侧整理的简化改写（非竞赛原文，规避版权分发）；QA 校对与
 内容库 problems 域入库（题面/参考答案/评分 rubric）为共同建任务的一部分。
@@ -280,16 +281,13 @@ def stratified_sample(
 
 
 def _statement_digest(problem: RegressionProblem) -> str:
+    """逐题内容哈希：直接对 `to_seed_record()` 的**全部字段**算。
+
+    走同一个字典而不是另列一份字段清单（G46②）：将来谁往入库记录里加一个字段，它会自动
+    进指纹。否则新字段静默逃过冻结哈希，而冻结校验看起来仍然全绿——那种"全绿"比报错更坏。
+    """
     payload = json.dumps(
-        {
-            "business_id": problem.business_id,
-            "category": problem.category,
-            "title": problem.title,
-            "year": problem.year,
-            "difficulty": problem.difficulty,
-            "statement": problem.statement,
-            "reference_digest": problem.reference_digest,
-        },
+        problem.to_seed_record(),
         ensure_ascii=False, sort_keys=True, separators=(",", ":"),
     )
     return sha256(payload.encode("utf-8")).hexdigest()
