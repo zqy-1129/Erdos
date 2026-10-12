@@ -7,10 +7,15 @@
 红线（SP1-6 提示词）：
 - 只追加，无删除/清空 API；
 - 留痕写入失败让任务失败（抛异常，非静默丢弃）。
+
+一致性判据：`artifact_index` 与它对应的 `artifact` 事件必须**一起出现**（合规声明引用前者、
+审计查流水看后者），所以这类成对写走 `batch()` 一个事务，不留"索引有行、流水无事件"的窗口。
 """
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -43,6 +48,8 @@ class TrailStore:
 
     def __init__(self, db_path: str) -> None:
         self._conn = sqlite3.connect(db_path)
+        # `batch()` 期间推迟每条写各自的 commit，改由批末一次提交（见该方法的说明）。
+        self._defer_commits = False
         # 与 checkpoints.db 对称：留痕写失败按红线要让任务失败，
         # 不该由主进程跨进程只读并发把写入堵成 "database is locked"。
         self._conn.execute("PRAGMA busy_timeout = 3000")
@@ -77,6 +84,31 @@ class TrailStore:
     # ------------------------------------------------------------------
     # 只追加写入（无删除/清空 API）
     # ------------------------------------------------------------------
+    def _commit(self) -> None:
+        """单条写默认立即提交；在 `batch()` 内推迟到批末，由批统一提交或回滚。"""
+        if not self._defer_commits:
+            self._conn.commit()
+
+    @contextmanager
+    def batch(self) -> Iterator[None]:
+        """把批内多条只追加写并进**一个事务**：要么全都落，要么全都不落。
+
+        存在的理由是一致性判据，不是性能：`artifact_index` 是合规声明的引用来源，
+        `audit_trail` 是流水。两条各提交一次就有一个崩溃/失败窗口会留下
+        "索引有行、流水无事件"（G47）——那种状态比"两条都没有"更难回答：前者要解释
+        这条哈希从哪来，后者只要重跑一次。批内出错必须显式 `rollback()`：连接默认开启隐式
+        事务，"不提交"不等于"撤销"——留在事务里的行会被这个连接上的下一次提交带进库。
+        """
+        outer, self._defer_commits = self._defer_commits, True
+        try:
+            yield
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+        finally:
+            self._defer_commits = outer
+
     def append_event(
         self, task_id: str, stage: str, event_type: str, detail: dict[str, Any], ts: str | None = None
     ) -> int:
@@ -90,7 +122,7 @@ class TrailStore:
             "INSERT INTO audit_trail (task_id, stage, event_type, detail, ts) VALUES (?, ?, ?, ?, ?)",
             (task_id, stage, event_type, json.dumps(safe_detail, ensure_ascii=False), ts),
         )
-        self._conn.commit()
+        self._commit()
         return int(cursor.lastrowid or 0)
 
     def append_artifact(
@@ -103,7 +135,7 @@ class TrailStore:
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (task_id, stage, kind, file_path, sha256, size_bytes, created_at),
         )
-        self._conn.commit()
+        self._commit()
         return int(cursor.lastrowid or 0)
 
     # ------------------------------------------------------------------

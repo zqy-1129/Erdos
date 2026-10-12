@@ -155,3 +155,58 @@ def test_events_append_only_order(tmp_path) -> None:
     assert events[0].id < events[1].id  # 追加序
     assert events[0].detail["model"] == "m1"
     assert events[1].detail["model"] == "m2"
+
+
+# ----------------------------------------------------------------------
+# G47：支撑材料与流水必须一起出现（成对写并进一个事务）
+# ----------------------------------------------------------------------
+def test_artifact_pair_writes_are_atomic(tmp_path, monkeypatch) -> None:
+    """第二条写失败时第一条必须一起回滚——不留"artifact_index 有行、audit_trail 无事件"。
+
+    那种状态比两条都没有更难回答：合规声明引用的是 `artifact_index` 的哈希，审计查的是流水，
+    一边有一条没有就等于"有支撑材料却查无此事"。
+    """
+    recorder, store = _recorder(tmp_path)
+    artifact = tmp_path / "figure.png"
+    artifact.write_bytes(b"png-bytes")
+
+    def boom(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise sqlite3.OperationalError("database or disk is full")
+
+    monkeypatch.setattr(store, "append_event", boom)
+    with pytest.raises(sqlite3.OperationalError):
+        recorder.record_artifact("t-pair", "solving", "figure", artifact)
+
+    assert store.artifacts("t-pair") == [], "留下了一行孤儿支撑材料"
+    assert store.events("t-pair") == []
+
+
+def test_artifact_pair_writes_both_land_together(tmp_path) -> None:
+    """正向对照：成功路径两条都在——原子性不是靠"少写一条"实现的。"""
+    recorder, store = _recorder(tmp_path)
+    artifact = tmp_path / "figure2.png"
+    artifact.write_bytes(b"png-2")
+
+    recorder.record_artifact("t-pair2", "solving", "figure", artifact)
+
+    assert len(store.artifacts("t-pair2")) == 1
+    assert [e.event_type for e in store.events("t-pair2")] == [EventType.ARTIFACT]
+
+
+def test_batch_rollback_does_not_leak_into_the_next_commit(tmp_path) -> None:
+    """回滚之后，同一连接上的后续写不得把被回滚的行顺手带进库。
+
+    "没提交"不等于"已撤销"：隐式事务里的行还挂着，下一次 commit 就会一起落库。
+    这条测的是那个连带后果——它比孤儿行更难被发现（要等到很久之后另一次写发生才显形）。
+    """
+    store = TrailStore(str(tmp_path / "trail.db"))
+
+    with pytest.raises(sqlite3.OperationalError):
+        with store.batch():
+            store.append_artifact("t-leak", "solving", "data", "a.csv", "sha-a", 1)
+            raise sqlite3.OperationalError("第二条失败")
+
+    store.append_event("t-leak", "solving", EventType.TOOL_CALL, {"tool": "execute_code"})
+
+    assert store.artifacts("t-leak") == [], "被回滚的索引行跟着下一次提交进了库"
+    assert [e.event_type for e in store.events("t-leak")] == [EventType.TOOL_CALL]

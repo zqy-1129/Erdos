@@ -54,20 +54,26 @@ class TrailRecorder:
         )
 
     def record_artifact(self, task_id: str, stage: str, kind: str, file_path: str | Path) -> int:
-        """产物留痕：计算 sha256 并登记 artifact_index。"""
+        """产物留痕：算 sha256，并把"索引行 + 事件行"**在一个事务里**落库。
+
+        这两条是一件事的两半（合规声明引用 `artifact_index` 的哈希，审计流水看 `audit_trail`
+        的事件），分开提交就留了一个窗口：崩溃或第二条失败会得到"有支撑材料却查无流水"。
+        批内失败会整体回滚，任务照样按红线失败——**要么两条都在，要么两条都不在**。
+        """
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"产物不存在：{path}")
         data = path.read_bytes()
         sha256 = hashlib.sha256(data).hexdigest()
         size = len(data)
-        # 1. artifact_index 登记（sha256 支撑合规声明导出）
-        self._store.append_artifact(task_id, stage, kind, str(path), sha256, size)
-        # 2. audit_trail 记录 artifact 事件
-        return self._store.append_event(
-            task_id, stage, EventType.ARTIFACT,
-            detail={"kind": kind, "file_path": str(path), "sha256": sha256, "size_bytes": size},
-        )
+        with self._store.batch():
+            # 1. artifact_index 登记（sha256 支撑合规声明导出）
+            self._store.append_artifact(task_id, stage, kind, str(path), sha256, size)
+            # 2. audit_trail 记录 artifact 事件
+            return self._store.append_event(
+                task_id, stage, EventType.ARTIFACT,
+                detail={"kind": kind, "file_path": str(path), "sha256": sha256, "size_bytes": size},
+            )
 
     def record_manual_edit(self, task_id: str, stage: str, note: str) -> int:
         """人工修改留痕：人工标记说明。"""
