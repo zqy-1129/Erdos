@@ -22,7 +22,7 @@ from engine.adapters.capabilities import probe_capabilities
 from engine.ipc.events import EventEmitter
 from engine.ipc.rpc import INTERNAL_ERROR, SCHEMA_UNSUPPORTED, RpcError
 from engine.ipc.server import JsonRpcServer
-from engine.ipc.state import EngineState, EngineStatus, TaskState
+from engine.ipc.state import EngineState, EngineStatus, StageStatus, TaskState
 from engine.orchestrator.graph import StageOrchestrator, StageRunner
 
 
@@ -135,20 +135,20 @@ def register_all(
                         reason=orch.last_hard_reject,
                     )
                 orch.last_hard_reject = None  # 已上报，避免下一轮重复发 gate.failed
-                state.task = TaskState(task_id=task_id, stage=stage, status="paused")
+                state.task = TaskState(task_id=task_id, stage=stage, status=StageStatus.PAUSED.value)
                 return
             _emit_progress(task_id, stage, 1.0)
             if events is not None and isinstance(data, dict) and data.get("paper_sha256"):
                 events.emit(
                     "artifact.ready", task_id=task_id, artifact="paper", sha256=data["paper_sha256"]
                 )
-            state.task = TaskState(task_id=task_id, stage=stage, status="done")
+            state.task = TaskState(task_id=task_id, stage=stage, status=StageStatus.DONE.value)
         except asyncio.CancelledError:
-            state.task = TaskState(task_id=task_id, stage=stage, status="cancelled")
+            state.task = TaskState(task_id=task_id, stage=stage, status=StageStatus.CANCELLED.value)
             raise
         except Exception as exc:  # noqa: BLE001 - 阶段失败收敛为 failed 状态，错误经 get_status 暴露
             last_error[task_id] = f"{type(exc).__name__}: {exc}"
-            state.task = TaskState(task_id=task_id, stage=stage, status="failed")
+            state.task = TaskState(task_id=task_id, stage=stage, status=StageStatus.FAILED.value)
 
     async def task_create(params: dict):
         """EN-PAPER：登记任务题面（题面贯通入口；start_stage 前必须调用）。
@@ -211,7 +211,7 @@ def register_all(
                             f"阶段顺序约束：检查点当前应执行 {restored.current_stage}，收到 {stage}"
                         )
                     state.task = TaskState(
-                        task_id=task_id, stage=restored.current_stage, status="running"
+                        task_id=task_id, stage=restored.current_stage, status=StageStatus.RUNNING.value
                     )
         # 仅在注入真实 runner 时自动驱动阶段（SP1-1 骨架/压测路径保持纯受理语义）；
         # 耗时结果走事件（stage.progress/artifact.ready），响应立即返回受理。
@@ -280,7 +280,7 @@ def register_all(
             task = running.get(task_id)
             if task is not None and not task.done():
                 await task
-            if state.task is not None and state.task.status == "failed":
+            if state.task is not None and state.task.status == StageStatus.FAILED.value:
                 raise ValueError(f"阶段执行失败，不能通过门禁：{last_error.get(task_id, '未知错误')}")
             feedback = params.get("feedback", "")
             _note_gate_decision(task_id, gate, decision, str(feedback))
