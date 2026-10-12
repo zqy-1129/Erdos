@@ -66,7 +66,12 @@ jobs:
           seed=$(grep -oE '"set_sha256": "[0-9a-f]{16}' "$sj" 2>/dev/null | head -1 | cut -d'"' -f4)
           ran=$(grep -oE '"total": [0-9]+' "$sj" 2>/dev/null | head -1 | grep -oE '[0-9]+')
           whole=$(grep -oE '"count": [0-9]+' "$sj" 2>/dev/null | head -1 | grep -oE '[0-9]+')
-          echo "::notice title=engine-ci integration::smoke=${smoke:-无 smoke.log（前置步骤未跑完）} · parity=${parity:-无 parity.log} · 本次 ${ran:-?} 题/整集 ${whole:-?} 题 · seed_sha=${seed:-未取到}"
+          # 三种情形要能分开读：没跑、跑了半路失败（有日志无结果行）、跑完（有结果行）。
+          smoke_state="有结果行"
+          [ -z "$smoke" ] && smoke_state=$([ -s smoke.log ] && echo "有 smoke.log 但无[结果]行（中途失败）" || echo "无 smoke.log（步骤未执行）")
+          parity_state="有结论行"
+          [ -z "$parity" ] && parity_state=$([ -s parity.log ] && echo "有 parity.log 但无[双轨]行（中途失败）" || echo "无 parity.log（步骤未执行）")
+          echo "::notice title=engine-ci integration::smoke=${smoke:-$smoke_state} · parity=${parity:-$parity_state} · 本次 ${ran:-?} 题/整集 ${whole:-?} 题 · seed_sha=${seed:-未取到}"
       - name: Annotate failures
         if: failure()
         run: |
@@ -80,8 +85,19 @@ jobs:
             smoke.log parity.log \
             pytest.log boundary.log 2>/dev/null \
             | grep -E "error:|FAILED|^E |ImportError while importing|Cannot find|unused .type: ignore|Traceback|Required test coverage|\[FAIL\]|[A-Za-z0-9_./-]+\.(py|ts):[0-9]+:[0-9]+: [A-Z]+[0-9]*" \
-            | head -10 \
+            | head -5 \
             | sed 's/^/::error::/'
+          # 形状匹配是**有损**的：`e22b18b` 的集成步骤红了，但上面一条都没抓到（厂商库/新脚本的
+          # 失败文案不在我列的形状里），只剩 GitHub 自己那句 "Process completed with exit code 1"。
+          # 所以再做一层**无条件下钻**：把集成两步日志的尾巴原样发出来，形状对不对都能读到现场。
+          # 每步注解上限 10 条，这里各取 3 行，宁少而可读，不要多而被截断。
+          for f in smoke.log parity.log; do
+            if [ -s "$f" ]; then
+              tail -3 "$f" | sed "s|^|::error::[$f] |"
+            else
+              echo "::error::[$f] 没有该日志（步骤未执行或未落盘）"
+            fi
+          done
       - name: Publish test numbers
         if: always()
         run: |
