@@ -54,7 +54,7 @@ jobs:
           # `cd engine` 之后跑），所以两处都要收，否则会"红了但注释是空的"。
           cat install.log ruff.log mypy.log engine/boundary.log engine/pytest.log \
             pytest.log boundary.log 2>/dev/null \
-            | grep -E "error:|FAILED|^E |ImportError while importing|Cannot find|unused .type: ignore|Traceback|Required test coverage" \
+            | grep -E "error:|FAILED|^E |ImportError while importing|Cannot find|unused .type: ignore|Traceback|Required test coverage|[A-Za-z0-9_./-]+\.(py|ts):[0-9]+:[0-9]+: [A-Z]+[0-9]*" \
             | head -10 \
             | sed 's/^/::error::/'
       - name: Publish test numbers
