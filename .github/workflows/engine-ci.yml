@@ -12,6 +12,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 引用守护要核"报告里写的提交哈希是否真存在"，靠的是 `git cat-file`——
+          # 而 checkout 默认 fetch-depth:1，历史对象不在本地，正确哈希会被判成假引用。
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
