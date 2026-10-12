@@ -69,10 +69,15 @@ jobs:
           fi
           counts=$(grep -E "[0-9]+ (passed|failed|error)" engine/pytest.log | tail -1)
           rate=$(grep -E "Total coverage" engine/pytest.log | tail -1)
-          # 跳过数按 `SKIPPED [N]` 的 N 求和（一条 SKIPPED 行可代表多个参数化用例），
-          # 再列前三个原因：绿表里的分母差必须能读出"差的是哪一类平台专属用例"。
           skip_n=$(grep -oE "^SKIPPED \[[0-9]+\]" engine/pytest.log | grep -oE "[0-9]+" \
             | awk '{s+=$1} END {print s+0}')
-          skip_why=$(grep "^SKIPPED" engine/pytest.log | sed 's/.*: //' | sort | uniq -c \
-            | sort -rn | head -3 | tr -s ' \n' ' ')
-          echo "::notice title=engine-ci numbers::${counts:-无计数行} · ${rate:-无覆盖率行（可能未到达 cov 汇总）} · skipped=${skip_n:-0}：${skip_why:-无 SKIPPED 行}"
+          echo "::notice title=engine-ci numbers::${counts:-无计数行} · ${rate:-无覆盖率行（可能未到达 cov 汇总）} · skipped=${skip_n:-0}"
+          # 跳过归因按 `SKIPPED [N]` 的 **N** 聚合：一条分组行代表多个参数化用例，数行数会得到
+          # "原因加起来 ≠ 总数"的假归因（首次上线实测：总数 9、行计数只有 7）。
+          # 每个原因单独发一条注解——分隔符用 `tr` 插多字符串会只取首字符，还会切进 CJK 正文。
+          grep "^SKIPPED" engine/pytest.log \
+            | sed -E 's/^SKIPPED \[([0-9]+)\].*: /\1|/' \
+            | awk -F'|' '{c[$2]+=$1} END {for (k in c) print c[k] " " k}' \
+            | sort -rn | head -5 | while IFS= read -r reason; do
+                echo "::notice title=engine-ci skip::$reason"
+              done
