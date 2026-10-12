@@ -17,13 +17,21 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install
-        run: pip install -e "./engine[dev]"
+        run: |
+          set -o pipefail
+          pip install -e "./engine[dev]" 2>&1 | tee install.log
       - name: Ruff
-        run: ruff check engine scripts
+        run: |
+          set -o pipefail
+          ruff check engine scripts 2>&1 | tee ruff.log
       - name: Mypy
-        run: mypy --config-file engine/pyproject.toml engine
+        run: |
+          set -o pipefail
+          mypy --config-file engine/pyproject.toml engine 2>&1 | tee mypy.log
       - name: Dependency boundary guard
-        run: cd engine && pytest tests/test_dependency_boundary.py --no-cov -q
+        run: |
+          set -o pipefail
+          cd engine && pytest tests/test_dependency_boundary.py --no-cov -q 2>&1 | tee boundary.log
       - name: Pytest (coverage >= 85%)
         run: |
           set -o pipefail
@@ -31,4 +39,14 @@ jobs:
       - name: Annotate failures
         if: failure()
         run: |
-          cd engine && grep -n -B10 -A8 "ImportError while importing" pytest.log | tail -30 | sed 's/^/::error::/' || true
+          # CI 变红必须自带正文：job 日志匿名访问是 403，红给谁看都读不到原因。
+          # 每步都把输出 tee 成日志（pipefail 保证失败不会被 tee 吞掉），这里只挑
+          # "错误形状"的行转成注释；GitHub 每步最多 10 条，超出部分去日志页看全文。
+          set +e
+          # 日志按各自步骤的工作目录落盘：root 三个、engine/ 两个（boundary/pytest 都在
+          # `cd engine` 之后跑），所以两处都要收，否则会"红了但注释是空的"。
+          cat install.log ruff.log mypy.log engine/boundary.log engine/pytest.log \
+            pytest.log boundary.log 2>/dev/null \
+            | grep -E "error:|FAILED|^E |ImportError while importing|Cannot find|unused .type: ignore|Traceback|Required test coverage" \
+            | head -10 \
+            | sed 's/^/::error::/'
