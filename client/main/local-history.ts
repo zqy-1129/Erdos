@@ -22,6 +22,7 @@ import { existsSync } from "node:fs";
 
 import { openReadOnly, readRecentTasks } from "./engine-trail.ts";
 import type { StageName } from "../shared/ipc.ts";
+import { parseHistoryQuery, paginateHistory, type HistoryPage } from "../shared/history.ts";
 
 /** 四阶段顺序（恢复定位依据；与引擎 STAGES 同序）。 */
 const STAGES: readonly StageName[] = ["analysis", "modeling", "solving", "writing"];
@@ -127,6 +128,12 @@ export function readLocalHistory(trailDbPath: string, checkpointsDbPath: string,
       resumable: view.resumable,
     };
   });
+}
+
+/** 本地只读查询。SQLite 聚合已有留痕；元数据读取/筛选 O(本地记录数)，单页返回最多100项。 */
+export function readLocalHistoryPage(trailDbPath: string, checkpointsDbPath: string, input: unknown): HistoryPage {
+  const query = parseHistoryQuery(input);
+  return paginateHistory(readLocalHistory(trailDbPath, checkpointsDbPath, -1), query);
 }
 
 /**

@@ -9,6 +9,28 @@ import { GatePanel } from "../src/components/gate-panel.tsx";
 afterEach(cleanup);
 
 describe("GatePanel 门禁审批（FE-APPROVE W13）", () => {
+  it("切换任务清空草稿和错误，旧提交不能锁住或污染新门禁", async () => {
+    let reject!: (error: Error) => void;
+    const pending = new Promise<void>((_yes, no) => { reject = no; });
+    const { rerender } = render(<GatePanel scopeKey="task-a" gate="建模" reason="old" retries={1} onSubmit={() => pending} />);
+    fireEvent.change(screen.getByLabelText(/修改意见/), { target: { value: "旧任务草稿" } });
+    fireEvent.click(screen.getByText("拒绝并反馈"));
+    expect((screen.getByLabelText(/修改意见/) as HTMLTextAreaElement).disabled).toBe(true);
+    rerender(<GatePanel scopeKey="task-b" gate="建模" reason="new" retries={1} onSubmit={async () => {}} />);
+    expect((screen.getByLabelText(/修改意见/) as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByText("通过") as HTMLButtonElement).disabled).toBe(false);
+    await act(async () => { reject(new Error("旧请求失败")); });
+    expect(screen.queryByRole("alert")).toBeNull(); expect(document.activeElement).toBe(screen.getByRole("heading", { name: /建模/ }));
+  });
+  it("空反馈错误被公告并将焦点放回输入，连续触发不能重复提交", async () => {
+    let resolve!: () => void; const pending = new Promise<void>(yes => { resolve = yes; }); const submit = vi.fn(() => pending);
+    render(<GatePanel gate="分析" reason="r" retries={1} onSubmit={submit} />);
+    fireEvent.click(screen.getByText("拒绝并反馈")); expect(screen.getByRole("alert").textContent).toContain("必须填写");
+    expect(document.activeElement).toBe(screen.getByLabelText(/修改意见/));
+    fireEvent.change(screen.getByLabelText(/修改意见/), { target: { value: "意见" } });
+    fireEvent.click(screen.getByText("拒绝并反馈")); fireEvent.click(screen.getByText("通过")); expect(submit).toHaveBeenCalledTimes(1);
+    await act(async () => { resolve(); });
+  });
   it("展示 reason 全文与重试计数 x/3", () => {
     render(<GatePanel gate="建模" reason="目标函数未包含变量约束" retries={2} onSubmit={async () => {}} />);
     expect(screen.getByText(/目标函数未包含变量约束/)).toBeTruthy();

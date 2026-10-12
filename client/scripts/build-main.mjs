@@ -44,4 +44,13 @@ await build({
   outfile: "dist/main/preload.cjs",
 });
 
-console.log("[build:main] dist/main/index.js（ESM）+ dist/main/preload.cjs（CJS）完成");
+/** 文件解析子进程保留独立入口，正式包随 dist/main 一起分发。 */
+await build({
+  ...shared,
+  entryPoints: ["main/problem-extract-process.ts"],
+  format: "esm",
+  banner: { js: 'import { createRequire as __erdosCreateRequire } from "node:module"; const require = __erdosCreateRequire(import.meta.url);' },
+  outfile: "dist/main/problem-extract-process.js",
+});
+
+console.log("[build:main] 主进程、preload 与独立解析进程完成");

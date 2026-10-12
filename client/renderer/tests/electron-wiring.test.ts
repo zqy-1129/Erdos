@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { pathToFileURL } from "node:url";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { sha256 } from "../../main/tamper-check.ts";
@@ -93,7 +93,8 @@ describe("Electron 入口与预加载实际接线", () => {
       expect(mocks.createWindow).toHaveBeenCalledWith(expect.objectContaining({ dev: false }));
       expect(mocks.engineOptions.at(-1)).toMatchObject({ command: resolve(engine, "engine.exe"), args: [], cwd: engine });
     } finally {
-      expect(resources.startsWith(resolve(tmpdir()) + (process.platform === "win32" ? "\\" : "/"))).toBe(true);
+      // 清理按宿主文件系统边界判断；本用例模拟的 Windows 平台只用于引擎入口选择。
+      expect(resources.startsWith(resolve(tmpdir()) + sep)).toBe(true);
       rmSync(resources, { recursive: true, force: true });
     }
   });
