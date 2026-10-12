@@ -54,3 +54,16 @@ jobs:
             | grep -E "error:|FAILED|^E |ImportError while importing|Cannot find|unused .type: ignore|Traceback|Required test coverage" \
             | head -10 \
             | sed 's/^/::error::/'
+      - name: Publish test numbers
+        if: always()
+        run: |
+          # 交付台账的"数字三件套"要写用例数与覆盖率，而匿名取不到 job 日志（403）、本机解释器
+          # 又可能被拦。绿了也得把数发出来：注解能经 /check-runs/<id>/annotations 匿名读到。
+          set +e
+          if [ ! -f engine/pytest.log ]; then
+            echo "::notice title=engine-ci numbers::没有 engine/pytest.log（前置步骤未跑完）"
+            exit 0
+          fi
+          counts=$(grep -E "[0-9]+ (passed|failed|error)" engine/pytest.log | tail -1)
+          rate=$(grep -E "Total coverage" engine/pytest.log | tail -1)
+          echo "::notice title=engine-ci numbers::${counts:-无计数行} · ${rate:-无覆盖率行（可能未到达 cov 汇总）}"
