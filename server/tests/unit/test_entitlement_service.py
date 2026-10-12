@@ -56,6 +56,7 @@ class FakeMembershipProvider:
 
 
 def _signer() -> Ed25519LicenseSigner:
+
     keys = build_signing_keys("test-1:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "test")
     return Ed25519LicenseSigner(keys)
 
@@ -128,6 +129,27 @@ async def test_snapshot_tamper_fails_verify(session_factory, settings) -> None:
     tampered3 = dict(result.payload)
     tampered3["subscribed"] = True
     assert signer.verify(_canonical(tampered3), result.signature, result.key_version) is False
+
+
+def test_verify_rejects_wrong_signature_and_bad_length() -> None:
+    """白名单内的两类失败都返回 False：签名对不上、签名长度非法。"""
+    signer = _signer()
+    signature, kid = signer.sign(b"payload")
+    assert signer.verify(b"payload", signature, kid) is True
+    assert signer.verify(b"tampered", signature, kid) is False
+    assert signer.verify(b"payload", "00" * 63, kid) is False
+
+
+def test_verify_does_not_swallow_programmer_errors() -> None:
+    """宽 except 收窄后，非签名类异常必须冒出来。
+
+    此前是 `except Exception: continue`：一个 TypeError（比如调用方传了 str 而不是 bytes）
+    会被伪装成"验签失败"，运维看到的是"客户端签名对不上"，实际是服务端自己的 bug。
+    """
+    signer = _signer()
+    signature, kid = signer.sign(b"payload")
+    with pytest.raises(TypeError):
+        signer.verify("payload-not-bytes", signature, kid)
 
 
 async def test_snapshot_non_subscriber(session_factory, settings) -> None:

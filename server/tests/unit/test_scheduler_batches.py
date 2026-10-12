@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from app.domain.scheduler.ports import GrantOutcome
 from app.domain.scheduler.service import SchedulerService
 from app.repository.models import SchedulerRun
 from app.repository.scheduler import SQLAlchemySchedulerRunRepository
@@ -23,9 +24,9 @@ class CountingGrant:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def grant_all_active(self, now: datetime) -> int:
+    async def grant_all_active(self, now: datetime) -> GrantOutcome:
         self.calls += 1
-        return 3
+        return GrantOutcome(granted=3, failed=0)
 
 
 class _NoopRunner:
@@ -60,12 +61,12 @@ async def test_crashed_batch_is_reclaimed_after_stale_window(session_factory) ->
         uow.session.add(row)
         await uow.session.flush()
         # 认领一个"正在跑"且未超阈值的批次 -> 不重复执行
-        assert await svc.run_monthly_grant(NOW + timedelta(minutes=10)) == "already_ran"
+        assert (await svc.run_monthly_grant(NOW + timedelta(minutes=10))).result == "already_ran"
         assert grant.calls == 0
 
     async with UnitOfWork(session_factory) as uow:
         svc2, grant2 = _service(SQLAlchemySchedulerRunRepository(uow.session), stale_after=1800)
-        assert await svc2.run_monthly_grant(NOW + timedelta(minutes=31)) == "granted:3"
+        assert (await svc2.run_monthly_grant(NOW + timedelta(minutes=31))).result == "granted:3 failed:0"
         assert grant2.calls == 1
 
     async with UnitOfWork(session_factory) as uow:
@@ -74,19 +75,19 @@ async def test_crashed_batch_is_reclaimed_after_stale_window(session_factory) ->
                 select(SchedulerRun).where(SchedulerRun.id == "batch-1")
             )
         ).scalars().one()
-        assert finished.status == "done" and finished.result == "granted:3"
+        assert finished.status == "done" and finished.result == "granted:3 failed:0"
 
 
 async def test_done_batch_is_never_reclaimed(session_factory) -> None:
     """跑完的批次哪怕再旧也不重跑：完成态与崩溃态必须区分开。"""
     async with UnitOfWork(session_factory) as uow:
         svc, _ = _service(SQLAlchemySchedulerRunRepository(uow.session), stale_after=1800)
-        assert await svc.run_monthly_grant(NOW) == "granted:3"
+        assert (await svc.run_monthly_grant(NOW)).result == "granted:3 failed:0"
 
     async with UnitOfWork(session_factory) as uow:
         svc2, grant2 = _service(SQLAlchemySchedulerRunRepository(uow.session), stale_after=1800)
         later = NOW + timedelta(days=6)  # 同月、远超 stale 阈值
-        assert await svc2.run_monthly_grant(later) == "already_ran"
+        assert (await svc2.run_monthly_grant(later)).result == "already_ran"
         assert grant2.calls == 0
 
 

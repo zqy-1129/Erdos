@@ -41,6 +41,31 @@ class ReconcileResult:
     alerted: bool
 
 
+@dataclass(frozen=True, slots=True)
+class GrantOutcome:
+    """月赠发放结果：成功数、失败数与失败的 exec_id（值班据此回查积分流水）。
+
+    `failures` 有上限（只留前若干条）：账本与告警载荷不该随故障规模无界增长，
+    失败总数在 `failed` 上如实计数，明细看日志。
+    """
+
+    granted: int
+    failed: int
+    failures: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MonthlyGrantRun:
+    """月赠批次执行结果。
+
+    `outcome` 为 None 表示本批次已被占用（already_ran），本轮没有执行发放，
+    上层据此决定要不要告警——不能把"没跑"和"跑完零失败"混成一个值。
+    """
+
+    result: str
+    outcome: GrantOutcome | None
+
+
 class SchedulerRunRepository(Protocol):
     """调度批次仓储端口（task_name + batch_key 幂等）。"""
 
@@ -78,8 +103,8 @@ class AccountLedgerSource(Protocol):
 class MonthlyGrantRunner(Protocol):
     """月赠执行器端口（适配积分域 grant_points 逻辑）。"""
 
-    async def grant_all_active(self, now: datetime) -> int:
-        """为全部活跃订阅发放月赠，返回发放人数。"""
+    async def grant_all_active(self, now: datetime) -> GrantOutcome:
+        """为全部活跃订阅发放月赠，返回成功/失败计数（失败必须可见，不得静默跳过）。"""
         ...
 
 

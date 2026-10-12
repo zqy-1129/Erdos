@@ -18,7 +18,11 @@ from app.repository.models import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False：fileConfig 默认会把"配置里没提到的既有 logger"全部
+    # 置为 disabled。应用日志走 erdos.* 命名空间（alembic.ini 里没有），默认行为会让迁移
+    # 跑过之后整个进程的 erdos 日志静默——测试里表现为 caplog 抓不到任何记录，且只在
+    # "迁移测试先跑"的顺序下出现，极难定位。
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

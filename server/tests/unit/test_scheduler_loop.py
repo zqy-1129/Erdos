@@ -139,7 +139,7 @@ async def test_loop_grants_monthly_points_end_to_end(session_factory, settings, 
     assert account is not None and account.monthly_balance == 400
     monthly = [r for r in runs if r.task_name == "monthly_grant"]
     assert monthly and monthly[0].status == "done"
-    assert monthly[0].result == "granted:1"
+    assert monthly[0].result == "granted:1 failed:0"
 
 
 async def test_loop_reconciles_and_alerts_end_to_end(session_factory, settings, monkeypatch) -> None:

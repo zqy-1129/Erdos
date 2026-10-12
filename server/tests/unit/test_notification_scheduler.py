@@ -19,7 +19,12 @@ from app.domain.notification.ports import (
     NotificationLogRecord,
 )
 from app.domain.notification.service import NotificationService
-from app.domain.scheduler.service import SchedulerService, reconcile_alert
+from app.domain.scheduler.ports import GrantOutcome
+from app.domain.scheduler.service import (
+    SchedulerService,
+    monthly_grant_alert,
+    reconcile_alert,
+)
 from app.infra.notification_sender import LogNotificationSender
 from app.infra.verification_limiter import FixedWindowCodeLimiter
 from app.repository.models import NotificationSendLog
@@ -129,9 +134,9 @@ class FakeMonthlyGrant:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def grant_all_active(self, now) -> int:
+    async def grant_all_active(self, now) -> GrantOutcome:
         self.calls += 1
-        return 5
+        return GrantOutcome(granted=5, failed=0)
 
 
 class FakeExpire:
@@ -174,9 +179,12 @@ async def test_monthly_grant_idempotent_batch(session_factory, settings) -> None
         now = datetime.now(UTC)
         r1 = await svc.run_monthly_grant(now)
         r2 = await svc.run_monthly_grant(now)  # 同批次
-        assert r1 == "granted:5"
-        assert r2 == "already_ran"
+        assert r1.result == "granted:5 failed:0"
+        assert r1.outcome is not None and r1.outcome.granted == 5
+        assert r2.result == "already_ran"
+        assert r2.outcome is None, "没跑就不能给出发放结果，也不能被当成零失败"
         assert monthly.calls == 1  # 只执行一次
+        assert monthly_grant_alert(r2.outcome) is None
 
 
 async def test_reconcile_detects_all_differences(session_factory, settings) -> None:

@@ -69,6 +69,8 @@ SLO_AVAILABILITY: Final[float] = 0.995
 # 燃尽与数据覆盖率两条预算类告警的指标键：看板与静默去重都以它为单位。
 SLO_BURN_METRIC: Final[str] = "slo_burn"
 SLO_COVERAGE_METRIC: Final[str] = "slo_data_coverage"
+# 月赠发放失败：用户已付费订阅却没拿到月度积分，属权益承诺破损（不是容量水位）
+MONTHLY_GRANT_METRIC: Final[str] = "monthly_grant_failure"
 
 # 采样指标 -> SLO 档位。可用性是唯一 P0；错误率与延迟类为 P1；容量水位为 P2。
 # 延迟档按 P95 口径评估（PRD 写的是 P99>500ms），P99 需要监测表增列，
@@ -85,6 +87,8 @@ METRIC_SEVERITY: Final[dict[str, Severity]] = {
     # 预算燃尽类（调度小时任务产出，不在采样规则里）
     SLO_BURN_METRIC: Severity.P0,
     SLO_COVERAGE_METRIC: Severity.P1,
+    # 调度任务类（批次执行结果，不在采样规则里）
+    MONTHLY_GRANT_METRIC: Severity.P1,
 }
 
 
@@ -134,16 +138,24 @@ class AlertRouter:
 
     @staticmethod
     def channel_for(severity: Severity) -> Channel:
-        """级别 → 通道（纯映射，不去重：恢复通知与自带状态机的调用方走这里）。"""
+        """级别 → 通道（纯映射，不去重也不计数）。"""
         return SEVERITY_CHANNEL[severity]
 
-    def route(self, alert: Alert, now: datetime) -> Channel | None:
-        """路由一条告警；静默窗口内去重返回 None。"""
-        if not self._silence.should_send(alert, now):
-            return None
-        channel = self.channel_for(alert.severity)
+    def note(self, severity: Severity) -> Channel:
+        """记一次路由（不经静默去重）：自带状态机的调用方（采样翻转）走这里。
+
+        计数必须覆盖这条路径，否则最繁忙的告警来源在指标里永远是 0——
+        "有计数没人看"之外还有一种更坏的："计数看着有，其实漏了主路径"。
+        """
+        channel = self.channel_for(severity)
         self._counts[channel] += 1
         return channel
+
+    def route(self, alert: Alert, now: datetime) -> Channel | None:
+        """路由一条告警；静默窗口内去重返回 None（去重命中不计数）。"""
+        if not self._silence.should_send(alert, now):
+            return None
+        return self.note(alert.severity)
 
     @property
     def routed_counts(self) -> dict[Channel, int]:
