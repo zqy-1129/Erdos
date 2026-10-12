@@ -4,7 +4,7 @@ on:
   pull_request:
     paths: ["client/**", "contracts/**", "server/**", ".github/workflows/client-ci.yml"]
   push:
-    branches: [main, develop]
+    branches: [main, develop, "codex/**"]
 
 jobs:
   quality:
