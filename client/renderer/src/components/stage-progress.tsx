@@ -91,6 +91,7 @@ export function StageProgress(props: {
       {state.gates.length > 0 ? (
         props.onAnswerGate && pendingGate ? (
           <GatePanel
+            scopeKey={`${state.taskId}:${pendingGate.gate}:${pendingGate.ts}`}
             gate={STAGE_LABELS[pendingGate.gate as StageName] ?? pendingGate.gate}
             reason={pendingGate.reason}
             retries={state.gateRetries[pendingGate.gate] ?? 1}

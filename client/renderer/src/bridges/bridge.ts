@@ -99,14 +99,7 @@ export interface ContentItem {
   complianceNote?: string;
 }
 
-export interface HistoryTask {
-  taskId: string;
-  title: string;
-  status: string;
-  updatedAt: string;
-  /** 是否存在可续检查点。 */
-  resumable: boolean;
-}
+export type { HistoryTask } from "../../../shared/history.ts";
 
 export interface ComplianceExportResult {
   /** 下载内容预览（演示模式）。 */

@@ -292,6 +292,7 @@ if (!app.isPackaged && process.env.ERDOS_SMOKE === "1") {
       app.exit(1);
     });
     app.on("before-quit", () => {
+      bridgeBackend?.dispose();
       engineHost?.stop();
     });
     app.on("window-all-closed", () => {

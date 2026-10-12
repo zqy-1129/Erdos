@@ -132,7 +132,9 @@ describe("EngineHost 状态机（真实引擎 + FakeLLM）", { skip: enginePytho
       const pid = host.childPid;
       assert.ok(pid != null, "就绪后应有引擎 pid");
 
-      await new Promise<void>((resolve) => exec(`taskkill /PID ${pid} /T /F`, () => resolve()));
+      if (process.platform === "win32") {
+        await new Promise<void>((resolve) => exec(`taskkill /PID ${pid} /T /F`, () => resolve()));
+      } else process.kill(pid, "SIGKILL");
 
       await waitFor(() => host.currentState === "ready" && host.childPid !== null && host.childPid !== pid, 25_000, "看门狗重启后就绪（新 pid）");
       assert.ok(stateLog.includes("crashed"), `应经历 crashed：${JSON.stringify(stateLog)}`);

@@ -175,6 +175,15 @@ label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; fo
 /* ---------- 门禁审批面板（FE-APPROVE W13） ---------- */
 .gate-panel { border: 1px solid #ffb4ab; background: #fff5f4; border-radius: 6px; padding: 12px; margin: 10px 0; }
 .gate-panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.gate-panel-head h3 { margin: 0; font-size: 16px; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible, h3[tabindex]:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
+}
+.import-panel { margin: 12px 0; }
+.import-panel progress { width: min(100%, 360px); }
+.history-main { min-width: 0; }
+.history-main b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gate-retry { color: #b3261e; font-size: 12px; font-weight: 600; }
 .gate-reason { color: #b3261e; font-size: 13px; margin-bottom: 10px; line-height: 1.5; }
 .gate-actions { display: flex; gap: 8px; margin-top: 10px; }
