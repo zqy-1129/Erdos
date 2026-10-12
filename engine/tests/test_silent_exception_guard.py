@@ -99,12 +99,27 @@ def _scan_source(source: str, relative: str) -> list[tuple[str, str, str, int]]:
     return found
 
 
+def _is_engine_source(path: Path) -> bool:
+    """只扫引擎自己的源码：**点开头的目录（`.venv/`）与 `__pycache__`/`tests` 都不在内**。
+
+    这条不是防御性冗余，是 10-12 实测踩出来的：`uv run --directory engine` 会在 `engine/` 下
+    建出一个 `engine/.venv`（gitignored，但 1165 个 .py 真在盘上），当时的判据只排 `tests` 与
+    `__pycache__` → 守护把 websockets/yaml/zstandard 的处理器全报成"未说明理由的静默异常"，
+    一条**环境副作用**伪装成了 100+ 条引擎缺陷。**白名单是给引擎的，不是给厂商库的**——
+    按 (路径, 函数, 异常) 键定的放行条目根本不该去覆盖第三方代码。
+    判据只看**相对 ENGINE** 的片段：绝对路径的祖先里可能本身就有一个以点开头的目录
+    （用户配置目录那一类），拿 `path.parts` 一比就会把整个引擎都排除掉——
+    那种"扫到零个文件"的守护比不扫更坏。
+    """
+    rel = path.relative_to(ENGINE)
+    return not (
+        {"tests", "__pycache__"} & set(rel.parts)
+        or any(part.startswith(".") for part in rel.parts)
+    )
+
+
 def _engine_files() -> list[Path]:
-    return [
-        p
-        for p in sorted(ENGINE.rglob("*.py"))
-        if "tests" not in p.parts and "__pycache__" not in p.parts
-    ]
+    return [p for p in sorted(ENGINE.rglob("*.py")) if _is_engine_source(p)]
 
 
 def _scan_all() -> list[tuple[str, str, str, int]]:
@@ -175,3 +190,21 @@ def test_guard_actually_detects_a_silent_handler() -> None:
         ("synthetic.py", "b", "OSError"),
         ("synthetic.py", "c", "KeyError"),
     ], hits
+
+
+def test_the_scan_scope_excludes_vendor_and_hidden_dirs() -> None:
+    """守护自己的判据也要能被测坏：作用域没关死时，一条环境副作用会伪装成 100+ 条引擎缺陷。
+
+    实测触发形状：`uv run --directory engine` 在 `engine/` 下建出 `engine/.venv`（1165 个 .py，
+    gitignored），旧过滤器只排 `tests` 与 `__pycache__` → websockets / yaml / zstandard 的
+    `except: pass` 全被报成"未说明理由的静默处理器"，而白名单是按引擎内相对路径建键的，
+    **本来就不可能替厂商库说话**。
+    """
+    assert not _is_engine_source(ENGINE / ".venv" / "Lib" / "site-packages" / "yaml" / "representer.py")
+    assert not _is_engine_source(ENGINE / "tests" / "test_x.py")
+    assert not _is_engine_source(ENGINE / "orchestrator" / "__pycache__" / "graph.cpython-312.py")
+    assert _is_engine_source(ENGINE / "orchestrator" / "graph.py")
+
+    files = _engine_files()
+    assert files, f"没扫到任何引擎源文件（{ENGINE}）——过滤器把整个引擎都排除了"
+    assert all(not any(p.startswith(".") for p in f.relative_to(ENGINE).parts) for f in files)

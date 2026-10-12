@@ -21,6 +21,7 @@ from pathlib import Path
 
 from engine.checkpoint.store import CHECKPOINT_STATUS_EXECUTED, SQLiteCheckpointStore
 from engine.ipc.state import EngineStatus, StageStatus
+
 # `OrchestratorStageStatus` 是编排器**内部态**，与上面 `engine.ipc.state.StageStatus`（线上态）
 # 同名而不同词表——别名把这一点写在一个名字上，见 `test_two_same_named_enums_are_deliberately_different`。
 from engine.orchestrator.graph import STAGES, StageOrchestrator
