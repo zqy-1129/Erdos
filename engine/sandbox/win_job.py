@@ -77,6 +77,18 @@ def _kernel32() -> Any:
 TRIGGER_RATIO = 1.0  # 观测峰值达到限额本身才终止：见下方实测依据
 
 
+def _last_error() -> int | None:
+    """取线程最近的 Win32 错误码；取不到就返回 None（不补 0——0 会被读成"没错"）。
+
+    与上面 `WinDLL` 同一个处理：`ctypes.get_last_error` 只在 Windows 的类型 stub 里声明，
+    直接引用会让 Linux 上的 mypy 报 attr-defined。这里**不是运行缺陷**——这些调用点只在
+    `_kernel32()` 返回非 None 时可达，也就是真 Windows；但 mypy 推不出这层运行时条件
+    （条件藏在函数返回值里，不是 `sys.platform` 判断），所以必须按平台可见性写。
+    """
+    getter = getattr(ctypes, "get_last_error", None)
+    return int(getter()) if getter is not None else None
+
+
 @dataclass
 class MemoryJob:
     """一次性作业对象：绑定子进程 → 轮询峰值 → 超限终止。
@@ -101,7 +113,7 @@ class MemoryJob:
         self._api = api
         handle = api.CreateJobObjectW(None, None)
         if not handle:
-            self.reason = f"CreateJobObjectW 失败（GetLastError={ctypes.get_last_error()}）"
+            self.reason = f"CreateJobObjectW 失败（GetLastError={_last_error()}）"
             return
         info = _ExtendedLimitInformation()
         info.BasicLimitInformation.LimitFlags = (
@@ -116,7 +128,7 @@ class MemoryJob:
         )
         if not ok:
             self.reason = (
-                f"SetInformationJobObject 失败（GetLastError={ctypes.get_last_error()}，"
+                f"SetInformationJobObject 失败（GetLastError={_last_error()}，"
                 f"结构体长度 {ctypes.sizeof(info)}）"
             )
             api.CloseHandle(handle)
@@ -131,14 +143,14 @@ class MemoryJob:
             return False
         process = self._api.OpenProcess(_PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, pid)
         if not process:
-            self.reason = f"OpenProcess(pid={pid}) 失败（GetLastError={ctypes.get_last_error()}）"
+            self.reason = f"OpenProcess(pid={pid}) 失败（GetLastError={_last_error()}）"
             return False
         try:
             ok = self._api.AssignProcessToJobObject(self.handle, process)
         finally:
             self._api.CloseHandle(process)
         if not ok:
-            self.reason = f"AssignProcessToJobObject 失败（GetLastError={ctypes.get_last_error()}）"
+            self.reason = f"AssignProcessToJobObject 失败（GetLastError={_last_error()}）"
             return False
         self.assigned_pids.append(pid)
         return True
