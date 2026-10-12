@@ -55,7 +55,7 @@ import {
   type RecentTask,
 } from "../engine-trail.ts";
 import { estimateUsage } from "../../shared/usage.ts";
-import { checkpointStageStatus, readLocalHistory, resolveResumeStage, type LocalHistoryTask } from "../local-history.ts";
+import { checkpointStageStatus, readLocalHistory, readLocalHistoryPage, resolveResumeStage, type LocalHistoryTask } from "../local-history.ts";
 
 /** 四阶段顺序（演示事件注入方向；恢复定位见 local-history.ts，两者同序）。 */
 const STAGES = ["analysis", "modeling", "solving", "writing"];
@@ -300,7 +300,11 @@ export class BridgeBackend {
         return this.updater.run(channel === BRIDGE_CHANNELS.updateCheck ? "check" : channel === BRIDGE_CHANNELS.updateDownload ? "download" : "install");
       case BRIDGE_CHANNELS.taskImport:
         if (!this.problemImporter) throw new Error("题面文件导入不可用，请手动粘贴题面");
-        return this.problemImporter.import();
+        return this.problemImporter.import(body.importId);
+      case BRIDGE_CHANNELS.taskImportStatus:
+        return this.problemImporter?.status(body.importId) ?? null;
+      case BRIDGE_CHANNELS.taskImportCancel:
+        return this.problemImporter?.cancel(body.importId) ?? { cancelled: false };
       case BRIDGE_CHANNELS.authLogin:
         return this.login(body);
       case BRIDGE_CHANNELS.authResetRequest:
@@ -358,6 +362,8 @@ export class BridgeBackend {
         return this.authMode === "demo" ? DEMO_CONTENT : this.requireCloudBusiness().content.list();
       case BRIDGE_CHANNELS.historyList:
         return this.historyList();
+      case BRIDGE_CHANNELS.historyQuery:
+        return readLocalHistoryPage(this.trailDbPath(), this.checkpointsDbPath(), body);
       case BRIDGE_CHANNELS.historyResume:
         return this.historyResume(body);
       case BRIDGE_CHANNELS.complianceExport:
@@ -383,6 +389,7 @@ export class BridgeBackend {
    * 云端失败经 classifyAuthError 归一为可读中文（见 cloud-auth.ts）。
    */
   private async login(body: Record<string, unknown>): Promise<SessionView> {
+    this.cancelImport();
     const username = String(body["username"] ?? "");
     const password = String(body["password"] ?? "");
     if (this.cloudAuth) {
@@ -400,6 +407,7 @@ export class BridgeBackend {
 
   /** 注册即登录（cloud：契约 RegisterCreate；demo/unconfigured 语义同 login）。 */
   private async register(body: Record<string, unknown>): Promise<SessionView> {
+    this.cancelImport();
     const username = String(body["username"] ?? "");
     const password = String(body["password"] ?? "");
     if (this.cloudAuth) {
@@ -420,6 +428,7 @@ export class BridgeBackend {
    * 权益快照为会话级缓存，登出即清（防下一账号离线回退读到本账号数据）。
    */
   private async logout(): Promise<Record<string, never>> {
+    this.cancelImport();
     if (this.cloudAuth) {
       try {
         await this.cloudAuth.logout();
@@ -541,10 +550,18 @@ export class BridgeBackend {
    * 不按 signedIn 门控：401 到来说明令牌已不可用，无论本地是否仍留存会话都需回登录页。
    */
   private invalidateSession(): void {
+    this.cancelImport();
     this.cloudAuth?.clearSession();
     this.sessionUsername = null;
     this.onSessionInvalidated?.();
   }
+
+  /** 会话切换与退出回收本地解析，防止旧会话导入结果继续发布。 */
+  private cancelImport(): void {
+    // dispose 只在应用退出使用；会话变更后仍允许新的导入。
+    this.problemImporter?.cancelActive();
+  }
+  dispose(): void { this.problemImporter?.dispose(); }
 
   /** 开发期演示流水（无云端配置场景）。 */
   private demoLedger(): BillingLedgerRowView[] {

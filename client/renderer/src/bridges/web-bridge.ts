@@ -25,6 +25,7 @@ import { DOCX_PREVIEW_SUFFIX, exportDeclaration, isDeclarationFormat } from "../
 import type { TrailSource } from "../../../declaration/types.ts";
 import { estimateUsage } from "../../../shared/usage.ts";
 import type { UsageEstimateView } from "./bridge.ts";
+import { parseHistoryQuery, paginateHistory } from "../../../shared/history.ts";
 
 const SESSION_KEY = "erdos.demo.session";
 const STAGES: StageName[] = ["analysis", "modeling", "solving", "writing"];
@@ -304,6 +305,8 @@ export class WebDemoBridge implements ErdosBridge {
         return Promise.resolve((empty ? [] : DEMO_CONTENT) as T);
       case BRIDGE_CHANNELS.historyList:
         return Promise.resolve((empty ? [] : DEMO_HISTORY) as T);
+      case BRIDGE_CHANNELS.historyQuery:
+        return Promise.resolve(paginateHistory(empty ? [] : DEMO_HISTORY, parseHistoryQuery(body)) as T);
       case BRIDGE_CHANNELS.historyResume:
         return Promise.resolve({ taskId: String(body["taskId"]), resumable: true } as T);
       case BRIDGE_CHANNELS.complianceExport: {

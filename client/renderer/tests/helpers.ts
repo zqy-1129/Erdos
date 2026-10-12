@@ -3,6 +3,8 @@
  */
 
 import type { ErdosBridge } from "../src/bridges/bridge.ts";
+import { BRIDGE_CHANNELS } from "../src/bridges/bridge.ts";
+import { paginateHistory, parseHistoryQuery, type HistoryTask } from "../../shared/history.ts";
 
 /** 桥调用留痕（断言 payload 用）。 */
 export interface FakeBridgeCall {
@@ -43,6 +45,10 @@ export function fakeBridgeHandle(options: FakeBridgeOptions = {}): FakeBridgeHan
         calls.push({ channel, payload });
         if (failChannels.has(channel)) {
           throw new Error(`模拟网络错误（${channel}）：fetch failed`);
+        }
+        // 旧路由夹具的历史条目按新查询口径返回；新分页用例可显式指定 historyQuery 结果。
+        if (channel === BRIDGE_CHANNELS.historyQuery && !Object.hasOwn(results, channel)) {
+          return paginateHistory((results[BRIDGE_CHANNELS.historyList] ?? []) as HistoryTask[], parseHistoryQuery(payload ?? {})) as T;
         }
         return results[channel] as T;
       },

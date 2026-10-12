@@ -25,6 +25,8 @@ export const BRIDGE_CHANNELS = {
   preferencesGet: "preferences:get",
   preferencesSave: "preferences:save",
   taskImport: "task:import",
+  taskImportStatus: "task:import_status",
+  taskImportCancel: "task:import_cancel",
   taskPending: "task:pending",
   taskStatus: "task:status",
   artifactsList: "artifacts:list",
@@ -46,6 +48,7 @@ export const BRIDGE_CHANNELS = {
   contentList: "content:list",
   // 历史任务
   historyList: "history:list",
+  historyQuery: "history:query",
   historyResume: "history:resume",
   // 合规导出
   complianceExport: "compliance:export",

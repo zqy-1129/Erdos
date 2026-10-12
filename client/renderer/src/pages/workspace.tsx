@@ -4,6 +4,7 @@ import { useStore } from "../storage/store.ts";
 import { StageProgress, STAGE_LABELS, type AnswerGateParams } from "../components/stage-progress.tsx";
 import { GatePanel } from "../components/gate-panel.tsx";
 import { ArtifactPanel } from "../components/artifact-panel.tsx";
+import { ProblemImportPanel } from "../components/problem-import-panel.tsx";
 import { applyStatusSnapshot, initialEngineState, isGateConflict } from "../state/engine-slice.ts";
 import { BRIDGE_CHANNELS } from "../bridges/bridge.ts";
 import type { AppStores } from "../state/app-stores.ts";
@@ -18,6 +19,7 @@ export function WorkspacePage(props: { stores: AppStores }): ReactNode {
   const [problem, setProblem] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
   const locked = useRef(false);
   const draftId = useRef<string | null>(null);
   const [status, setStatus] = useState<GetStatusResult | null>(null);
@@ -49,7 +51,7 @@ export function WorkspacePage(props: { stores: AppStores }): ReactNode {
     return () => clearInterval(timer);
   }, [engine.taskId, complete, refresh]);
   const run = async (operation: () => Promise<void>) => {
-    if (locked.current) return;
+    if (locked.current || importBusy) return;
     locked.current = true; setBusy(true); setError(null);
     try { await operation(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
@@ -102,14 +104,12 @@ export function WorkspacePage(props: { stores: AppStores }): ReactNode {
         <div className="form-block">
           <h3>从示例题开始，或导入自己的题面</h3>
           <p className="muted">各阶段使用你的模型 API；平台积分按分析 20、建模 30、求解 40、写作 30 计量，开始前预扣。</p>
-          <label>任务标题<input maxLength={128} value={title} onChange={e => { setTitle(e.target.value); draftId.current = null; }} /></label>
-          <label>题面<textarea rows={10} maxLength={60000} value={problem} onChange={e => { setProblem(e.target.value); draftId.current = null; }} /></label>
-          <button type="button" className="btn" disabled={busy} onClick={() => void run(async () => {
-            const imported = await props.stores.bridge.invoke<{ title: string; problemText: string } | null>(BRIDGE_CHANNELS.taskImport);
-            if (imported) { setTitle(imported.title); setProblem(imported.problemText); draftId.current = null; }
-          })}>导入题面文件</button>
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => start())}>开始分析</button>
-          <button type="button" className="btn" disabled={busy} onClick={() => void run(() => start(EXAMPLE))}>一键开始四阶段</button>
+          <label>任务标题<input disabled={importBusy} maxLength={128} value={title} onChange={e => { setTitle(e.target.value); draftId.current = null; }} /></label>
+          <label>题面<textarea disabled={importBusy} rows={10} maxLength={60000} value={problem} onChange={e => { setProblem(e.target.value); draftId.current = null; }} /></label>
+          <ProblemImportPanel bridge={props.stores.bridge} disabled={busy} onBusyChange={setImportBusy}
+            onImported={imported => { setTitle(imported.title); setProblem(imported.problemText); setError(null); draftId.current = null; }} />
+          <button type="button" className="btn btn-primary" disabled={busy || importBusy} onClick={() => void run(() => start())}>开始分析</button>
+          <button type="button" className="btn" disabled={busy || importBusy} onClick={() => void run(() => start(EXAMPLE))}>一键开始四阶段</button>
         </div>
       ) : (
         <>
@@ -124,7 +124,7 @@ export function WorkspacePage(props: { stores: AppStores }): ReactNode {
           <StageProgress engine={props.stores.engine} onAnswerGate={answer} />
           <ArtifactPanel bridge={props.stores.bridge} taskId={engine.taskId} revision={engine.artifacts.length} />
           {!complete && status?.task?.status === "done" && engine.gates.length === 0 ? (
-            <GatePanel ready gate={STAGE_LABELS[status.task.stage]} reason="阶段产出已完成，请检查后通过，或填写意见重新执行。"
+            <GatePanel scopeKey={`${engine.taskId}:${status.task.stage}:ready`} ready gate={STAGE_LABELS[status.task.stage]} reason="阶段产出已完成，请检查后通过，或填写意见重新执行。"
               retries={0} onSubmit={(decision, feedback) => answer({ taskId: engine.taskId!, gate: status.task!.stage, decision, feedback })} />
           ) : null}
           {complete ? <p className="ok-text" role="status">四阶段已完成，可查看产物并导出合规声明。</p> : null}

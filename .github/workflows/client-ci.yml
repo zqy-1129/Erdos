@@ -2,9 +2,10 @@ name: client-ci
 
 on:
   pull_request:
-    paths: ["client/**", "contracts/**", "server/**", ".github/workflows/client-ci.yml"]
+    paths: ["client/**", "contracts/**", "server/**", "engine/**", ".github/workflows/client-ci.yml"]
   push:
     branches: [main, develop, "codex/**"]
+    paths: ["client/**", "contracts/**", "server/**", "engine/**", ".github/workflows/client-ci.yml"]
 
 jobs:
   quality:
@@ -56,5 +57,7 @@ jobs:
         run: npm run build
       - name: Build artifact scan (demo leak / relative paths / CSP)
         run: node scripts/scan-demo-leak.mjs
+      - name: Compiled import process IPC smoke
+        run: node scripts/test-import-process.mjs
       - name: Engine version binding (W17 产物未就位时跳过)
         run: npm run verify:engine-version

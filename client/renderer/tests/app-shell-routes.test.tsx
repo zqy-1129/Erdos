@@ -476,10 +476,10 @@ describe("AppShell 路由走查", () => {
     expect(screen.getByText("已完成题")).toBeTruthy();
     expect(screen.getByText(/2026-10-09 03:00/)).toBeTruthy();
     // 非可续任务显示「已完成」，且不提供续跑按钮
-    expect(screen.getByText("已完成")).toBeTruthy();
+    expect(screen.getByText("已完成", { selector: "span" })).toBeTruthy();
 
     await act(async () => {
-      screen.getByRole("button", { name: "从检查点继续" }).click();
+      screen.getByRole("button", { name: /继续任务/ }).click();
     });
     const resumeCall = calls.find((call) => call.channel === BRIDGE_CHANNELS.historyResume);
     expect(resumeCall?.payload).toMatchObject({ taskId: "hist-1" });
@@ -515,15 +515,15 @@ describe("AppShell 路由走查", () => {
     goto("/history");
     await screen.findByText("防双跑题");
     await act(async () => {
-      screen.getByRole("button", { name: "从检查点继续" }).click();
+      screen.getByRole("button", { name: /继续任务/ }).click();
     });
-    expect((screen.getByRole("button", { name: "从检查点继续" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /继续任务/ }) as HTMLButtonElement).disabled).toBe(true);
 
     await act(async () => {
       failResume(new Error("本地检查点库读取失败：disk I/O error"));
     });
-    expect(alerts).toEqual([expect.stringContaining("本地检查点库读取失败")]);
-    expect((screen.getByRole("button", { name: "从检查点继续" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(alerts).toEqual([]); expect(screen.getByRole("alert").textContent).toContain("本地检查点库读取失败");
+    expect((screen.getByRole("button", { name: /继续任务/ }) as HTMLButtonElement).disabled).toBe(false);
     expect(window.location.hash).not.toBe("#/workspace");
     vi.restoreAllMocks();
   });
@@ -550,10 +550,10 @@ describe("AppShell 路由走查", () => {
     goto("/history");
     await screen.findByText("损坏题"); // 等待列表加载完成（useRemoteData 异步）
     await act(async () => {
-      screen.getByRole("button", { name: "从检查点继续" }).click();
+      screen.getByRole("button", { name: /继续任务/ }).click();
     });
-    expect(alerts.length).toBe(1);
-    expect(alerts[0]).toMatch(/模拟网络错误/);
+    expect(alerts.length).toBe(0);
+    expect(screen.getByRole("alert").textContent).toMatch(/模拟网络错误/);
     expect(window.location.hash).not.toBe("#/workspace");
     vi.restoreAllMocks();
   });

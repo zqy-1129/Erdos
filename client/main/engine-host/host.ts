@@ -11,7 +11,7 @@
  * - 看门狗只监听进程退出事件与退出码，不以 stdout 静默时长判崩溃（模型长调用期间 stdout 可能静默数分钟）；
  * - 崩溃重启不重放 in-flight 请求：crashed 前 pending 一律以 ENGINE_RESTART 失败，由 UI 引导重试/恢复。
  */
-import { spawn, exec } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EngineRpcClient } from "./rpc.ts";
 import { injectFirstLine, INJECT_READY_TIMEOUT_MS } from "./inject.ts";
@@ -171,7 +171,8 @@ export class EngineHost {
       const grace = setTimeout(() => {
         // SIGTERM 后仍未退出：taskkill /PID /T /F 兜底（Windows 无遗留进程）
         if (child.pid != null) {
-          exec(`taskkill /PID ${child.pid} /T /F`, () => {});
+          if (process.platform === "win32") execFile("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true }, () => {});
+          else child.kill("SIGKILL");
         }
       }, SIGTERM_GRACE_MS);
       child.once("exit", () => clearTimeout(grace));
@@ -187,6 +188,7 @@ export class EngineHost {
     const modelEnvironment = this.options.environment?.() ?? {};
     const child = spawn(command, args, {
       cwd,
+      windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...modelEnvironment, ERDOS_ENGINE_HOME: home },
     }) as ChildProcessWithoutNullStreams;
@@ -303,7 +305,8 @@ export class EngineHost {
       const child = this.child;
       child.kill("SIGTERM");
       if (child.pid != null) {
-        exec(`taskkill /PID ${child.pid} /T /F`, () => {});
+        if (process.platform === "win32") execFile("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true }, () => {});
+        else child.kill("SIGKILL");
       }
     }
     this.transition("crashed");
