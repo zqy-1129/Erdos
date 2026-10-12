@@ -151,7 +151,9 @@ def test_unavailable_channel_is_declared_for_both_backends() -> None:
 def test_placeholder_error_code_and_attribution_share_one_source(tmp_path: Path) -> None:
     """占位执行器返回的码 ≡ 归因分支比的码（两份字面量各写一遍=静默失配的来源）。"""
     ctx = ToolContext(task_id="t1", stage="solving", work_dir=tmp_path)
-    result = asyncio.run(search_references(SearchReferencesArgs(query="q"), ctx))
+    # `top_k` 必须显式给：pydantic 的默认值写作 `Field(3, ...)`，本仓没开 mypy 插件，
+    # 类型上看不出它有默认值 → 省略就是 call-arg 错误（CI 的 mypy 步骤就是这么红的）。
+    result = asyncio.run(search_references(SearchReferencesArgs(query="q", top_k=3), ctx))
 
     assert result.error is not None
     assert result.error.code == TOOL_NOT_AVAILABLE == "NOT_AVAILABLE"
