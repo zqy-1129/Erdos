@@ -39,7 +39,10 @@ jobs:
       - name: Pytest (coverage >= 85%)
         run: |
           set -o pipefail
-          cd engine && pytest --tb=short 2>&1 | tee pytest.log
+          # `-rs`：把跳过原因打进日志。CI 的 "610 passed, 9 skipped" 与本地 Windows 的
+          # "609 passed, 1 skipped" 不能直接比——差的那 8 个是平台专属用例（Job Object/Docker），
+          # 不带原因的话这条绿读起来就像"少了 8 个测试"，而读者无法判断少的是不是该少的。
+          cd engine && pytest --tb=short -rs 2>&1 | tee pytest.log
       - name: Annotate failures
         if: failure()
         run: |
@@ -66,4 +69,10 @@ jobs:
           fi
           counts=$(grep -E "[0-9]+ (passed|failed|error)" engine/pytest.log | tail -1)
           rate=$(grep -E "Total coverage" engine/pytest.log | tail -1)
-          echo "::notice title=engine-ci numbers::${counts:-无计数行} · ${rate:-无覆盖率行（可能未到达 cov 汇总）}"
+          # 跳过数按 `SKIPPED [N]` 的 N 求和（一条 SKIPPED 行可代表多个参数化用例），
+          # 再列前三个原因：绿表里的分母差必须能读出"差的是哪一类平台专属用例"。
+          skip_n=$(grep -oE "^SKIPPED \[[0-9]+\]" engine/pytest.log | grep -oE "[0-9]+" \
+            | awk '{s+=$1} END {print s+0}')
+          skip_why=$(grep "^SKIPPED" engine/pytest.log | sed 's/.*: //' | sort | uniq -c \
+            | sort -rn | head -3 | tr -s ' \n' ' ')
+          echo "::notice title=engine-ci numbers::${counts:-无计数行} · ${rate:-无覆盖率行（可能未到达 cov 汇总）} · skipped=${skip_n:-0}：${skip_why:-无 SKIPPED 行}"
