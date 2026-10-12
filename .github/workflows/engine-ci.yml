@@ -43,6 +43,30 @@ jobs:
           # "609 passed, 1 skipped" 不能直接比——差的那 8 个是平台专属用例（Job Object/Docker），
           # 不带原因的话这条绿读起来就像"少了 8 个测试"，而读者无法判断少的是不是该少的。
           cd engine && pytest --tb=short -rs 2>&1 | tee pytest.log
+      - name: SP1-7 integration smoke (inproc + dual-backend parity)
+        run: |
+          # 四档集成此前**只有本地手工跑**：单测全绿不等于任务流端到端还能跑通，而双轨 parity
+          # 是"自研内核 ≡ LangGraph 回退档"的唯一证据——CI 从不复验它，等于把 P0~P5 的等价性
+          # 交给"某人记得在本地跑一遍"。FakeLLM 是确定性护栏（不计判定分母，DEC-024），
+          # 所以这两档可以在 CI 里跑；真实 Key 通道仍需凭据，不在这一步范围内。
+          # 证据落 /tmp 而不是 docs/acceptance/：冒烟跑（--per-category 1）覆盖 20 题基线目录
+          # 正是 G46③ 记过的事，CI 更要避免把归档证据冲掉。
+          set -o pipefail
+          python scripts/run_regression.py --driver inproc --per-category 1 --evidence /tmp/erdos-smoke 2>&1 | tee smoke.log
+          python scripts/run_regression.py --driver inproc --parity --evidence /tmp/erdos-parity 2>&1 | tee parity.log
+      - name: Publish integration numbers
+        if: always()
+        run: |
+          # 与 Publish test numbers 同理：匿名读不到 job 日志（403），关键数字必须发成注解。
+          # 这里刻意只用 grep/cut 取值——多行 `python -c` 会把 YAML 块标量的缩进截断（第一版就红了）。
+          set +e
+          smoke=$(grep -E "\[结果\]|\[决策门\]" smoke.log 2>/dev/null | tr '\n' ' ')
+          parity=$(grep -E "\[双轨\]|\[PASS\]|\[FAIL\]" parity.log 2>/dev/null | tr '\n' ' ')
+          sj=/tmp/erdos-smoke/summary.json
+          seed=$(grep -oE '"set_sha256": "[0-9a-f]{16}' "$sj" 2>/dev/null | head -1 | cut -d'"' -f4)
+          ran=$(grep -oE '"total": [0-9]+' "$sj" 2>/dev/null | head -1 | grep -oE '[0-9]+')
+          whole=$(grep -oE '"count": [0-9]+' "$sj" 2>/dev/null | head -1 | grep -oE '[0-9]+')
+          echo "::notice title=engine-ci integration::smoke=${smoke:-无 smoke.log（前置步骤未跑完）} · parity=${parity:-无 parity.log} · 本次 ${ran:-?} 题/整集 ${whole:-?} 题 · seed_sha=${seed:-未取到}"
       - name: Annotate failures
         if: failure()
         run: |
@@ -53,8 +77,9 @@ jobs:
           # 日志按各自步骤的工作目录落盘：root 三个、engine/ 两个（boundary/pytest 都在
           # `cd engine` 之后跑），所以两处都要收，否则会"红了但注释是空的"。
           cat install.log ruff.log mypy.log engine/boundary.log engine/pytest.log \
+            smoke.log parity.log \
             pytest.log boundary.log 2>/dev/null \
-            | grep -E "error:|FAILED|^E |ImportError while importing|Cannot find|unused .type: ignore|Traceback|Required test coverage|[A-Za-z0-9_./-]+\.(py|ts):[0-9]+:[0-9]+: [A-Z]+[0-9]*" \
+            | grep -E "error:|FAILED|^E |ImportError while importing|Cannot find|unused .type: ignore|Traceback|Required test coverage|\[FAIL\]|[A-Za-z0-9_./-]+\.(py|ts):[0-9]+:[0-9]+: [A-Z]+[0-9]*" \
             | head -10 \
             | sed 's/^/::error::/'
       - name: Publish test numbers
