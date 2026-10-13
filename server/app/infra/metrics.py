@@ -11,6 +11,9 @@ from typing import Any
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from starlette.responses import Response
 
+from app.core.topics import MQ_TOPICS
+from app.domain.alerts.severity import Channel
+
 # 网关指标
 REQUEST_TOTAL = Counter(
     "erdos_http_requests_total",
@@ -30,7 +33,8 @@ REQUEST_IN_FLIGHT = Gauge(
 
 # 运行期健康计数：进程内已有的两处计数（值班路由、总线消费者失败）在抓取时刷进指标。
 # 命名为 *_total 且单调递增（语义是计数器），但用 Gauge 导出——真源在各自对象里，
-# 这里只做镜像，避免同一份计数记两遍而对不上。标签基数有界：通道 3 个、主题为已注册主题。
+# 这里只做镜像，避免同一份计数记两遍而对不上。
+# 标签基数有界且**全集预置**：通道 3 个、MQ 主题 5 个，没发生过也导出 0。
 ALERT_ROUTED_TOTAL = Gauge(
     "erdos_alert_routed_total",
     "已路由告警数（按值班通道）",
@@ -48,15 +52,20 @@ def export_runtime_counters(state: Any) -> None:
 
     为什么挂在抓取而不是采样循环上：监测可以关（`monitoring_enabled=false`），
     但告警路由与总线失败和监测无关——关掉监测不该让这两条可观测性一起消失。
+
+    标签值一律按枚举/主题全集预置（没发生过就是 0）：只对"已经出过异常"的键导出序列，
+     healthy 进程里这条指标整条不存在，值班就分不清"没发生"与"导出断了"。
     取属性一律走 getattr 兜底：`/metrics` 可能在 lifespan 装配完成前被抓到，
     此时返回 500 比少两条指标糟糕得多。
     """
-    counts = getattr(getattr(state, "alert_outlet", None), "routed_counts", None)
-    for channel, total in (counts or {}).items():
-        ALERT_ROUTED_TOTAL.labels(channel=str(channel)).set(total)
-    failures = getattr(getattr(state, "message_bus", None), "delivery_failures", None)
-    for topic, total in (failures or {}).items():
-        BUS_DELIVERY_FAILURES_TOTAL.labels(topic=str(topic)).set(total)
+    counts = getattr(getattr(state, "alert_outlet", None), "routed_counts", None) or {}
+    for channel in Channel:
+        ALERT_ROUTED_TOTAL.labels(channel=channel.value).set(counts.get(channel, 0))
+    failures = getattr(getattr(state, "message_bus", None), "delivery_failures", None) or {}
+    # 全集（MQ 主题常量）+ 实际出过异常的键：总线不限于五个主题，
+    # 只按常量导会把真实发生过的失败丢掉。
+    for topic in sorted(set(MQ_TOPICS) | {str(key) for key in failures}):
+        BUS_DELIVERY_FAILURES_TOTAL.labels(topic=topic).set(failures.get(topic, 0))
 
 
 def route_path_label(scope: Mapping[str, Any]) -> str:

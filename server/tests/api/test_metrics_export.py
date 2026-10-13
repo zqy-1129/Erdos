@@ -11,7 +11,7 @@
 
 from types import SimpleNamespace
 
-from app.core.topics import EVENTS_TOPIC
+from app.core.topics import EVENTS_TOPIC, MQ_TOPICS
 from app.domain.alerts.ports import BusinessAlert
 from app.domain.alerts.severity import Channel, Severity
 from app.infra.metrics import export_runtime_counters
@@ -44,6 +44,21 @@ async def test_export_tolerates_unwired_state() -> None:
     """装配未完成时抓取不得 500：`/metrics` 可能在 lifespan 结束前被抓到。"""
     export_runtime_counters(SimpleNamespace())
     export_runtime_counters(SimpleNamespace(alert_outlet=None, message_bus=None))
+
+
+async def test_runtime_counters_seed_every_label_value(client) -> None:
+    """计数器要为全部标签值预置 0——序列缺失与"没发生过"是两种状态。
+
+    总线侧原来只对"已经出过异常"的主题导出序列，所以一个从没失败的进程里这条指标
+    整条不存在：值班查 `erdos_bus_delivery_failures_total` 得到空结果，读起来既像
+    "健康"又像"导出断了"，而这两件事的处置完全不同。告警侧本来就按三个通道预置，
+    这里把两侧对齐成同一条判据。
+    """
+    body = (await client.get("/metrics")).text
+    for channel in Channel:
+        assert f'erdos_alert_routed_total{{channel="{channel.value}"}}' in body, channel
+    for topic in sorted(MQ_TOPICS):
+        assert f'erdos_bus_delivery_failures_total{{topic="{topic}"}}' in body, topic
 
 
 async def test_export_mirrors_source_of_truth(client, app) -> None:
