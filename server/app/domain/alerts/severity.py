@@ -42,20 +42,6 @@ class Alert:
     occurred_at: datetime
 
 
-def classify_availability(uptime_ratio: float) -> Severity | None:
-    """可用性分级：< 99.5% 为 P0。"""
-    if uptime_ratio < 0.995:
-        return Severity.P0
-    return None
-
-
-def classify_error_or_latency(error_rate: float, p99_ms: float) -> Severity | None:
-    """错误率/延迟分级：错误率 > 1% 或 P99 > 500ms 为 P1。"""
-    if error_rate > 0.01 or p99_ms > 500:
-        return Severity.P1
-    return None
-
-
 def classify_reconcile_diff(diff_count: int) -> Severity | None:
     """对账差异分级：差异非零为 P2。"""
     if diff_count > 0:
