@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     monitoring_retention_days: int = 7  # 分钟快照落库保留天数
     monitoring_availability_min_requests: int = 50  # 可用性 P0 的最小样本门（低流量窗口不误报）
 
+    # 遥测（SP4-1 SQLite 降级实现）：原始事件保留期，生产切 ClickHouse 后由按月分区 TTL 承担
+    telemetry_retention_days: int = 90  # 《数据模型设计》遥测域："原始 90 天，聚合永久"
+
     # 告警阈值（ERDOS_ALERT_* 覆盖；看板内红色状态与告警事件判据）
     alert_p95_ms: float = 500.0
     alert_error_rate: float = 0.01  # 《服务端架构》§10 P1 口径：错误率 > 1%（原默认 5% 与文档不符）

@@ -45,6 +45,7 @@ from app.repository.scheduler import (
     SQLAlchemyAccountLedgerSource,
     SQLAlchemySchedulerRunRepository,
 )
+from app.repository.telemetry import SQLAlchemyTelemetryRepository
 from app.repository.uow import UnitOfWork
 
 logger = logging.getLogger("erdos.scheduler")
@@ -129,12 +130,23 @@ async def run_reconcile_task(
     alerts: AlertOutlet,
     now: datetime,
 ) -> ReconcileResult:
-    """每日对账：差异全量发现 + 事务提交后外发 P2 + 顺带裁剪批次账本。"""
+    """每日对账：差异全量发现 + 事务提交后外发 P2 + 顺带裁剪批次账本与过期遥测。
+
+    遥测清理挂在这里而不是另起任务：《数据模型设计》承诺"原始 90 天"，而摄入接口只写不删，
+    没有这个落点就是只增不减的表。计数一律播报，包括 0——"跑了但没到期行"和"根本没跑"
+    在值班侧必须区分得开。
+    """
     prune_before = now - timedelta(days=settings.scheduler_runs_retention_days)
     async with UnitOfWork(session_factory) as uow:
         result = await _service(uow.session, settings).run_reconcile(
             now, prune_batches_older_than=prune_before
         )
+        purged = await SQLAlchemyTelemetryRepository(
+            uow.session, retention_days=settings.telemetry_retention_days
+        ).purge_expired(now)
+    logger.info(
+        "遥测保留期清理：删除 %d 条（保留 %d 天）", purged, settings.telemetry_retention_days
+    )
 
     alert = reconcile_alert(result)
     if alert is not None:

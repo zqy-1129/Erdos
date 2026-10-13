@@ -51,7 +51,7 @@ def test_filter_allowed_props_strips_forbidden() -> None:
 # ----------------------------------------------------------------------
 # 摄入 + 批写 + 吞吐保真
 # ----------------------------------------------------------------------
-async def test_ingest_accepted_and_rejected(session_factory) -> None:
+async def test_ingest_accepted_and_rejected(session_factory, settings) -> None:
     """摄入：合法接受，违禁拦截。"""
     events = [
         _event(props={"page": "home"}),
@@ -59,30 +59,40 @@ async def test_ingest_accepted_and_rejected(session_factory) -> None:
         _event(name="stage_start", props={"stage": "analysis", "task_id": "t1"}),
     ]
     async with UnitOfWork(session_factory) as uow:
-        service = TelemetryService(SQLAlchemyTelemetryRepository(uow.session))
+        service = TelemetryService(
+            SQLAlchemyTelemetryRepository(
+                uow.session, retention_days=settings.telemetry_retention_days
+            )
+        )
         result = await service.ingest(events)
         assert result.accepted == 2
         assert result.rejected == 1
         assert any("api_key" in r for r in result.reasons)
 
 
-async def test_ingest_throughput_fidelity(session_factory) -> None:
+async def test_ingest_throughput_fidelity(session_factory, settings) -> None:
     """吞吐保真：1000 事件摄入，落库数 = 发送数（丢事件率 0）。"""
     events = [_event(props={"page": f"p{i}"}) for i in range(1000)]
     async with UnitOfWork(session_factory) as uow:
-        service = TelemetryService(SQLAlchemyTelemetryRepository(uow.session))
+        service = TelemetryService(
+            SQLAlchemyTelemetryRepository(
+                uow.session, retention_days=settings.telemetry_retention_days
+            )
+        )
         result = await service.ingest(events)
         assert result.accepted == 1000  # 全量落库，零丢失
 
 
-async def test_purge_expired(session_factory) -> None:
-    """TTL 清理：过期事件被清理。"""
+async def test_purge_expired(session_factory, settings) -> None:
+    """TTL 清理：超过配置保留期的事件被清掉。"""
     from datetime import UTC, datetime, timedelta
 
-    repo = SQLAlchemyTelemetryRepository
     async with UnitOfWork(session_factory) as uow:
-        store = repo(uow.session)
+        store = SQLAlchemyTelemetryRepository(
+            uow.session, retention_days=settings.telemetry_retention_days
+        )
         await store.batch_insert([_event(props={"page": "old"})])
-        # 清理（now 传入未来 91 天，使所有事件过期）
-        purged = await store.purge_expired(datetime.now(UTC) + timedelta(days=91))
+        # 清理（now 传入保留期之后，使所有事件过期）
+        horizon = datetime.now(UTC) + timedelta(days=settings.telemetry_retention_days + 1)
+        purged = await store.purge_expired(horizon)
         assert purged >= 1

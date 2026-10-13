@@ -70,7 +70,12 @@ async def ingest_events(
         for e in payload.events
     ]
     async with UnitOfWork(session_factory) as uow:
-        service = TelemetryService(SQLAlchemyTelemetryRepository(uow.session))
+        service = TelemetryService(
+            SQLAlchemyTelemetryRepository(
+                uow.session,
+                retention_days=request.app.state.settings.telemetry_retention_days,
+            )
+        )
         result = await service.ingest(events)
         view = IngestView(accepted=result.accepted, rejected=result.rejected, reasons=result.reasons)
     return ok(view, request_id_var.get())
