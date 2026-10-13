@@ -27,7 +27,7 @@ from typing import Protocol, TypedDict
 from engine.adapters.openai_compat import ChatMessage, ChatResult, ToolCall
 from engine.ipc.throttle import DeltaThrottler
 from engine.orchestrator.backend import END, build_loop_graph
-from engine.orchestrator.operations import OperationLog, OperationRecord
+from engine.orchestrator.operations import OperationLog, OperationRecord, request_digest
 from engine.sandbox.base import validate_artifact_path
 from engine.tools import ToolRegistry
 from engine.tools.base import TOOL_NOT_AVAILABLE, ToolContext
@@ -303,7 +303,11 @@ class SolveLoop:
         return hashlib.sha256(path.read_bytes()).hexdigest() == record.result_sha256
 
     async def _dispatch(self, state: SolveState) -> dict:
-        """分发 assistant 请求的全部工具调用（幂等：已完成执行复用引用不重放）。"""
+        """分发 assistant 请求的全部工具调用（幂等：已完成执行复用引用不重放）。
+
+        复用判据是"同键 **且** 同请求"（G53）：`exec_seq` 只定位位置，恢复重跑时模型在同一段
+        位置上给的通常是另一段代码——只查位置就会把上一个程序的输出报成"已完成执行"。
+        """
         last = state["messages"][-1]
         messages = state["messages"]
         exec_seq = state.get("exec_seq", 0)
@@ -316,16 +320,20 @@ class SolveLoop:
                 id=call_dict["id"], name=call_dict["name"],
                 arguments_json=call_dict.get("arguments_json", ""),
             )
+            digest = request_digest(call.name, call.arguments_json)
             exec_seq += 1
             dispatch_count += 1
             done = self._operations.find(self._task_id, "solving", self._attempt, exec_seq)
-            repair_reexec = False
-            if done is not None and not self._artifact_intact(done):
+            # 同键换了请求（含旧库无摘要的行）：账上那条不是本次的副作用，必须重执行
+            stale_request = done is not None and not done.same_request(digest)
+            damaged = False
+            if done is not None and not stale_request and not self._artifact_intact(done):
                 # EC-T4：引用产物缺失/哈希不一致 → 按损坏重执行（成功后刷新记录哈希）
+                damaged = True
+            if done is not None and (stale_request or damaged):
                 done = None
-                repair_reexec = True
             if done is not None:
-                # DEC-005：恢复路径——已完成执行不重放，复用引用
+                # DEC-005：恢复路径——同一请求的已完成执行不重放，复用引用
                 observation = f"[系统] 复用已完成执行 #{exec_seq}（引用：{done.result_ref}）"
             else:
                 work_dir = self._work_root / self._task_id
@@ -333,12 +341,15 @@ class SolveLoop:
                 result = await self._registry.dispatch(call, ctx)
                 # 执行体自报的隔离模式：最后一次派发为准（同一循环内沙箱对象不变）
                 isolation_mode = str(result.data.get("isolation_mode") or isolation_mode)
-                self._operations.record_done(
-                    self._task_id, "solving", self._attempt, exec_seq,
-                    result.result_ref or f"tool:{call.name}:{call.id}",
-                    result_sha256=artifact_sha256(work_dir, result.result_ref),
-                    force=repair_reexec and result.ok,
-                )
+                if result.ok:
+                    # 失败不入账：status 只有 done 一个写入方，登记失败=向下次恢复宣称副作用已完成
+                    self._operations.record_done(
+                        self._task_id, "solving", self._attempt, exec_seq,
+                        result.result_ref or f"tool:{call.name}:{call.id}",
+                        result_sha256=artifact_sha256(work_dir, result.result_ref),
+                        force=(stale_request or damaged) and result.ok,
+                        request_digest=digest,
+                    )
                 if result.ok:
                     observation = result.summary or f"[ok] {result.result_ref or '执行完成'}"
                 else:

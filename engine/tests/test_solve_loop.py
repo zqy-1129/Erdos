@@ -5,14 +5,18 @@
 - 坏代码自动修复（FakeLLM 脚本序列）：失败回注 → 修正 → 收敛，repair_count 递增；
 - 修复预算耗尽 → awaiting_input（转人工，不静默失败、不无界循环）；
 - 结果校验：非 JSON/NaN-Infinity 拒绝（parse_constant）→ 回注修复后收敛；
-- 恢复不重放（DEC-005）：预登记 exec_seq → 循环复用引用，沙箱执行计数为 0；
+- 恢复不重放（DEC-005）：预登记 exec_seq **且请求内容一致** → 循环复用引用，沙箱执行计数为 0；
+  同键换代码/失败不入账/旧库无摘要行按未知处理，都属 G53 的内容维度；
 - pipeline 接线：tool_loop 分支产出结构化 results；stage_level 降级路径保持不变。
 FakeLLM/脚本化 LLM 为确定性假模型（测试专用），不产生真实模型调用。
 """
 
+import ast
 import hashlib
+import inspect
 import json
 import sqlite3
+import textwrap
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -20,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from engine.adapters.openai_compat import ChatMessage, ChatResult, ToolCall, Usage
-from engine.orchestrator.operations import OperationLog, OperationRecord
+from engine.orchestrator.operations import OperationLog, OperationRecord, request_digest
 from engine.orchestrator.pipeline import FakeLLM, StagePipeline
 from engine.orchestrator.solve_loop import SolveLoop, artifact_sha256
 from engine.sandbox.base import ExecutionResult
@@ -84,6 +88,11 @@ def _tool_call(call_id: str, name: str, code: str) -> ChatResult:
         content="", usage=_usage(), finish_reason="tool_calls",
         tool_calls=[ToolCall(id=call_id, name=name, arguments_json=json.dumps({"code": code}))],
     )
+
+
+def _digest(code: str, name: str = "execute_code") -> str:
+    """与 `_tool_call` 同构的请求摘要（G53：预登记测试现场时必须给得出内容）。"""
+    return request_digest(name, json.dumps({"code": code}))
 
 
 def _loop(tmp_path: Path, llm: ScriptedLLM, sandbox: CountingSandbox | None = None, attempt: int = 1) -> SolveLoop:
@@ -249,12 +258,17 @@ async def test_nan_rejected_by_parse_constant(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_restore_reuses_completed_executions(tmp_path: Path) -> None:
-    """DEC-005 恢复不重放：预登记 exec_seq=1 → 循环复用引用，沙箱计数 0。"""
+    """DEC-005 恢复不重放：预登记同一请求的 exec_seq → 循环复用引用，沙箱计数 0。
+
+    预登记必须带 `request_digest`——没有内容维度的记录无法证明"这条就是本次请求"（G53），
+    按未知处理要重跑；这条用例测的是"证明得了"那一侧。
+    """
+    code = "print('would-rerun')"
     ops = OperationLog(str(tmp_path / "ops.db"))
-    ops.record_done("t1", "solving", 1, 1, "tool:execute_code:c1")
+    ops.record_done("t1", "solving", 1, 1, "tool:execute_code:c1", request_digest=_digest(code))
     sandbox = CountingSandbox()
     llm = ScriptedLLM([
-        _tool_call("c1", "execute_code", "print('would-rerun')"),
+        _tool_call("c1", "execute_code", code),
         _final([{"name": "x", "value": 1}]),
     ])
     loop = SolveLoop(
@@ -265,6 +279,7 @@ async def test_restore_reuses_completed_executions(tmp_path: Path) -> None:
     assert outcome["status"] == "succeeded"
     assert sandbox.execute_count == 0  # 已完成执行未重放
     assert len(ops.records("t1")) == 1  # 未新增记录（复用不重复登记）
+    assert ops.records("t1")[0].request_digest == _digest(code)
 
 
 @pytest.mark.asyncio
@@ -449,13 +464,17 @@ def test_artifact_sha256_helpers(tmp_path: Path) -> None:
 
 
 async def test_restore_reuses_intact_artifact_without_replay(tmp_path: Path) -> None:
-    """EC-T4：记录带哈希且产物完好 → 复用引用，沙箱零重放（DEC-005）。"""
+    """EC-T4：同一请求、记录带哈希且产物完好 → 复用引用，沙箱零重放（DEC-005）。
+
+    恢复侧必须重放**同一段代码**才谈得上"不重放副作用"；换了代码还复用是 G53 那个缺陷，
+    由 `test_restore_does_not_reuse_a_different_request` 反向钉住。
+    """
     sandbox = ArtifactSandbox()
     ops = OperationLog(str(tmp_path / "ops.db"))
     llm = ScriptedLLM([
         _tool_call("c1", "execute_code", "print('a')"),
         _final([{"name": "x", "value": 1}]),
-        _tool_call("c2", "execute_code", "print('b')"),
+        _tool_call("c1", "execute_code", "print('a')"),
         _final([{"name": "x", "value": 1}]),
     ])
     loop = SolveLoop(llm=llm, registry=build_default_registry(sandbox),
@@ -476,13 +495,17 @@ async def test_restore_reuses_intact_artifact_without_replay(tmp_path: Path) -> 
 
 
 async def test_restore_hash_mismatch_reexecutes_and_refreshes(tmp_path: Path) -> None:
-    """EC-T4：产物被篡改 → 按损坏重执行，成功后刷新记录哈希（force）。"""
+    """EC-T4：产物被篡改 → 按损坏重执行，成功后刷新记录哈希（force）。
+
+    恢复侧给出的是**同一段代码**，所以触发重执行的唯一原因就是哈希不一致（G53 之后
+    "换了请求"也是一条独立理由，不能让它替这条用例背结果）。
+    """
     sandbox = ArtifactSandbox()
     ops = OperationLog(str(tmp_path / "ops.db"))
     llm = ScriptedLLM([
         _tool_call("c1", "execute_code", "print('a')"),
         _final([{"name": "x", "value": 1}]),
-        _tool_call("c2", "execute_code", "print('b')"),
+        _tool_call("c1", "execute_code", "print('a')"),
         _final([{"name": "x", "value": 1}]),
     ])
     loop = SolveLoop(llm=llm, registry=build_default_registry(sandbox),
@@ -505,16 +528,17 @@ async def test_restore_hash_mismatch_reexecutes_and_refreshes(tmp_path: Path) ->
 
 
 async def test_restore_hash_mismatch_repair_failure_keeps_record(tmp_path: Path) -> None:
-    """EC-T4：损坏重执行失败 → 记录保持原终态（first-wins 保底），修复预算路径接管。
+    """EC-T4：损坏重执行失败 → 记录保持原终态，修复预算路径接管。
 
-    记录不被失败的重执行污染：下次恢复再次校验再次重执行，幂等收敛。
+    失败的重执行**不写账**（G53：登记即宣称副作用完成），所以原终态天然不被污染；
+    下次恢复再次校验再次重执行，幂等收敛。
     """
     sandbox = ArtifactSandbox(fail_on_exec={2})  # 恢复后的重执行失败
     ops = OperationLog(str(tmp_path / "ops.db"))
     llm = ScriptedLLM([
         _tool_call("c1", "execute_code", "print('a')"),
         _final([{"name": "x", "value": 1}]),
-        _tool_call("c2", "execute_code", "print('b')"),
+        _tool_call("c1", "execute_code", "print('a')"),
         _final([{"name": "x", "value": 1}]),
     ])
     loop = SolveLoop(llm=llm, registry=build_default_registry(sandbox),
@@ -593,3 +617,173 @@ async def test_first_token_latency_engine_side_budget(tmp_path: Path) -> None:
     assert outcome["status"] == "succeeded"
     assert llm.first_token_at is not None and received  # 首 token 与下沉均发生
     assert received[0] - llm.first_token_at < 0.5  # 引擎侧开销远低于 500ms 预算
+
+
+# ----------------------------------------------------------------------
+# G53 幂等账本的内容维度：复用必须能证明"这条记录就是本次请求"
+# ----------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_restore_does_not_reuse_a_different_request(tmp_path: Path) -> None:
+    """幂等键只有位置（attempt, exec_seq）没有内容时，恢复会把**上一个程序**的输出当成这次的结果。
+
+    真实厂商重跑不会逐字给出同一段代码（只有 FakeLLM 会），而复用给模型的观察是
+    "[系统] 复用已完成执行 #N"——它这次写的代码一次都没跑，数字却来自旧程序，
+    且没有任何一处说出这一点（DEC-005 的"不重放"前提是先确认同一个副作用）。
+    """
+    ops = OperationLog(str(tmp_path / "ops.db"))
+    sandbox = CountingSandbox()
+    first = ScriptedLLM([
+        _tool_call("c1", "execute_code", "print('A')"),
+        _final([{"name": "x", "value": 1}]),
+    ])
+    await SolveLoop(llm=first, registry=build_default_registry(sandbox), operations=ops,
+                    task_id="t1", work_root=tmp_path / "tasks").run("第一次求解")
+    assert sandbox.execute_count == 1
+
+    again = ScriptedLLM([
+        _tool_call("c9", "execute_code", "print('B')"),  # 同位置、不同请求
+        _final([{"name": "x", "value": 2}]),
+    ])
+    outcome = await SolveLoop(llm=again, registry=build_default_registry(sandbox), operations=ops,
+                              task_id="t1", work_root=tmp_path / "tasks").run("恢复续跑")
+
+    assert outcome["status"] == "succeeded"
+    assert sandbox.execute_count == 2, "改了代码却没重新执行——模型拿到的是旧程序的数字"
+    assert sandbox.codes == ["print('A')", "print('B')"]
+    observations = [m["content"] for m in again.calls[1]["messages"] if m["role"] == "tool"]
+    assert not any("复用已完成执行" in text for text in observations), observations
+
+
+@pytest.mark.asyncio
+async def test_failed_dispatch_leaves_no_done_record(tmp_path: Path) -> None:
+    """失败的派发不得登记成 done：`status` 只有 done 一个写入方，登记即等于宣称副作用已完成。
+
+    崩溃点矩阵的口径是"宁可重跑，不可把没做完的当做完"（operations.py：仅执行成功后登记）。
+    把失败记成 done，下一次恢复就会把这条失败复用成"[系统] 复用已完成执行 #N"。
+    """
+    ops = OperationLog(str(tmp_path / "ops.db"))
+    sandbox = ArtifactSandbox(fail_on_exec={1})  # 第 1 次派发失败、第 2 次成功
+    llm = ScriptedLLM([
+        _tool_call("c1", "execute_code", "print('bad')"),
+        _tool_call("c2", "execute_code", "print('good')"),
+        _final([{"name": "x", "value": 1}]),
+    ])
+    outcome = await SolveLoop(llm=llm, registry=build_default_registry(sandbox), operations=ops,
+                              task_id="t1", work_root=tmp_path / "tasks").run("首次求解")
+    assert outcome["status"] == "succeeded"
+    assert outcome["repair_count"] == 1
+    assert ops.find("t1", "solving", 1, 1) is None, "第 1 次派发失败了，账上却有一条 done"
+    second = ops.find("t1", "solving", 1, 2)
+    assert second is not None, "成功的那次必须登记（否则恢复白跑）"
+    assert second.request_digest == _digest("print('good')")
+
+
+@pytest.mark.asyncio
+async def test_legacy_record_without_digest_reexecutes_then_converges(tmp_path: Path) -> None:
+    """旧库行缺内容维度 → 第一次恢复重跑并在成功后补齐摘要，第二次恢复才复用。
+
+    迁移不能把"读不出摘要"当成"摘要一致"：重跑一次沙箱是可以承受的代价，把没跑成的说成
+    跑过了不可以。收敛性也要测——否则修复只是把复用永久改成重放。
+    """
+    ops = OperationLog(str(tmp_path / "ops.db"))
+    ops.record_done("t1", "solving", 1, 1, "tool:execute_code:c1")  # 迁移前写法：无摘要
+    sandbox = CountingSandbox()
+    script = [_tool_call("c1", "execute_code", "print('A')"), _final([{"name": "x", "value": 1}])]
+    first = ScriptedLLM(list(script))
+    outcome = await SolveLoop(llm=first, registry=build_default_registry(sandbox), operations=ops,
+                              task_id="t1", work_root=tmp_path / "tasks").run("恢复续跑")
+    assert outcome["status"] == "succeeded"
+    assert sandbox.execute_count == 1, "无摘要的记录必须按未知请求处理：重执行"
+    refilled = ops.find("t1", "solving", 1, 1)
+    assert refilled is not None and refilled.request_digest == _digest("print('A')")
+
+    second = ScriptedLLM(list(script))
+    await SolveLoop(llm=second, registry=build_default_registry(sandbox), operations=ops,
+                    task_id="t1", work_root=tmp_path / "tasks").run("再次恢复")
+    assert sandbox.execute_count == 1, "补齐摘要后同一请求应回到不重放（DEC-005）"
+
+
+def test_request_digest_is_content_sensitive() -> None:
+    """摘要判据：同请求稳定，换代码/换工具名即不同——厂商两次给出同一段代码才能复用。
+
+    键序/空白不同会得到不同摘要（参数原文参与哈希），这是**刻意选的坏方向**：多跑一次沙箱
+    可以承受，把没跑过的说成跑过了不可以。
+    """
+    a = request_digest("execute_code", json.dumps({"code": "print(1)"}))
+    assert a == request_digest("execute_code", json.dumps({"code": "print(1)"}))
+    assert a != request_digest("execute_code", json.dumps({"code": "print(2)"}))
+    assert a != request_digest("plot_figure", json.dumps({"code": "print(1)"}))
+    assert a != request_digest("execute_code", json.dumps({"code": "print(1)", "language": "python"}))
+    # 语义相同但书写不同 → 不同摘要（宁可重跑）
+    assert a != request_digest("execute_code", '{"code":"print(1)"}')
+
+
+def test_operations_migration_adds_digest_column(tmp_path: Path) -> None:
+    """旧库（既无 result_sha256 也无 request_digest）打开即迁移，旧行摘要读回 None 而非猜测。"""
+    db = tmp_path / "ops.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "CREATE TABLE operations (task_id TEXT NOT NULL, stage TEXT NOT NULL, "
+        "attempt INTEGER NOT NULL, exec_seq INTEGER NOT NULL, status TEXT NOT NULL, "
+        "result_ref TEXT, created_at TEXT NOT NULL, "
+        "PRIMARY KEY (task_id, stage, attempt, exec_seq))"
+    )
+    conn.execute(
+        "INSERT INTO operations VALUES ('t1','solving',1,1,'done','out.txt','2026-01-01T00:00:00+00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    ops = OperationLog(str(db))
+    legacy = ops.find("t1", "solving", 1, 1)
+    assert legacy is not None
+    assert legacy.request_digest is None
+    assert legacy.same_request(request_digest("execute_code", "{}")) is False  # 未知即不复用
+
+    ops.record_done("t1", "solving", 1, 2, "out.txt", request_digest="d2")
+    fresh = ops.records("t1", stage="solving")
+    assert [r.request_digest for r in fresh] == [None, "d2"]
+
+
+
+def test_dispatch_structure_pins_the_two_reuse_preconditions() -> None:
+    """结构守护：复用的两条前置（同请求、成功才入账）不能被整段绕开（G53）。
+
+    行为用例已经钉住语义，这里钉的是"写法退回去就红"——把 `record_done` 挪出成功分支，
+    替身沙箱下某些用例照样绿（失败分支根本走不到），只有结构判据拦得住。
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(SolveLoop._dispatch)))
+    calls: list[tuple[ast.Call, list[ast.If]]] = []
+
+    def walk(node: ast.AST, ifs: list[ast.If]) -> None:
+        if isinstance(node, ast.Call):
+            calls.append((node, ifs))
+        for child in ast.iter_child_nodes(node):
+            next_ifs = ifs + [node] if isinstance(node, ast.If) else ifs
+            walk(child, next_ifs)
+
+    walk(tree, [])
+    record_calls = [
+        (call, guards)
+        for call, guards in calls
+        if isinstance(call.func, ast.Attribute) and call.func.attr == "record_done"
+    ]
+    assert len(record_calls) == 1
+    guards = record_calls[0][1]
+    assert any("result.ok" in ast.unparse(g.test) for g in guards), (
+        "record_done 不在成功分支里：失败也会被登记成 done，下次恢复把失败说成已完成执行"
+    )
+    assert any(
+        isinstance(n.func, ast.Attribute) and n.func.attr == "same_request"
+        for n, _ in calls
+    ), "复用前不再比对请求内容：幂等键退回只按位置判定"
+    # 复用观察文本只有一处来源，且必须由同请求分支给出（第二处=开始凭位置编故事）
+    reuse_literals = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.JoinedStr) and any(
+            isinstance(p, ast.Constant) and isinstance(p.value, str) and "复用已完成执行" in p.value
+            for p in node.values
+        )
+    ]
+    assert len(reuse_literals) == 1
