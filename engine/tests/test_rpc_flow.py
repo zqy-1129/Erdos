@@ -146,6 +146,18 @@ _MOCK_TOOL_CALL = [
 ]
 _MOCK_FINAL_RESULTS = '{"results": [{"name": "slope", "value": 1.985, "unit": ""}]}'
 
+
+def _mock_tool_call(code: str | None) -> list[dict]:
+    """按代码段构造一次 execute_code 工具调用（None=用默认那段）。"""
+    if code is None:
+        return _MOCK_TOOL_CALL
+    return [
+        {
+            "id": "call-1",
+            "function": {"name": "execute_code", "arguments": _json.dumps({"code": code})},
+        }
+    ]
+
 # 评委请求识别：llm_evaluator 的 system prompt 首句（同一常量单源，避免测试与实现漂移）
 _JUDGE_MARKER = "质量门禁评委"
 _DIMENSION_LINE = re.compile(r"^- (.*?)（权重", re.MULTILINE)
@@ -206,7 +218,13 @@ class _MockVendorHandler(http.server.BaseHTTPRequestHandler):
             # 看到 tool 结果后再回最终 JSON。G31 修复后这条路径才可达，此前引擎子进程
             # 端到端只测过 stage_level 降级路径，工具链 + 流式从没被跑通过。
             if not any(m.get("role") == "tool" for m in messages):
-                self._stream_or_json(payload, tool_calls=_MOCK_TOOL_CALL)
+                # 本轮首次决策：按 solve_codes 顺序给代码（驳回重跑要给另一段，见 G53 用例）
+                code = (
+                    (srv.solve_codes.pop(0) if len(srv.solve_codes) > 1 else srv.solve_codes[-1])
+                    if srv.solve_codes
+                    else None
+                )
+                self._stream_or_json(payload, tool_calls=_mock_tool_call(code))
                 return
             content = _MOCK_FINAL_RESULTS
         else:
@@ -278,6 +296,7 @@ class _MockVendorServer(http.server.ThreadingHTTPServer):
         self, fail_first: int, retry_after: int,
         *, content: str = _MOCK_CONTENT, judge_score: float | None = None,
         judge_fail_status: int | None = None, tools_mode: bool = True,
+        solve_codes: list[str] | None = None,
     ) -> None:
         super().__init__(("127.0.0.1", 0), _MockVendorHandler)
         self.requests: list[dict] = []
@@ -289,6 +308,9 @@ class _MockVendorServer(http.server.ThreadingHTTPServer):
         # True = 具备工具调用能力（引擎默认 provider 会选 tool_loop）；
         # False 配合 ERDOS_TOOL_MODE=stage_level 可回退到阶段级降级路径。
         self.tools_mode = tools_mode
+        # 每次「本轮首次决策」按顺序取一段代码（None=沿用默认）。人工驳回后引擎会重跑
+        # 求解内循环，重跑那次给的通常是**另一段代码**——G53 的进程级场景要靠这里造出来。
+        self.solve_codes = list(solve_codes) if solve_codes else None
 
 
 def _vendor_factory(root: Path, base_url: str, *, extra_env: dict[str, str] | None = None):
@@ -693,3 +715,63 @@ async def test_run_regression_gate_policy_builds_real_judge(tmp_path) -> None:
     assert empty  # autopass 口径不装配评委
 
 
+
+
+def _tool_call_args(audit_db: Path, task_id: str) -> list[str]:
+    """留痕里每次 tool_call 的参数摘要——G53 的进程级地面真值：跑没跑看在账上几条。"""
+    store = TrailStore(str(audit_db))
+    try:
+        return [
+            str((e.detail or {}).get("args_summary", ""))
+            for e in store.events(task_id)
+            if e.event_type == EventType.TOOL_CALL
+        ]
+    finally:
+        store.close()
+
+
+async def test_real_key_channel_reject_rerun_executes_the_new_code(tmp_path) -> None:  # noqa: ANN001
+    """进程级 G53：人工驳回后重跑求解，换了代码必须真跑一次，不能按位置复用旧执行。
+
+    这是 10-24/11-05 判定通道的真实动作（评审人驳回 → 模型改写法重跑）。同样的逻辑在
+    `test_solve_loop.py` 已有单测，这里要的是**引擎子进程 + 真实 HTTP 厂商 + 真实账本**：
+    修复前这个场景只留一条 tool_call（新代码从未执行），而阶段产物照样"通过"。
+    """
+    problem = REGRESSION_SET[0]
+    task_id = f"reg-{problem.business_id}"
+    server = _MockVendorServer(0, 0, solve_codes=['print("A")', 'print("B")'])
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    home = tmp_path / "home"
+    flow = RpcTaskFlow(
+        task_id=task_id, title=problem.title, problem_text=problem.statement,
+        engine_home=home, api_key="sk-test-vendor-key",
+        base_url=f"http://127.0.0.1:{server.server_address[1]}/v1",
+        model="mock-model", provider="openai-compat", stage_timeout=_STAGE_TIMEOUT,
+    )
+    try:
+        await flow.run_stage("analysis")
+        await flow.answer_gate("pass")
+        await flow.run_stage("modeling")
+        await flow.answer_gate("pass")
+        await flow.run_stage("solving")
+
+        first = _tool_call_args(home / "audit.db", task_id)
+        assert len(first) == 1 and "A" in first[0], f"首次求解应恰留一条派发：{first}"
+
+        rejected = await flow.answer_gate("reject", feedback="结果不可信，换一种求解写法")
+        assert rejected["action"] == "retry_stage"
+        # 驳回语义是"驱动再发起一次本阶段"（引擎不在 answer_gate 里替调用方重跑），
+        # 厂商这一轮给出的是**另一段代码**——这正是 G53 的现场
+        await flow.run_stage("solving")
+
+        second = _tool_call_args(home / "audit.db", task_id)
+        assert len(second) == 2, (
+            f"重跑没有真的执行新代码：留痕={second} 厂商请求="
+            f"{[(r['tools'], r['status']) for r in server.requests]}"
+        )
+        assert "B" in second[1], second
+        # 两次尝试各两轮内循环决策（tool_calls → 收敛）；复用路径不该把厂商调用也省掉
+        assert len([r for r in server.requests if r["tools"]]) == 4
+    finally:
+        flow.close(force=True)
+        server.shutdown()

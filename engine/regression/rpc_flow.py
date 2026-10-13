@@ -313,14 +313,21 @@ class RpcTaskFlow:
                         )
                         sys.stderr.flush()
 
-    async def answer_gate(self, decision: str) -> dict[str, Any]:
+    async def answer_gate(self, decision: str, feedback: str = "") -> dict[str, Any]:
+        """门禁应答。`feedback` 是 reject 那一侧的主要出口（契约已声明，maxLength 2048）：
+        驱动手工演练"驳回→重跑"时必须给得出意见，否则与生产里的人工处置不同形。
+        """
         gate = f"gate_{self.current_stage()}"
         loop = asyncio.get_running_loop()
+        params: dict[str, Any] = {
+            "task_id": self._task_id, "gate": gate, "decision": decision,
+        }
+        if feedback:
+            params["feedback"] = feedback
         result = await loop.run_in_executor(
             None,
             lambda: self._transport.rpc(
-                "answer_gate",
-                {"task_id": self._task_id, "gate": gate, "decision": decision},
+                "answer_gate", params,
                 timeout=60.0,
             ),
         )
