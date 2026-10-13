@@ -52,13 +52,15 @@ class SQLAlchemyOnlineTrendRepository(OnlineTrendRepository):
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         if row is None:
             try:
-                self._session.add(
-                    PresenceMinuteAgg(minute_ts=minute_ts, online_count=count)
-                )
-                await self._session.flush()
+                # 保存点而不是会话回滚：聚合器在同一次 flush 里已经写过别的分钟桶
+                async with self._session.begin_nested():
+                    self._session.add(
+                        PresenceMinuteAgg(minute_ts=minute_ts, online_count=count)
+                    )
+                    await self._session.flush()
                 return True
             except IntegrityError:
-                await self._session.rollback()
+                # 并发窗口：同分钟行已被对手事务提交 -> 重查后转更新
                 row = (await self._session.execute(stmt)).scalar_one()
         row.online_count = count
         await self._session.flush()
@@ -106,18 +108,20 @@ class SQLAlchemyUsersTrendRepository(UsersTrendRepository):
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         if row is None:
             try:
-                self._session.add(
-                    UsersDailyStats(
-                        stat_date=stat_date,
-                        total_users=max(total_delta, 0),
-                        new_users=max(new_delta, 0),
-                        active_users=max(active_delta, 0),
+                # 建行也放进保存点：注册/注销调用方在同一会话里已经写了账号与积分流水，
+                # 整会话回滚会把那次注册一起撤销，而它并不认为自己是失败了的
+                async with self._session.begin_nested():
+                    self._session.add(
+                        UsersDailyStats(
+                            stat_date=stat_date,
+                            total_users=max(total_delta, 0),
+                            new_users=max(new_delta, 0),
+                            active_users=max(active_delta, 0),
+                        )
                     )
-                )
-                await self._session.flush()
+                    await self._session.flush()
                 return
             except IntegrityError:
-                await self._session.rollback()
                 row = (await self._session.execute(stmt)).scalar_one()
         row.total_users = max(row.total_users + total_delta, 0)
         row.new_users = max(row.new_users + new_delta, 0)
