@@ -1,9 +1,13 @@
-"""看板实时推送主题常量（契约化：主题名变更需同步前端与订阅方）。"""
+"""看板实时推送主题常量（契约化：主题名变更需同步前端与订阅方）。
+
+主题集合同时受 `contracts/openapi.yaml` 的 `dashboardStream` 描述约束，
+由 `server/tests/unit/test_event_topic_guard.py` 双向互证——
+新增主题却不订进看板流、或订了却不写进契约，都会红。
+"""
 
 PRESENCE_TOPIC = "presence.online_count"
 EVENTS_TOPIC = "dashboard.events"
 MONITORING_TOPIC = "monitoring.snapshot"
-REGISTRATION_GIFT_TOPIC = "points.registration_grant"  # SP2-3 注册赠分领域事件（SP2-4 积分域消费）
 
 # ----------------------------------------------------------------------
 # SP2-7 异步消息队列主题（对齐《服务端架构》第 6 章）

@@ -2,7 +2,8 @@
 
 - login / refresh / logout / jwks / register / reset 为公开端点（令牌自校验 + 防爆破守卫）；
 - 注册与登录成功、账号锁定投影 dashboard_events 供管理看板事件泳道联动；
-- 注册赠 100 分以领域事件发布（points.registration_grant），SP2-4 积分域消费。
+- 注册赠 100 分在同请求内同步入账（幂等 exec_id），并以 dashboard_events 的
+  `points.grant` 投影对管理看板可见——看板流只订契约点名的三个主题，不再另发事件。
 """
 
 from typing import Annotated, Any
@@ -18,7 +19,7 @@ from app.core.config import Settings
 from app.core.envelope import Envelope, ok
 from app.core.errors import ACCOUNT_LOCKED, CONFLICT, AppError
 from app.core.logging import request_id_var
-from app.core.topics import EVENTS_TOPIC, REGISTRATION_GIFT_TOPIC
+from app.core.topics import EVENTS_TOPIC
 from app.domain.account.ports import RegistrationRequest
 from app.domain.account.service import PasswordPolicy, RegisterService
 from app.domain.auth.ports import AuthIdentity, TokenManager, TokenPair
@@ -241,8 +242,9 @@ async def register(
                 payload={"points": settings.account_registration_gift_points},
                 dedup_key=f"gift:{result.account.id}",
             )
-            # SP2-4 积分域：同事务同步入账（幂等 exec_id=register:{id}），
-            # 保证注册成功即余额到账；REGISTRATION_GIFT_TOPIC 事件仍发布供遥测/看板订阅。
+            # SP2-4 积分域：同事务同步入账（幂等 exec_id=register:{id}），保证注册成功即余额到账。
+            # 看板可见性由上面的 dashboard_events 投影（type=points.grant）承担，
+            # 不另发 SSE 主题——契约点名的三个流主题里没有它，多发一个就是无人可订的死负载。
             await PointsService(
                 SQLAlchemyPointAccountRepository(uow.session),
                 SQLAlchemyLedgerRepository(uow.session),
@@ -269,15 +271,6 @@ async def register(
             "occurred_at": now.isoformat(),
         },
     )
-    if gift_granted:
-        await broker.publish(
-            REGISTRATION_GIFT_TOPIC,
-            {
-                "user_id": result.account.id,
-                "points": settings.account_registration_gift_points,
-                "occurred_at": now.isoformat(),
-            },
-        )
     return ok(_pair_view(pair), request_id_var.get())
 
 

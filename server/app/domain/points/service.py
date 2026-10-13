@@ -69,7 +69,7 @@ class PointsService:
         self._settings = settings
 
     # ------------------------------------------------------------------
-    # 注册赠分入账（消费 SP2-3 埋好的 points.registration_grant 事件）
+    # 注册赠分入账（由注册接口在同一事务内直接调用，幂等键 register:{user_id}）
     # ------------------------------------------------------------------
     async def grant_registration(self, user_id: str, points: int, now: datetime) -> None:
         """注册赠分入账：exec_id=register:{user_id} 幂等，同用户只入账一次。"""
