@@ -1,0 +1,42 @@
+[
+  {
+    "code": "sub_monthly",
+    "type": "subscription",
+    "name": "月度订阅",
+    "price_cents": 1900,
+    "points": 400,
+    "duration_days": 30
+  },
+  {
+    "code": "sub_annual",
+    "type": "subscription",
+    "name": "年度订阅",
+    "price_cents": 12800,
+    "points": 400,
+    "duration_days": 365
+  },
+  {
+    "code": "pack_400",
+    "type": "points_pack",
+    "name": "积分包 400",
+    "price_cents": 1800,
+    "points": 400,
+    "duration_days": 0
+  },
+  {
+    "code": "pack_1200",
+    "type": "points_pack",
+    "name": "积分包 1200",
+    "price_cents": 4500,
+    "points": 1200,
+    "duration_days": 0
+  },
+  {
+    "code": "pack_3000",
+    "type": "points_pack",
+    "name": "积分包 3000",
+    "price_cents": 9800,
+    "points": 3000,
+    "duration_days": 0
+  }
+]
