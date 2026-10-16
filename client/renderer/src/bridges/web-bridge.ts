@@ -44,10 +44,10 @@ const DEMO_TRAIL: TrailSource = {
 };
 
 const DEMO_CONTENT: ContentItem[] = [
-  { id: "t1", kind: "template", title: "CUMCM 官方论文模板", tags: ["格式", "国赛"], referenceOnly: false },
-  { id: "t2", kind: "template", title: "MCM 官方格式模板", tags: ["格式", "美赛"], referenceOnly: false },
-  { id: "c1", kind: "case", title: "2024 A 题一等奖论文（节选）", tags: ["优化", "评价"], referenceOnly: true },
-  { id: "c2", kind: "case", title: "2019 C 题机场出租车思路", tags: ["机理", "预测"], referenceOnly: true },
+  { id: "t1", kind: "template", title: "国赛论文排版示例模板", tags: ["格式", "国赛"], referenceOnly: false },
+  { id: "t2", kind: "template", title: "美赛论文排版示例模板", tags: ["格式", "美赛"], referenceOnly: false },
+  { id: "c1", kind: "case", title: "优化与评价方法示例", tags: ["优化", "评价"], referenceOnly: true, complianceNote: "虚构案例，仅供功能演示与学习参照。" },
+  { id: "c2", kind: "case", title: "出租车调度建模示例", tags: ["机理", "预测"], referenceOnly: true, complianceNote: "虚构案例，仅供功能演示与学习参照。" },
 ];
 
 const DEMO_HISTORY: HistoryTask[] = [

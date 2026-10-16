@@ -60,6 +60,11 @@ export class EngineHost {
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private userStopping = false;
+  /** 退出码2不可自愈；缓存诊断，避免状态轮询再次拉起。显式重载后清除。 */
+  private startupRefusal: Error | null = null;
+  private lastDiagnostic = "";
+  /** 宿主因启动故障要求退出时，即使引擎协作返回0，仍需恢复。 */
+  private restartRequested = false;
 
   constructor(options: EngineHostOptions) {
     this.options = options;
@@ -76,6 +81,7 @@ export class EngineHost {
 
   /** 懒启动：首次任务或用户显式触发才 spawn（冷启动不含引擎拉起）。 */
   ensureStarted(): void {
+    if (this.startupRefusal) throw this.startupRefusal;
     if (["idle", "failed", "stopped"].includes(this.state)) {
       this.userStopping = false;
       this.transition("spawning");
@@ -116,6 +122,8 @@ export class EngineHost {
    * - 返回时保证引擎已就绪（失败抛错，由调用方按 probe 失败呈现）。
    */
   async reloadKey(): Promise<void> {
+    this.startupRefusal = null;
+    this.restartCount = 0;
     if (this.state === "idle") {
       this.ensureStarted();
       await this.awaitReady();
@@ -186,6 +194,8 @@ export class EngineHost {
     const { command, args, cwd, home, key } = this.options;
     const injected = key();
     const modelEnvironment = this.options.environment?.() ?? {};
+    this.lastDiagnostic = "";
+    this.restartRequested = false;
     const child = spawn(command, args, {
       cwd,
       windowsHide: true,
@@ -198,7 +208,12 @@ export class EngineHost {
       onEvent: (event) => {
         if (isCurrent()) this.onEngineEvent(event);
       },
-      onStderr: (line) => this.options.onLog(line),
+      onStderr: (line) => {
+        if (!isCurrent()) return;
+        // RPC 已脱敏；只留最后一条有内容的诊断，内存有界且不混入旧进程日志。
+        if (line.trim()) this.lastDiagnostic = line.slice(-1024);
+        this.options.onLog(line);
+      },
       onProtocolError: (err) => this.options.onProtocolError(err),
     });
     this.rpc = rpc;
@@ -215,6 +230,7 @@ export class EngineHost {
     const readyTimer = setTimeout(() => {
       if (isCurrent()) this.onSpawnTimeout();
     }, INJECT_READY_TIMEOUT_MS);
+    child.once("exit", () => clearTimeout(readyTimer));
     void rpc
       .invoke<InitializeResult>("initialize", { client_protocol_version: 2 }, INJECT_READY_TIMEOUT_MS - 500)
       .then((res) => {
@@ -248,7 +264,8 @@ export class EngineHost {
     child.on("error", (err) => {
       if (isCurrent()) this.onSpawnFailed(err);
     });
-    child.on("exit", (code, signal) => {
+    // close 晚于 stdio 排空，拒启诊断不会因 exit 先到而丢失。
+    child.on("close", (code, signal) => {
       if (isCurrent()) this.onExit(code, signal);
     });
   }
@@ -279,7 +296,7 @@ export class EngineHost {
           return;
         }
         if (this.state === "crashed" || this.state === "failed" || this.state === "stopped") {
-          reject(new Error("ENGINE_RESTART：引擎不可用"));
+          reject(this.startupRefusal ?? new Error("ENGINE_RESTART：引擎不可用"));
           return;
         }
         if (Date.now() - start > INJECT_READY_TIMEOUT_MS) {
@@ -293,12 +310,14 @@ export class EngineHost {
   }
 
   private onSpawnFailed(err: Error): void {
+    this.restartRequested = true;
     this.rpc?.close();
     this.transition("crashed");
     this.scheduleRestart(err);
   }
 
   private onSpawnTimeout(): void {
+    this.restartRequested = true;
     this.rpc?.close();
     // 超时但进程可能仍存活：强制回收，避免泄漏后再 spawn 出双进程
     if (this.child) {
@@ -314,15 +333,31 @@ export class EngineHost {
   }
 
   private onExit(code: number | null, signal: NodeJS.Signals | null): void {
-    this.rpc?.close();
+    if (!this.userStopping && code === 2) {
+      this.startupRefusal = new Error(
+        `ENGINE_STARTUP_REFUSED：引擎启动被拒绝（退出码 2）：${this.lastDiagnostic || "请检查引擎配置或本地数据"}。请修正配置后重新检测模型，或重启客户端。`,
+      );
+    }
+    this.rpc?.close(this.startupRefusal ?? undefined);
     this.rpc = null;
     this.child = null;
+    this.clearIdleTimer();
     if (this.userStopping) return; // 用户主动停止：不重启
+    if (code === 2 || (code === 0 && !this.restartRequested)) {
+      if (this.restartTimer !== null) {
+        clearTimeout(this.restartTimer);
+        this.restartTimer = null;
+      }
+      this.transition(code === 2 ? "failed" : "stopped");
+      if (this.startupRefusal) this.options.onLog(`[engine-host] ${this.startupRefusal.message}`);
+      return;
+    }
     this.transition("crashed");
     this.scheduleRestart(new Error(`引擎进程退出（code=${code ?? "?"} signal=${signal ?? "?"}）`));
   }
 
   private scheduleRestart(cause: Error): void {
+    if (this.restartTimer !== null) return;
     if (this.restartCount >= MAX_RESTARTS) {
       this.transition("failed");
       this.options.onLog(`[engine-host] 看门狗重试耗尽（${MAX_RESTARTS} 次）：${cause.message}`);
@@ -332,6 +367,7 @@ export class EngineHost {
     this.restartCount += 1;
     this.options.onLog(`[engine-host] 看门狗第 ${this.restartCount}/${MAX_RESTARTS} 次重启（${delay}ms 后）：${cause.message}`);
     this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
       if (this.userStopping || this.state === "stopped") return;
       this.transition("spawning");
       try { this.spawn(); }
