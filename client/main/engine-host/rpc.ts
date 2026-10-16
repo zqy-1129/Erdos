@@ -77,12 +77,12 @@ export class EngineRpcClient {
   }
 
   /** 关闭 client：清空所有 pending（以 ENGINE_RESTART 失败），停读流。 */
-  close(): void {
+  close(cause = new Error("ENGINE_RESTART：引擎进程退出，in-flight 请求失败")): void {
     if (this.closed) return;
     this.closed = true;
     for (const [, entry] of this.pending) {
       clearTimeout(entry.timer);
-      entry.reject(new Error("ENGINE_RESTART：引擎进程退出，in-flight 请求失败"));
+      entry.reject(cause);
     }
     this.pending.clear();
   }

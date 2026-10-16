@@ -6,12 +6,29 @@ vi.mock("electron", () => ({ safeStorage: {
   decryptString: (value: Buffer) => value.toString().split("").reverse().join(""),
 } }));
 import { BridgeBackend } from "../../main/ipc/bridge.ts";
+import { WebDemoBridge } from "../src/bridges/web-bridge.ts";
+import type { ContentItem } from "../src/bridges/bridge.ts";
 import { createPlatformEncryptor } from "../../main/safe-storage-encryptor.ts";
 import { InMemorySecretStore, XorEncryptor } from "../../main/key-vault.ts";
 import { BRIDGE_CHANNELS as C } from "../../shared/bridge-channels.ts";
 const config = { alias: "unit", key: "unit-credential", baseUrl: "https://model.example/v1", model: "unit-model" };
 const response = (data: unknown, status = 200) => ({ status, ok: status < 400, text: async () => JSON.stringify({ code: status < 400 ? 0 : status, data, message: "test" }) });
 describe("主进程桥实际业务接线", () => {
+  it("G51：两条演示路径内容一致，明确示例来源且不声称官方或获奖", async () => {
+    const backend = new BridgeBackend({ encryptor: new XorEncryptor() });
+    const native = await backend.handle(C.contentList, {}) as ContentItem[];
+    const web = await new WebDemoBridge().invoke<ContentItem[]>(C.contentList, {});
+    expect(native).toEqual(web);
+    expect(native).toHaveLength(4);
+    for (const item of native) {
+      expect(item.title).toContain("示例");
+      expect(item.title).not.toMatch(/一等奖|获奖|官方|(?:19|20)\d{2}\s*[A-Z]\s*题/);
+      if (item.kind === "case") {
+        expect(item.referenceOnly).toBe(true);
+        expect(item.complianceNote).toContain("虚构案例");
+      }
+    }
+  });
   it("加密器、模型选择与偏好重启恢复、检测和未知通道", async () => {
     const encryptor = createPlatformEncryptor(); expect(encryptor.decrypt(encryptor.encrypt("unit"))).toBe("unit");
     const store = new InMemorySecretStore(); const invoke = vi.fn(async () => ({}));
